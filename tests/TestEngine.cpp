@@ -248,6 +248,26 @@ TEST_CASE ("Jitter breaks up the comb tone of evenly spaced grains")
     CHECK (jittered < 0.2);
 }
 
+TEST_CASE ("Random pan spreads grains across the stereo field; Spray alone doesn't")
+{
+    // The test sine is identical in both channels, so any L/R difference is panning.
+    const auto stereoDifference = [] (double spray, double randomPan)
+    {
+        TestEngine engine (makeSine());
+        GrainParams p;
+        p.spray = spray;
+        p.randomPan = randomPan;
+        const auto out = render (engine, p, 24000, { { 0, 60, true } });
+        float most = 0.0f;
+        for (size_t i = 0; i < out.left.size(); ++i)
+            most = std::max (most, std::abs (out.left[i] - out.right[i]));
+        return most;
+    };
+
+    CHECK (stereoDifference (0.5, 0.0) == 0.0f);
+    CHECK (stereoDifference (0.0, 1.0) > 0.05f);
+}
+
 TEST_CASE ("ADSR settles at the sustain level")
 {
     GrainParams p;

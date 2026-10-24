@@ -280,8 +280,8 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     const bool reversed = random.next01() < p.reverseChance;
     const auto span = grainReadSpan (start, length, ratio);
 
-    // Stereo scatter as balance, so a centred grain keeps both channels at full level.
-    const float pan = random.nextBipolar() * (float) std::clamp (p.spray, 0.0, 1.0);
+    // Random pan as balance, so a centred grain keeps both channels at full level.
+    const float pan = random.nextBipolar() * (float) std::clamp (p.randomPan, 0.0, 1.0);
     const float amp = 1.0f - random.next01() * (float) std::clamp (p.randomAmp, 0.0, 1.0);
 
     Grain& g = *free;

@@ -20,12 +20,13 @@ struct GrainParams
     double pitchSemitones = 0.0;   // −24…+24, added to the key's transposition
     double sizeMs = 100.0;         // grain length, 10…2000 ms
     double rateHz = 20.0;          // grains started per second, 0.1…100
-    double spray = 0.0;            // 0…1: start scatter up to ±1 s, plus stereo scatter
+    double spray = 0.0;            // 0…1: start scatter, up to ±1 s
     double reverseChance = 0.0;    // 0…1: chance a grain plays backwards
     double jitter = 0.0;           // 0…1: random spread of grain start times (0 = clockwork).
                                    // Evenly spaced grains at fast rates sum to a pitched
                                    // comb tone; jitter breaks it up. Not used on the beat grid.
     double randomAmp = 0.0;        // 0…1: per-grain random level drop
+    double randomPan = 0.0;        // 0…1: per-grain random stereo position (1 = anywhere L to R)
     double fade = 1.0;             // grain envelope (GrainEnvelope)
     double slant = 0.5;
     double ease = 0.5;

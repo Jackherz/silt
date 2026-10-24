@@ -73,6 +73,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 percent ("jitter", "Jitter", 50.0f),
                 percent ("reverse", "Reverse", 0.0f),
                 percent ("randAmp", "Random amp", 0.0f),
+                percent ("randPan", "Random pan", 0.0f),
                 percent ("fade", "Fade", 100.0f),
                 percent ("slant", "Slant", 50.0f),
                 percent ("ease", "Ease", 50.0f));
@@ -145,7 +146,7 @@ struct SiltProcessor::RawParams
     {
         const auto p = [&s] (const char* id) { return s.getRawParameterValue (id); };
         pitch = p ("pitch"); size = p ("size"); rate = p ("rate"); spray = p ("spray"); jitter = p ("jitter");
-        reverse = p ("reverse"); randAmp = p ("randAmp"); fade = p ("fade"); slant = p ("slant"); ease = p ("ease");
+        reverse = p ("reverse"); randAmp = p ("randAmp"); randPan = p ("randPan"); fade = p ("fade"); slant = p ("slant"); ease = p ("ease");
         sizeSync = p ("sizeSync"); sizeDiv = p ("sizeDiv"); rateMode = p ("rateMode"); rateDiv = p ("rateDiv"); grains = p ("grains"); grainSize = p ("grainSize");
         start = p ("start"); length = p ("length"); scan = p ("scan"); endMode = p ("endMode");
         attack = p ("attack"); decay = p ("decay"); sustain = p ("sustain"); release = p ("release"); root = p ("root");
@@ -153,7 +154,7 @@ struct SiltProcessor::RawParams
         monitor = p ("monitor"); mix = p ("mix");   // one of these is null, per build
     }
 
-    std::atomic<float>* pitch, *size, *rate, *spray, *jitter, *reverse, *randAmp, *fade, *slant, *ease;
+    std::atomic<float>* pitch, *size, *rate, *spray, *jitter, *reverse, *randAmp, *randPan, *fade, *slant, *ease;
     std::atomic<float>* sizeSync, *sizeDiv, *rateMode, *rateDiv, *grains, *grainSize;
     std::atomic<float>* start, *length, *scan, *endMode;
     std::atomic<float>* attack, *decay, *sustain, *release, *root;
@@ -262,6 +263,7 @@ silt::GrainParams SiltProcessor::readParams() const noexcept
     p.jitter = v (raw->jitter) * 0.01;
     p.reverseChance = v (raw->reverse) * 0.01;
     p.randomAmp = v (raw->randAmp) * 0.01;
+    p.randomPan = v (raw->randPan) * 0.01;
     p.fade = v (raw->fade) * 0.01;
     p.slant = v (raw->slant) * 0.01;
     p.ease = v (raw->ease) * 0.01;

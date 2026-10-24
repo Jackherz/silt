@@ -4,7 +4,7 @@
 //               [--tail 1] [--seed 1] [--rate 48000] [--set key=value ...]
 //
 // --set keys: pitch (st), size (ms), rate (Hz), grains (count; overrides rate),
-// spray, jitter, reverse, randamp,
+// spray, jitter, reverse, randamp, randpan,
 // fade, slant, ease, start, length (all 0–1), scan (×), attack, decay,
 // release (ms), sustain (0–1), root (note), end (loop|hold|stop),
 // interp (linear|cubic)
@@ -47,6 +47,7 @@ void applySetting (silt::GrainParams& p, const juce::String& setting)
     else if (key == "grains")  p.grainCount = value.getIntValue();
     else if (key == "jitter")  p.jitter = v;
     else if (key == "randamp") p.randomAmp = v;
+    else if (key == "randpan") p.randomPan = v;
     else if (key == "fade")    p.fade = v;
     else if (key == "slant")   p.slant = v;
     else if (key == "ease")    p.ease = v;

@@ -309,6 +309,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addKnob (Page::grain, 4, "jitter", "JITTER");
     addKnob (Page::grain, 5, "reverse", "REVERSE");
     addKnob (Page::grain, 6, "randAmp", "RND AMP");
+    addKnob (Page::grain, 7, "randPan", "RND PAN");
 
     // SHAPE: the grain's envelope, then the note's (both previewed in slot 7).
     addKnob (Page::shape, 0, "fade", "FADE");
