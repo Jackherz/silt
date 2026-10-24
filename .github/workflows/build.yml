@@ -1,8 +1,24 @@
 name: build
 
+# Runs on pull requests, on pushes to main that change code (docs-only pushes
+# skip it), and from the Actions tab's "Run workflow" button. A newer push
+# cancels a run still in progress for the same branch.
 on:
-  push:
   pull_request:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - CMakeLists.txt
+      - core/**
+      - plugin/**
+      - tests/**
+      - tools/**
+      - .github/workflows/**
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -15,8 +31,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # JUCE, clap-juce-extensions and Catch2, fetched once per CMakeLists.txt change.
+      - uses: actions/cache@v4
+        with:
+          path: .deps
+          key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+
+      # Compiler cache on macOS, where runner minutes cost the most.
+      - name: ccache (macOS)
+        if: runner.os == 'macOS'
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ccache-${{ runner.os }}
+          max-size: 500M
+
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSILT_COPY_AFTER_BUILD=OFF
+        shell: bash
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSILT_COPY_AFTER_BUILD=OFF \
+            -DFETCHCONTENT_BASE_DIR="$GITHUB_WORKSPACE/.deps" \
+            ${{ runner.os == 'macOS' && '-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OBJC_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache' || '' }}
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -56,6 +90,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: silt-${{ runner.os }}
+          retention-days: 7
           path: |
             build/Silt_artefacts/Release/VST3
             build/Silt_artefacts/Release/CLAP
