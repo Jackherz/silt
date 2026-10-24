@@ -122,7 +122,8 @@ private:
     void spawnGrain (const GrainParams&, const SampleBuffer&) noexcept;
     bool advancePlayhead (const GrainParams&, const SampleBuffer&) noexcept;
     float nextEnvelope (const GrainParams&) noexcept;
-    float targetGain (const GrainParams&, const SampleBuffer*) const noexcept;
+    struct GainEstimate { float estimate, coherent, incoherent; };
+    GainEstimate gainEstimate (const GrainParams&, const SampleBuffer*) const noexcept;
     double pitchRatio (const GrainParams&, const SampleBuffer&) const noexcept;
     int grainLength (const GrainParams&, const Region&, double ratio) const noexcept;
     float readGrain (const Grain&, int channel) const noexcept;
@@ -158,6 +159,11 @@ private:
 
     float outputGain = 1.0f;        // overlap normalisation, smoothed
     float gainSmoothing = 0.0f;
+
+    // Auto-gain: smoothed power of the grains' source audio (weighted by their
+    // envelopes), the envelope weight, and the power of their sum.
+    float autoGain = 1.0f;
+    float sourcePower = 0.0f, envelopeWeight = 0.0f, sumPower = 0.0f, autoGainSmoothing = 0.0f;
 };
 
 } // namespace silt

@@ -9,6 +9,7 @@ namespace silt
 namespace
 {
 constexpr double gainSmoothingSeconds = 0.03;
+constexpr double autoGainSeconds = 0.05;
 constexpr double maxSpraySeconds = 1.0;
 constexpr int minGrainSamples = 64;     // shorter grains are click trains (02 §8)
 constexpr double edgeGuardFrames = 2.0; // keeps cubic reads' neighbours inside the buffer
@@ -32,6 +33,7 @@ void GrainVoice::prepare (double rate) noexcept
 {
     sampleRate = rate;
     gainSmoothing = (float) (1.0 - std::exp (-1.0 / (gainSmoothingSeconds * sampleRate)));
+    autoGainSmoothing = (float) (1.0 - std::exp (-1.0 / (autoGainSeconds * sampleRate)));
     reset();
 }
 
@@ -65,7 +67,8 @@ void GrainVoice::noteOn (int note, float vel, const SampleBuffer& buffer, const 
     firstGrainPending = true;
     spawning = true;
     envStage = EnvStage::attack;   // from the current level: retriggers don't click
-    outputGain = targetGain (p, &buffer);
+    autoGain = outputGain = gainEstimate (p, &buffer).estimate;
+    sourcePower = envelopeWeight = sumPower = 0.0f;
 }
 
 double GrainVoice::pitchRatio (const GrainParams& p, const SampleBuffer& buffer) const noexcept
@@ -102,34 +105,43 @@ int GrainVoice::countGrainsUsing (const SampleBuffer* buffer) const noexcept
     return count;
 }
 
-// Overlap normalisation (plan gap 10). With `overlap` grains sounding at once,
-// envelopes sum to overlap × their mean. With no spray the grains are
-// near-identical and add in phase; with spray they add like noise
-// (rms ∝ √(overlap × mean square)). Hann: mean 0.5, mean square 0.375;
-// a flat envelope (fade 0): both 1. Spray only decorrelates grains if the
-// region leaves it room: a grain nearly as long as the region can't move.
-float GrainVoice::targetGain (const GrainParams& p, const SampleBuffer* buffer) const noexcept
+// Overlap normalisation (plan gap 10): the starting estimate and the limits for
+// the auto-gain in render(). With `overlap` grains sounding at once,
+// envelopes sum to overlap × their mean. Grains reading the same audio at the
+// same moment add in phase; grains reading it at different delays add like
+// noise (rms ∝ √(overlap × mean square)). Hann: mean 0.5, mean square 0.375;
+// a flat envelope (fade 0): both 1.
+//
+// How far apart the overlapping grains read: a grain started t samples ago has
+// drifted (ratio − scan) × t frames from one started now, so across one grain
+// length the spread is |ratio − scan| × length. Spray adds its scatter. A few
+// milliseconds of spread is enough to decorrelate real audio. In HOLD / STOP a
+// short region leaves spray no room to scatter.
+GrainVoice::GainEstimate GrainVoice::gainEstimate (const GrainParams& p, const SampleBuffer* buffer) const noexcept
 {
-    double sizeMs = p.sizeMs, room = 1.0;
+    double sizeMs = p.sizeMs, room = 1.0, driftMs = 0.0;
     if (buffer != nullptr)
     {
         const auto region = regionOf (p, *buffer);
+        const double rateFactor = buffer->getSampleRate() / sampleRate;
         const double ratio = pitchRatio (p, *buffer);
         const int length = grainLength (p, region, ratio);
         const double span = length * ratio;
         sizeMs = length * 1000.0 / sampleRate;
+        driftMs = std::abs (ratio - p.scan * rateFactor) * length * 1000.0 / buffer->getSampleRate();
         room = p.endMode == EndMode::loop ? 1.0
                                           : std::clamp ((region.end - region.begin - span) / std::max (1.0, span), 0.0, 1.0);
     }
 
+    constexpr double decorrelatedMs = 3.0;
     const double fade = std::clamp (p.fade, 0.0, 1.0);
     const double mean = 1.0 - 0.5 * fade;
     const double meanSquare = 1.0 - 0.625 * fade;
     const double overlap = p.grainCount > 0 ? (double) p.grainCount : sizeMs * 0.001 * p.rateHz;
     const double coherent = 1.0 / std::max (1.0, overlap * mean);
     const double incoherent = 1.0 / std::max (1.0, std::sqrt (overlap * meanSquare));
-    const double spread = std::clamp (p.spray * 4.0, 0.0, 1.0) * room;
-    return (float) (coherent + spread * (incoherent - coherent));
+    const double spread = std::clamp (p.spray * 4.0 * room + driftMs / decorrelatedMs, 0.0, 1.0);
+    return { (float) (coherent + spread * (incoherent - coherent)), (float) coherent, (float) incoherent };
 }
 
 float GrainVoice::nextEnvelope (const GrainParams& p) noexcept
@@ -315,7 +327,13 @@ void GrainVoice::render (float* left, float* right, int numSamples,
     if (! isActive())
         return;
 
-    const float gainTarget = targetGain (p, buffer);
+    // Auto-gain (after Mutable Instruments Beads): whether overlapping grains add
+    // in phase or like noise depends on the audio as much as the settings (a
+    // tone stays in phase across delays that scramble a voice), so measure it.
+    // The sum is steered to the power of the audio the grains read, within
+    // limits around the in-phase and noise-like estimates.
+    const auto estimate = gainEstimate (p, buffer);
+    const float lowest = 0.7f * estimate.coherent, highest = 1.4f * estimate.incoherent;
     double interval = sampleRate / std::clamp (p.rateHz, 0.1, 1000.0);
     if (p.grainCount > 0 && buffer != nullptr)
     {
@@ -384,7 +402,7 @@ void GrainVoice::render (float* left, float* right, int numSamples,
             }
         }
 
-        float accL = 0.0f, accR = 0.0f;
+        float accL = 0.0f, accR = 0.0f, grainPower = 0.0f, grainWeight = 0.0f;
 
         if (activeGrains > 0)
         {
@@ -394,8 +412,12 @@ void GrainVoice::render (float* left, float* right, int numSamples,
                     continue;
 
                 const float env = g.envelope (window, g.phase);
-                accL += env * g.gainL * readGrain (g, 0);
-                accR += env * g.gainR * readGrain (g, 1);
+                const float sL = g.gainL * readGrain (g, 0);
+                const float sR = g.gainR * readGrain (g, 1);
+                accL += env * sL;
+                accR += env * sR;
+                grainPower += env * 0.5f * (sL * sL + sR * sR);
+                grainWeight += env;
 
                 g.readPos += g.increment;
                 if (! g.loops)
@@ -413,7 +435,13 @@ void GrainVoice::render (float* left, float* right, int numSamples,
             }
         }
 
-        outputGain += gainSmoothing * (gainTarget - outputGain);
+        sourcePower += autoGainSmoothing * (grainPower - sourcePower);
+        envelopeWeight += autoGainSmoothing * (grainWeight - envelopeWeight);
+        sumPower += autoGainSmoothing * (0.5f * (accL * accL + accR * accR) - sumPower);
+        if (envelopeWeight > 0.05f && sourcePower > 1.0e-9f * envelopeWeight)   // hold through silence
+            autoGain = std::clamp (std::sqrt (sourcePower / envelopeWeight / std::max (sumPower, 1.0e-12f)), lowest, highest);
+
+        outputGain += gainSmoothing * (autoGain - outputGain);
         const float amp = nextEnvelope (p) * velocity * outputGain;
         left[i] += accL * amp;
         right[i] += accR * amp;
