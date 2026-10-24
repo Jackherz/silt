@@ -149,6 +149,16 @@ public:
         return changed;
     }
 
+    // Live mode: the ring's peaks by position and the write head, drawn as a
+    // scrolling view with the newest audio at the right edge.
+    void setLive (bool isLive, bool isFrozen, float writeHead, const std::array<float, SiltProcessor::liveColumns>& peaks)
+    {
+        live = isLive;
+        frozen = isFrozen;
+        writeShare = writeHead;
+        livePeaks = peaks;
+    }
+
     void resized() override { waveCache = {}; }
 
     void paint (juce::Graphics& g) override
@@ -173,6 +183,19 @@ public:
 
         g.setFont (monoFont (12.0f));
         g.setColour (juce::Colours::white);
+
+        if (live)
+        {
+            g.drawText (frozen ? "LIVE INPUT  FROZEN" : "LIVE INPUT", top, juce::Justification::centredLeft);
+            g.drawText (juce::String (silt::Engine::ringSeconds, 0) + " S  NOW >", top, juce::Justification::centredRight);
+            drawLiveWave (g, waveArea);
+            g.setColour (screenLight.withAlpha (0.5f));
+            g.drawHorizontalLine (rollArea.getY() - 3, (float) rollArea.getX(), (float) rollArea.getRight());
+            drawGrains (g, waveArea, rollArea);
+            g.setColour (juce::Colours::white);
+            g.drawText (numViews > 0 ? hud : juce::String ("READY."), bottom, juce::Justification::centredLeft);
+            return;
+        }
 
         if (overview.minimum.empty())
         {
@@ -216,6 +239,33 @@ private:
         g.drawImageAt (waveCache, area.getX(), area.getY());
     }
 
+    void drawLiveWave (juce::Graphics& g, juce::Rectangle<int> area)
+    {
+        const float mid = (float) area.getCentreY(), half = (float) area.getHeight() * 0.48f;
+        g.setColour (frozen ? playheadCyan.withAlpha (0.8f) : screenPale);
+        for (int x = 0; x < area.getWidth(); ++x)
+        {
+            const float share = shareAt ((float) x / (float) area.getWidth());
+            const auto column = (size_t) juce::jlimit (0, SiltProcessor::liveColumns - 1, (int) (share * SiltProcessor::liveColumns));
+            const float h = juce::jmin (1.0f, livePeaks[column]) * half;
+            g.fillRect ((float) (area.getX() + x), mid - h, 1.0f, juce::jmax (1.0f, 2.0f * h));
+        }
+        g.setColour (screenLime);
+        g.drawVerticalLine (area.getRight() - 1, (float) area.getY(), (float) area.getBottom());
+    }
+
+    // Live view: x (0 = oldest, 1 = newest) to a share of the ring, and back.
+    float shareAt (float x) const
+    {
+        const float s = writeShare - (1.0f - x);
+        return s - std::floor (s);
+    }
+    float xOf (float share) const
+    {
+        const float age = writeShare - share;
+        return 1.0f - (age - std::floor (age));
+    }
+
     void drawRegion (juce::Graphics& g, juce::Rectangle<int> wave, juce::Rectangle<int> roll)
     {
         // Dim what's outside the region, on both the waveform and the roll.
@@ -257,7 +307,7 @@ private:
             const auto& v = views[(size_t) i];
             const float level = juce::jlimit (0.0f, 1.0f, v.level);
             const float alpha = 0.25f + 0.75f * level;
-            const float x = (float) wave.getX() + v.position * w;
+            const float x = (float) wave.getX() + (live ? xOf (v.position) : v.position) * w;
 
             // On the waveform: a line at the read position, as tall as the grain is loud.
             g.setColour ((v.reversed ? screenLime : juce::Colours::white).withAlpha (alpha * 0.8f));
@@ -267,8 +317,8 @@ private:
             // position. A small offset per grain keeps centred grains apart.
             const float stagger = ((float) ((v.voice * 5 + v.slot) % 5) - 2.0f) * laneH * 0.5f;
             const float y = panToY (juce::jlimit (-1.0f, 1.0f, v.pan)) + stagger - laneH * 0.5f;
-            const float sx = (float) wave.getX() + v.start * w;
-            const float ex = juce::jmax (sx + 1.0f, (float) wave.getX() + v.end * w);
+            const float sx = (float) wave.getX() + (live ? xOf (v.start) : v.start) * w;
+            const float ex = juce::jmax (sx + 1.0f, sx + (v.end - v.start) * w);
             g.setColour ((v.reversed ? screenLime : screenPale).withAlpha (0.25f + 0.35f * level));
             g.fillRect (sx, y + laneH * 0.3f, ex - sx, juce::jmax (1.0f, laneH * 0.4f));
             g.setColour ((v.reversed ? screenLime : juce::Colours::white).withAlpha (alpha));
@@ -281,7 +331,7 @@ private:
         {
             if (p < 0.0f)
                 continue;
-            const float x = (float) wave.getX() + p * w;
+            const float x = (float) wave.getX() + (live ? xOf (p) : p) * w;
             juce::Path marker;
             marker.addTriangle (x - 4.0f, (float) wave.getY() - 1.0f, x + 4.0f, (float) wave.getY() - 1.0f, x, (float) wave.getY() + 6.0f);
             g.fillPath (marker);
@@ -291,6 +341,9 @@ private:
 
     SiltProcessor::Overview overview;
     juce::Image waveCache;
+    bool live = false, frozen = false;
+    float writeShare = 0.0f;
+    std::array<float, SiltProcessor::liveColumns> livePeaks {};
     float start = 0.0f, length = 1.0f;
     std::array<silt::GrainView, SiltProcessor::maxGrainViews> views {};
     int numViews = 0;
@@ -334,18 +387,39 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addKnob (Page::shape, 5, "sustain", "SUSTAIN");
     addKnob (Page::shape, 6, "release", "RELEASE");
 
-    // PLAY: which audio, how the playhead moves through it, and the output.
-    addKnob (Page::play, 0, "start", "START");
-    addKnob (Page::play, 1, "length", "LENGTH");
-    addKnob (Page::play, 2, "scan", "SCAN");
+    // PLAY: the mode, then what it plays from. PITCH: a region of the sample and
+    // how the playhead moves through it. LIVE: how far behind the input the
+    // grains read, feedback, freeze, and whether they run without notes.
+    keyMode.addItemList ({ "PITCH", "LIVE" }, 1);
+    addMenu (Page::play, 0, keyMode, "MODE");
+    const auto pitchMode = std::function<bool()> ([this] { return keyMode.getSelectedItemIndex() == 0; });
+    const auto liveMode = std::function<bool()> ([this] { return keyMode.getSelectedItemIndex() == 1; });
+    const auto delaySynced = std::function<bool()> ([this] { return delaySyncButton.getToggleState(); });
+
+    addKnob (Page::play, 1, "start", "START").shown = pitchMode;
+    addKnob (Page::play, 2, "length", "LENGTH").shown = pitchMode;
+    addKnob (Page::play, 3, "scan", "SCAN").shown = pitchMode;
     endMode.addItemList ({ "LOOP", "HOLD", "STOP" }, 1);
-    addMenu (Page::play, 3, endMode, "AT THE END");
-    addKnob (Page::play, 4, "root", "ROOT");
-    addKnob (Page::play, 5, "gain", "OUTPUT");
+    addMenu (Page::play, 4, endMode, "AT THE END").shown = pitchMode;
+
+    addKnob (Page::play, 1, "liveDelay", "DELAY").shown = [=] { return liveMode() && ! delaySynced(); };
+    addKnob (Page::play, 1, "delayDiv", "DELAY").shown = [=] { return liveMode() && delaySynced(); };
+    addKnob (Page::play, 2, "feedback", "FEEDBACK").shown = liveMode;
+    addButton (Page::play, 3, freezeButton, "freeze", "FREEZE").shown = liveMode;
+    addButton (Page::play, 4, runButton, "liveRun", "NO NOTES").shown = liveMode;
+
+    addKnob (Page::play, 5, "root", "ROOT");
+    addKnob (Page::play, 6, "gain", "OUTPUT");
     if constexpr (! SiltProcessor::isInstrument)
-        addKnob (Page::play, 6, "mix", "MIX");
+        addKnob (Page::play, 7, "mix", "MIX");
 
     menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "endMode", endMode));
+    menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "keyMode", keyMode));
+    keyMode.onChange = [this] { updateVisibility(); };
+    delaySyncButton.setClickingTogglesState (true);
+    addChildComponent (delaySyncButton);
+    buttonAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "delaySync", delaySyncButton));
+    delaySyncButton.onStateChange = [this] { updateVisibility(); };
 
     // Rate mode and Size SYNC sit under their knobs on the GRAIN page.
     rateMode.addItemList ({ "FREE", "SYNC", "GRAINS" }, 1);
@@ -445,6 +519,20 @@ SiltEditor::Control& SiltEditor::addMenu (Page p, int slot, juce::ComboBox& box,
     return *controls.back();
 }
 
+SiltEditor::Control& SiltEditor::addButton (Page p, int slot, juce::Button& button, const char* paramId, const juce::String& label)
+{
+    auto c = std::make_unique<Control>();
+    c->button = &button;
+    c->label = label;
+    c->page = p;
+    c->slot = slot;
+    button.setClickingTogglesState (true);
+    addChildComponent (button);
+    buttonAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, paramId, button));
+    controls.push_back (std::move (c));
+    return *controls.back();
+}
+
 void SiltEditor::showPage (Page p)
 {
     page = p;
@@ -458,6 +546,7 @@ void SiltEditor::updateVisibility()
 
     rateMode.setVisible (page == Page::grain);
     sizeSyncButton.setVisible (page == Page::grain);
+    delaySyncButton.setVisible (page == Page::play && keyMode.getSelectedItemIndex() == 1);
     repaint (pagePanel);
 }
 
@@ -534,8 +623,16 @@ void SiltEditor::timerCallback()
     juce::String hud;
     if (n > 0)
         hud = juce::String (n) + (n == 1 ? " GRAIN   " : " GRAINS   ") + juce::String (voices) + (voices == 1 ? " VOICE" : " VOICES");
-    if (screen->setActivity (views, n, heads, hud))
+    const bool live = silt.liveMode.load();
+    const bool frozen = param ("freeze") > 0.5f;
+    if (live)
+        screen->setLive (true, frozen, silt.liveWriteShare.load(), silt.getLivePeaks());
+    else
+        screen->setLive (false, false, 0.0f, {});
+    const bool moved = screen->setActivity (views, n, heads, hud);
+    if (moved || (live && ! frozen) || live != screenWasLive)
         screen->repaint();
+    screenWasLive = live;
 
     const bool capturing = silt.captureState.load() != SiltProcessor::CaptureState::idle;
     armButton.setButtonText (capturing ? "CANCEL" : juce::String (juce::CharPointer_UTF8 ("\xe2\x97\x8f ARM")));
@@ -587,6 +684,8 @@ void SiltEditor::resized()
         auto cell = slotBounds (c->slot).withTrimmedTop (18).withTrimmedBottom (22).reduced (10, 0);
         if (c->menu != nullptr)
             c->menu->setBounds (cell.withSizeKeepingCentre (cell.getWidth(), 24));
+        else if (c->button != nullptr)
+            c->button->setBounds (cell.withSizeKeepingCentre (cell.getWidth() - 12, 34));
         else
             c->slider.setBounds (cell);
     }
@@ -596,6 +695,7 @@ void SiltEditor::resized()
         return slotBounds (slot).removeFromBottom (20).withSizeKeepingCentre (width, 18);
     };
     sizeSyncButton.setBounds (under (1, 60));
+    delaySyncButton.setBounds (under (1, 60));
     rateMode.setBounds (under (2, 92));
 }
 

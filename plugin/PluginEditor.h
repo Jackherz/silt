@@ -29,13 +29,21 @@ private:
     {
         juce::Slider slider { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
         juce::ComboBox* menu = nullptr;    // set for menu slots instead of the slider
+        juce::Button* button = nullptr;    // set for button slots instead of the slider
         juce::String label;
         Page page = Page::grain;
         int slot = 0;
         std::function<bool()> shown;       // alternatives sharing a slot
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
 
-        juce::Component& component() { return menu != nullptr ? static_cast<juce::Component&> (*menu) : slider; }
+        juce::Component& component()
+        {
+            if (menu != nullptr)
+                return *menu;
+            if (button != nullptr)
+                return *button;
+            return slider;
+        }
     };
 
     class PanelLook;
@@ -44,6 +52,7 @@ private:
     void timerCallback() override;
     Control& addKnob (Page, int slot, const char* paramId, const juce::String& label);
     Control& addMenu (Page, int slot, juce::ComboBox&, const juce::String& label);
+    Control& addButton (Page, int slot, juce::Button&, const char* paramId, const juce::String& label);
     void showPage (Page);
     void updateVisibility();
     juce::Rectangle<int> slotBounds (int slot) const;
@@ -59,16 +68,17 @@ private:
     std::array<juce::TextButton, 3> pageTabs;
     Page page = Page::grain;
 
-    juce::TextButton armButton, loadButton { "LOAD" }, sizeSyncButton { "SYNC" };
+    juce::TextButton armButton, loadButton { "LOAD" }, sizeSyncButton { "SYNC" }, delaySyncButton { "SYNC" };
+    juce::TextButton freezeButton { "FREEZE" }, runButton { "RUN" };
     juce::ToggleButton monitorButton { "MONITOR" };
-    juce::ComboBox captureBars, endMode, rateMode;
+    juce::ComboBox captureBars, endMode, rateMode, keyMode;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>> menuAttachments;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
     std::unique_ptr<juce::FileChooser> chooser;
 
     juce::Rectangle<int> header, strip, pagePanel, controlRow;
     int seenGeneration = -1;
-    bool dragHover = false;
+    bool dragHover = false, screenWasLive = false;
     float levelDb = -100.0f;
     std::array<float, 7> previewSeen {};   // the values the SHAPE preview was last drawn with
 

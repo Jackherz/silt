@@ -129,6 +129,11 @@ int main (int argc, char* argv[])
     }
 
     plugin->enableAllBuses();
+
+    // Silt FX starts in Live mode; the sample only plays in Pitch mode.
+    for (auto* parameter : plugin->getParameters())
+        if (parameter->getName (32) == "Mode")
+            parameter->setValueNotifyingHost (0.0f);
     plugin->setRateAndBufferSizeDetails (rate, blockSize);
     plugin->prepareToPlay (rate, blockSize);
 

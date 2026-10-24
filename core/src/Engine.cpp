@@ -15,10 +15,20 @@ Engine::~Engine()
     delete retired.exchange (nullptr);
 }
 
-void Engine::prepare (double sampleRate)
+void Engine::prepare (double sampleRate, int maxBlockSize)
 {
     for (auto& v : voices)
         v.prepare (sampleRate);
+
+    maxBlock = std::max (1, maxBlockSize);
+    live = std::make_unique<SampleBuffer> ((int) (ringSeconds * sampleRate), sampleRate);
+    liveWrite = 0;
+    lastOutLeft.assign ((size_t) maxBlock, 0.0f);
+    lastOutRight.assign ((size_t) maxBlock, 0.0f);
+    lastOutCount = 0;
+    dcIn = dcOut = lowpass = {};
+    heldNotes = 0;
+    droneVoice = -1;
 }
 
 void Engine::setSeed (std::uint64_t seed) noexcept
@@ -103,27 +113,102 @@ GrainVoice& Engine::voiceForNoteOn (int note) noexcept
     return voices[(size_t) best];
 }
 
-void Engine::handleEvent (const NoteEvent& e, const GrainParams& p) noexcept
+void Engine::handleEvent (const NoteEvent& e, const GrainParams& p, const SampleBuffer* source) noexcept
 {
     if (e.isNoteOn)
     {
-        if (current != nullptr)
-            voiceForNoteOn (e.note).noteOn (e.note, std::clamp (e.velocity, 0.0f, 1.0f), *current, p);
+        ++heldNotes;
+        if (droneVoice >= 0)
+        {
+            voices[(size_t) droneVoice].noteOff();   // a played key takes over from RUN
+            droneVoice = -1;
+        }
+        if (source != nullptr)
+            voiceForNoteOn (e.note).noteOn (e.note, std::clamp (e.velocity, 0.0f, 1.0f), *source, p);
         return;
     }
 
-    for (auto& v : voices)
-        if (v.getCurrentNote() == e.note && ! v.isReleasing())
-            v.noteOff();
+    heldNotes = std::max (0, heldNotes - 1);
+    for (size_t i = 0; i < voices.size(); ++i)
+        if ((int) i != droneVoice && voices[i].getCurrentNote() == e.note && ! voices[i].isReleasing())
+            voices[i].noteOff();
+}
+
+// RUN: in Live mode with no keys held, a voice at the root note keeps grains
+// playing, so Silt works as a plain effect. Released when a key is played or
+// RUN / Live mode is switched off.
+void Engine::updateDrone (const GrainParams& p, const SampleBuffer* source) noexcept
+{
+    const bool wanted = p.live && p.liveRun && heldNotes == 0 && source != nullptr;
+
+    if (! wanted && droneVoice >= 0)
+    {
+        voices[(size_t) droneVoice].noteOff();
+        droneVoice = -1;
+    }
+    else if (wanted && droneVoice < 0)
+    {
+        auto& voice = voiceForNoteOn (p.rootNote);
+        voice.noteOn (p.rootNote, 1.0f, *source, p);
+        droneVoice = (int) (&voice - voices.data());
+    }
+}
+
+namespace
+{
+// Linear to 0.8, then a soft knee to full scale: keeps feedback from running away.
+float feedbackClip (float x) noexcept
+{
+    constexpr float knee = 0.8f;
+    const float a = std::abs (x);
+    return a <= knee ? x : std::copysign (knee + (1.0f - knee) * std::tanh ((a - knee) / (1.0f - knee)), x);
+}
+} // namespace
+
+// Writes this block's input into the ring (plan §4 "Grain-Output feedback"):
+// input plus the previous block's output × feedback, the feedback DC-blocked,
+// low-passed and soft-clipped so it settles instead of running away.
+void Engine::writeLive (const float* inLeft, const float* inRight, int numSamples, const GrainParams& p) noexcept
+{
+    const float fb = (float) std::clamp (p.feedback, 0.0, 1.0);
+    const int frames = live->getNumFrames();
+    const float* in[2] { inLeft, inRight != nullptr ? inRight : inLeft };
+    const std::vector<float>* out[2] { &lastOutLeft, &lastOutRight };
+
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        float* ring = live->getWritePointer (ch);
+        int w = liveWrite;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float x = in[ch] != nullptr ? in[ch][i] : 0.0f;
+            if (fb > 0.0f)
+            {
+                const float back = i < lastOutCount ? (*out[ch])[(size_t) i] : 0.0f;
+                const float dc = back - dcIn[(size_t) ch] + 0.995f * dcOut[(size_t) ch];
+                dcIn[(size_t) ch] = back;
+                dcOut[(size_t) ch] = dc;
+                lowpass[(size_t) ch] += 0.5f * (dc - lowpass[(size_t) ch]);
+                x = feedbackClip (x + fb * lowpass[(size_t) ch]);
+            }
+            ring[w] = x;
+            if (++w == frames)
+                w = 0;
+        }
+    }
+    liveWrite = (liveWrite + numSamples) % frames;
 }
 
 void Engine::allNotesOff() noexcept
 {
     for (auto& v : voices)
         v.noteOff();
+    heldNotes = 0;
+    droneVoice = -1;
 }
 
 void Engine::process (float* left, float* right, int numSamples,
+                      const float* inLeft, const float* inRight,
                       const NoteEvent* events, int numEvents, const GrainParams& p) noexcept
 {
     swapInPendingBuffer();
@@ -131,21 +216,37 @@ void Engine::process (float* left, float* right, int numSamples,
     std::fill (left, left + numSamples, 0.0f);
     std::fill (right, right + numSamples, 0.0f);
 
+    // Live mode writes the whole block into the ring first. "Now" for grain
+    // placement is where the write head was at each sample, so data up to the
+    // block's end is always already there.
+    const int now = liveWrite;
+    if (p.live && ! p.freeze && live != nullptr)
+        writeLive (inLeft, inRight, std::min (numSamples, maxBlock), p);
+    const SampleBuffer* source = p.live ? live.get() : current;
+    updateDrone (p, source);
+
     // Render in segments between events so notes start sample-accurately.
     auto segment = p;
+    segment.liveMargin = maxBlock;
     int pos = 0;
     for (int e = 0; e <= numEvents; ++e)
     {
         const int end = e < numEvents ? std::clamp (events[e].sampleOffset, pos, numSamples) : numSamples;
         segment.gridPpq = p.gridPpq + pos * p.ppqPerSample;
+        segment.liveNow = now + (p.freeze ? 0 : pos);
         if (end > pos)
             for (auto& v : voices)
-                v.render (left + pos, right + pos, end - pos, segment, current);
+                v.render (left + pos, right + pos, end - pos, segment, source);
         pos = end;
 
         if (e < numEvents)
-            handleEvent (events[e], p);
+            handleEvent (events[e], segment, source);
     }
+
+    // Keep this block's output for next block's feedback.
+    lastOutCount = std::min (numSamples, maxBlock);
+    std::copy (left, left + lastOutCount, lastOutLeft.begin());
+    std::copy (right, right + lastOutCount, lastOutRight.begin());
 }
 
 } // namespace silt

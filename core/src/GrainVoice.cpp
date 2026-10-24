@@ -51,6 +51,8 @@ void GrainVoice::reset() noexcept
 GrainVoice::Region GrainVoice::regionOf (const GrainParams& p, const SampleBuffer& buffer) noexcept
 {
     const double frames = buffer.getNumFrames();
+    if (p.live)   // the live ring has no region: grains place themselves by delay
+        return { 0.0, frames };
     const double begin = std::clamp (p.start, 0.0, 1.0) * (frames - 1.0);
     const double end = std::min (frames, begin + std::max (1.0, std::clamp (p.length, 0.0, 1.0) * frames));
     return { begin, end };
@@ -82,6 +84,8 @@ double GrainVoice::pitchRatio (const GrainParams& p, const SampleBuffer& buffer)
 int GrainVoice::grainLength (const GrainParams& p, const Region& region, double ratio) const noexcept
 {
     const int wanted = std::max (minGrainSamples, (int) (p.sizeMs * 0.001 * sampleRate));
+    if (p.live)   // a third of the ring, so a grain always fits between old and new audio
+        return std::max (minGrainSamples, std::min (wanted, (int) ((region.end - region.begin) / (3.0 * ratio))));
     if (p.endMode == EndMode::loop)
         return wanted;
     const double usable = std::max (1.0, region.end - region.begin - 2.0 * edgeGuardFrames);
@@ -150,8 +154,9 @@ GrainVoice::GainEstimate GrainVoice::gainEstimate (const GrainParams& p, const S
         const int length = grainLength (p, region, ratio);
         const double span = length * ratio;
         sizeMs = length * 1000.0 / sampleRate;
-        driftMs = std::abs (ratio - p.scan * rateFactor) * length * 1000.0 / buffer->getSampleRate();
-        room = p.endMode == EndMode::loop ? 1.0
+        const double scan = p.live ? 1.0 : p.scan;   // live grains follow the write head
+        driftMs = std::abs (ratio - scan * rateFactor) * length * 1000.0 / buffer->getSampleRate();
+        room = p.live || p.endMode == EndMode::loop ? 1.0
                                           : std::clamp ((region.end - region.begin - span) / std::max (1.0, span), 0.0, 1.0);
     }
 
@@ -248,6 +253,21 @@ bool GrainVoice::advancePlayhead (const GrainParams& p, const SampleBuffer& buff
     return false;
 }
 
+// Live mode: where a grain starts in the ring. Aimed liveDelayMs (plus spray)
+// behind the write head, then kept where the whole read is safe (plan gap 1):
+// forward reads at a ratio above 1 gain on the write head, reversed reads
+// start at the far end of their span, and the write head overwrites the
+// oldest audio as the grain plays, so neither end of the read may cross it.
+double GrainVoice::liveStart (const GrainParams& p, const SampleBuffer& ring, int length, double ratio, double scatter) const noexcept
+{
+    constexpr double guard = 64.0 + edgeGuardFrames;
+    const double span = length * ratio;
+    const double newest = p.liveNow - guard - std::max (span, (ratio - 1.0) * length);
+    const double oldest = p.liveNow - ring.getNumFrames() + length + p.liveMargin + guard;
+    const double aimed = p.liveNow - p.liveDelayMs * 0.001 * ring.getSampleRate() + scatter;
+    return std::clamp (aimed, oldest, std::max (oldest, newest));
+}
+
 void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) noexcept
 {
     // Grains mode keeps a ceiling of twice the count: while Size shrinks, the
@@ -276,8 +296,10 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     // LOOP: grains start at the playhead (spray wraps around the loop), so Scan 1
     // plays the region at its own speed. HOLD / STOP: grains must fit before the
     // region end (grainStartFor).
-    const double start = looping ? region.begin + wrapFrames (playhead + scatter - region.begin, (int) regionFrames)
-                                 : grainStartFor (region, length * ratio) + scatterWithin (region, length * ratio, scatter);
+    double start = looping ? region.begin + wrapFrames (playhead + scatter - region.begin, (int) regionFrames)
+                           : grainStartFor (region, length * ratio) + scatterWithin (region, length * ratio, scatter);
+    if (p.live)
+        start = liveStart (p, buffer, length, ratio, scatter);
     const bool reversed = random.next01() < p.reverseChance;
     const auto span = grainReadSpan (start, length, ratio);
 
@@ -291,7 +313,7 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     g.backwardWraps = 0;
     g.readPos = wrapFrames (reversed ? span.hi : span.lo, frames);
 
-    if (looping)
+    if (looping && ! p.live)
     {
         const double fade = std::min (maxLoopFadeSeconds * buffer.getSampleRate(), 0.25 * regionFrames);
         g.loopBegin = region.begin;
@@ -327,9 +349,9 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     lastGrainStart = span.lo;
 
     // What the UI draws: the span inside the region (loops show up to the loop end).
-    const double shown = std::min (span.hi, looping ? region.end : (double) frames);
-    g.spanStart = (float) (span.lo / frames);
-    g.spanEnd = (float) (shown / frames);
+    const double shown = p.live ? span.hi : std::min (span.hi, looping ? region.end : (double) frames);
+    g.spanStart = (float) (wrapFrames (span.lo, frames) / frames);
+    g.spanEnd = g.spanStart + (float) ((shown - span.lo) / frames);
     g.lastEnvelope = 0.0f;
 }
 
@@ -424,7 +446,7 @@ void GrainVoice::render (float* left, float* right, int numSamples,
             firstGrainPending = false;
             samplesToNextGrain -= 1.0;
 
-            if (! advancePlayhead (p, *buffer))
+            if (! p.live && ! advancePlayhead (p, *buffer))
             {
                 spawning = false;
                 noteOff();
@@ -491,7 +513,9 @@ void GrainVoice::render (float* left, float* right, int numSamples,
     {
         const auto region = regionOf (p, *buffer);
         const double ratio = pitchRatio (p, *buffer);
-        const double at = p.endMode == EndMode::loop ? playhead : grainStartFor (region, grainLength (p, region, ratio) * ratio);
+        const double at = p.live ? wrapFrames (p.liveNow + numSamples - p.liveDelayMs * 0.001 * buffer->getSampleRate(), buffer->getNumFrames())
+                        : p.endMode == EndMode::loop ? playhead
+                                                     : grainStartFor (region, grainLength (p, region, ratio) * ratio);
         playheadPosition = (float) (at / buffer->getNumFrames());
     }
 }

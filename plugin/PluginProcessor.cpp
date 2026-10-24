@@ -14,7 +14,8 @@ const juce::StringArray divisionNames { "1/64", "1/32", "1/16T", "1/16", "1/8T",
                                         "1/8D", "1/4", "1/2T", "1/4D", "1/2", "1/2D", "1 bar", "2 bars", "4 bars" };
 constexpr double divisionQuarters[] { 1.0 / 16, 1.0 / 8, 1.0 / 6, 1.0 / 4, 1.0 / 3, 3.0 / 8, 1.0 / 2, 2.0 / 3,
                                       3.0 / 4, 1.0, 4.0 / 3, 3.0 / 2, 2.0, 3.0, 4.0, 8.0, 16.0 };
-constexpr int sixteenth = 3;
+constexpr int sixteenth = 3, eighth = 6;
+constexpr double maxDelayMs = 4000.0;
 constexpr int rateModeSync = 1, rateModeGrains = 2;   // "rateMode" choices; 0 is Free
 constexpr double maxSyncedSizeMs = 4000.0;
 
@@ -113,6 +114,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                         return juce::MidiMessage::getMidiNoteName (note, true, true, 3);
                     })));
 
+    // Mode: the sample (PITCH) or the live input (LIVE: a granular delay).
+    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "keyMode", 1 }, "Mode",
+                                                              juce::StringArray { "Pitch", "Live" },
+                                                              SiltProcessor::isInstrument ? 0 : 1),
+                withUnit ("liveDelay", "Delay", skewed (10.0f, 4000.0f, 300.0f), 250.0f, formatMs),
+                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "delaySync", 1 }, "Delay sync", false),
+                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "delayDiv", 1 }, "Delay (synced)",
+                                                              divisionNames, eighth),
+                percent ("feedback", "Feedback", 0.0f),
+                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "freeze", 1 }, "Freeze", false),
+                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "liveRun", 1 }, "Run without notes", true));
+
     // Capture and output
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "captureBars", 1 }, "Capture length",
                                                               captureBarChoices, 1),
@@ -151,6 +164,8 @@ struct SiltProcessor::RawParams
         start = p ("start"); length = p ("length"); scan = p ("scan"); endMode = p ("endMode");
         attack = p ("attack"); decay = p ("decay"); sustain = p ("sustain"); release = p ("release"); root = p ("root");
         captureBars = p ("captureBars"); gain = p ("gain");
+        keyMode = p ("keyMode"); liveDelay = p ("liveDelay"); delaySync = p ("delaySync"); delayDiv = p ("delayDiv");
+        feedback = p ("feedback"); freeze = p ("freeze"); liveRun = p ("liveRun");
         monitor = p ("monitor"); mix = p ("mix");   // one of these is null, per build
     }
 
@@ -159,6 +174,7 @@ struct SiltProcessor::RawParams
     std::atomic<float>* start, *length, *scan, *endMode;
     std::atomic<float>* attack, *decay, *sustain, *release, *root;
     std::atomic<float>* captureBars, *gain, *monitor, *mix;
+    std::atomic<float>* keyMode, *liveDelay, *delaySync, *delayDiv, *feedback, *freeze, *liveRun;
 };
 
 juce::AudioProcessor::BusesProperties SiltProcessor::makeBuses()
@@ -205,7 +221,11 @@ SiltProcessor::~SiltProcessor()
 void SiltProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamplesPerBlock)
 {
     currentSampleRate = sampleRate;
-    engine.prepare (sampleRate);
+    engine.prepare (sampleRate, juce::jmax (1, maximumExpectedSamplesPerBlock));
+    liveColumn = -1;
+    liveColumnPeak = 0.0f;
+    for (auto& c : livePeaks)
+        c.store (0.0f);
     wet.setSize (2, juce::jmax (1, maximumExpectedSamplesPerBlock));
     noteEvents.reserve (1024);
     captureMeter.reset();
@@ -277,8 +297,15 @@ silt::GrainParams SiltProcessor::readParams() const noexcept
     p.releaseMs = v (raw->release);
     p.rootNote = (int) v (raw->root);
 
+    p.live = (int) v (raw->keyMode) == 1;
+    p.feedback = v (raw->feedback) * 0.01;
+    p.freeze = v (raw->freeze) > 0.5;
+    p.liveRun = v (raw->liveRun) > 0.5;
+
     // Synced values follow the host tempo (the last one seen while stopped).
     const double msPerQuarter = 60000.0 / juce::jlimit (20.0, 400.0, hostBpm.load (std::memory_order_relaxed));
+    p.liveDelayMs = v (raw->delaySync) > 0.5 ? juce::jlimit (10.0, maxDelayMs, quartersFor (raw->delayDiv) * msPerQuarter)
+                                              : v (raw->liveDelay);
     if (v (raw->sizeSync) > 0.5)
         p.sizeMs = juce::jlimit (10.0, maxSyncedSizeMs, quartersFor (raw->sizeDiv) * msPerQuarter);
     switch ((int) v (raw->rateMode))
@@ -427,8 +454,13 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         for (auto it = first; it != last; ++it)
             it->sampleOffset -= start;
 
-        engine.process (wet.getWritePointer (0), wet.getWritePointer (1), len,
+        const int liveWriteBefore = engine.getLiveWritePosition();
+        const float* inLeft = capture.getNumChannels() > 0 ? capture.getReadPointer (0, start) : nullptr;
+        const float* inRight = capture.getNumChannels() > 1 ? capture.getReadPointer (1, start) : inLeft;
+        engine.process (wet.getWritePointer (0), wet.getWritePointer (1), len, inLeft, inRight,
                         noteEvents.data() + (first - noteEvents.begin()), (int) (last - first), grainParams);
+        if (grainParams.live && ! grainParams.freeze)
+            trackLivePeaks (liveWriteBefore, len);
 
         // Sample by sample, reading the input before writing the output: the
         // two can share memory.
@@ -447,6 +479,9 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     }
 
     activeGrains.store (engine.getActiveGrainCount(), std::memory_order_relaxed);
+    liveMode.store (grainParams.live, std::memory_order_relaxed);
+    if (const auto* ring = engine.getLiveBuffer())
+        liveWriteShare.store ((float) engine.getLiveWritePosition() / (float) ring->getNumFrames(), std::memory_order_relaxed);
 
     samplesSinceGrainViews += numSamples;
     if (samplesSinceGrainViews >= (int) (currentSampleRate / 60.0))
@@ -586,6 +621,39 @@ void SiltProcessor::installSample (const juce::AudioBuffer<float>& audio, double
 
     engine.setBuffer (std::move (buffer));
     ++sampleGeneration;
+}
+
+// Audio thread: the peak of each 1/liveColumns of the ring, as it's written,
+// for the screen's scrolling view of the live input.
+void SiltProcessor::trackLivePeaks (int writeStart, int count) noexcept
+{
+    const auto* ring = engine.getLiveBuffer();
+    if (ring == nullptr)
+        return;
+    const int frames = ring->getNumFrames();
+    const float* l = ring->getReadPointer (0);
+    const float* r = ring->getReadPointer (1);
+    for (int i = 0; i < count; ++i)
+    {
+        const int pos = (writeStart + i) % frames;
+        const int column = (int) ((juce::int64) pos * liveColumns / frames);
+        if (column != liveColumn)
+        {
+            if (liveColumn >= 0)
+                livePeaks[(size_t) liveColumn].store (liveColumnPeak, std::memory_order_relaxed);
+            liveColumn = column;
+            liveColumnPeak = 0.0f;
+        }
+        liveColumnPeak = juce::jmax (liveColumnPeak, std::abs (l[pos]), std::abs (r[pos]));
+    }
+}
+
+std::array<float, SiltProcessor::liveColumns> SiltProcessor::getLivePeaks() const
+{
+    std::array<float, liveColumns> out {};
+    for (size_t i = 0; i < out.size(); ++i)
+        out[i] = livePeaks[i].load (std::memory_order_relaxed);
+    return out;
 }
 
 int SiltProcessor::readGrainViews (std::array<silt::GrainView, maxGrainViews>& out) const

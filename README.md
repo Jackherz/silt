@@ -22,8 +22,14 @@ Design and build plan: [`../granular-sampler-vst-research/09-implementation-plan
   and a playhead per voice, capture and load, and a knob for every parameter. The
   finished UI waits on Spike B (WebView).
 
-Not yet (M3): tempo-synced size/rate, scale quantize, Pattern, Slice and Live modes,
-feedback, Heads.
+**Live mode** (PLAY page, MODE: LIVE; the default on Silt FX): the input is written into
+an 8 s ring buffer and grains read a DELAY behind the newest audio (ms or synced note
+value), with FEEDBACK (grain output back into the ring, DC-blocked, low-passed and
+soft-clipped), FREEZE (stop writing) and RUN (a voice at the root note plays while no
+keys are held, so Silt works as a plain effect; keys still transpose). Grains are kept
+clear of the write head. The screen scrolls the input with the newest audio at the right.
+
+Not yet (M3): scale quantize, Pattern, random pitch, Slice mode, Heads, MIDI CC paging.
 
 ## Engine (core/)
 

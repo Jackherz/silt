@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <memory>
+#include <vector>
 
 namespace silt
 {
@@ -16,7 +17,9 @@ struct NoteEvent
     bool isNoteOn = true;
 };
 
-// The sampler engine: 16 voices sharing one read-only sample (plan D11).
+// The sampler engine: 16 voices sharing one read-only sample (plan D11), or in
+// Live mode the live ring buffer: the last ringSeconds of input, written as it
+// arrives (plus feedback), which grains read a delay behind.
 //
 // Threads: setBuffer() and collectGarbage() run on the message thread,
 // everything else on the audio thread. A new buffer reaches the audio thread
@@ -27,11 +30,13 @@ class Engine
 {
 public:
     static constexpr int numVoices = 16;
+    static constexpr double ringSeconds = 8.0;
 
     Engine();
     ~Engine();
 
-    void prepare (double sampleRate);
+    // Allocates the live ring; maxBlockSize bounds how far ahead a block writes.
+    void prepare (double sampleRate, int maxBlockSize = 4096);
     void setSeed (std::uint64_t seed) noexcept;
 
     // Message thread.
@@ -39,11 +44,20 @@ public:
     void collectGarbage();
 
     // Audio thread. Writes (not adds) left/right. Events must be sorted by offset.
+    // inLeft/inRight (may be null) feed the live ring in Live mode.
     void process (float* left, float* right, int numSamples,
+                  const float* inLeft, const float* inRight,
                   const NoteEvent* events, int numEvents, const GrainParams&) noexcept;
+    void process (float* left, float* right, int numSamples,
+                  const NoteEvent* events, int numEvents, const GrainParams& p) noexcept
+    {
+        process (left, right, numSamples, nullptr, nullptr, events, numEvents, p);
+    }
     void allNotesOff() noexcept;
 
     const SampleBuffer* getCurrentBuffer() const noexcept { return current; }
+    const SampleBuffer* getLiveBuffer() const noexcept { return live.get(); }
+    int getLiveWritePosition() const noexcept { return liveWrite; }
     int getActiveGrainCount() const noexcept;
     const GrainVoice& getVoice (int index) const noexcept { return voices[(size_t) index]; }
 
@@ -58,7 +72,9 @@ public:
 
 private:
     void swapInPendingBuffer() noexcept;
-    void handleEvent (const NoteEvent&, const GrainParams&) noexcept;
+    void handleEvent (const NoteEvent&, const GrainParams&, const SampleBuffer*) noexcept;
+    void writeLive (const float* inLeft, const float* inRight, int numSamples, const GrainParams&) noexcept;
+    void updateDrone (const GrainParams&, const SampleBuffer*) noexcept;
     GrainVoice& voiceForNoteOn (int note) noexcept;
 
     std::array<GrainVoice, numVoices> voices;
@@ -69,6 +85,15 @@ private:
     SampleBuffer* previous = nullptr;    // owned; still read by older grains
     std::atomic<SampleBuffer*> pending { nullptr };   // message → audio
     std::atomic<SampleBuffer*> retired { nullptr };   // audio → message
+
+    // Live mode.
+    std::unique_ptr<SampleBuffer> live;
+    int liveWrite = 0, maxBlock = 4096;
+    std::vector<float> lastOutLeft, lastOutRight;    // previous block's output, for feedback
+    int lastOutCount = 0;
+    std::array<float, 2> dcIn {}, dcOut {}, lowpass {};
+    int heldNotes = 0;
+    int droneVoice = -1;                             // the voice playing for RUN, if any
 };
 
 } // namespace silt

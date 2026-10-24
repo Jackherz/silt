@@ -71,6 +71,13 @@ public:
     // retrying if it lands mid-update) and returns how many.
     static constexpr int maxGrainViews = 1024;
     int readGrainViews (std::array<silt::GrainView, maxGrainViews>& out) const;
+
+    // Live mode, for the screen: peaks of the ring by position, and where the
+    // write head is (a share of the ring).
+    static constexpr int liveColumns = 1024;
+    std::array<float, liveColumns> getLivePeaks() const;
+    std::atomic<bool> liveMode { false };
+    std::atomic<float> liveWriteShare { 0.0f };
     int getSampleGeneration() const noexcept { return sampleGeneration.load(); }
 
     juce::AudioProcessorValueTreeState params;
@@ -124,6 +131,11 @@ private:
     std::atomic<int> grainViewCount { 0 };
     std::atomic<std::uint32_t> grainViewSequence { 0 };   // odd while being written
     int samplesSinceGrainViews = 0;
+
+    void trackLivePeaks (int writeStart, int count) noexcept;
+    std::array<std::atomic<float>, liveColumns> livePeaks {};
+    int liveColumn = -1;            // audio thread only
+    float liveColumnPeak = 0.0f;
 
     std::vector<silt::NoteEvent> noteEvents;   // preallocated in prepareToPlay
     juce::AudioBuffer<float> wet;              // engine output, preallocated

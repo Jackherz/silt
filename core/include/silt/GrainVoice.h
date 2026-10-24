@@ -37,6 +37,17 @@ struct GrainParams
     // so changing Size keeps the texture equally thick. rateHz is then ignored.
     int grainCount = 0;
 
+    // Live mode: grains read the engine's live ring buffer instead of the
+    // sample, liveDelayMs behind the newest audio. The engine sets liveNow (the
+    // ring frame being written at this render call's first sample) and
+    // liveMargin (how far ahead of "now" a block can write).
+    bool live = false;
+    double liveDelayMs = 250.0;
+    double feedback = 0.0;         // 0…1: grain output written back into the ring
+    bool freeze = false;           // stop writing: grains play the frozen ring
+    bool liveRun = true;           // a voice at the root note plays while no keys are held
+    double liveNow = 0.0, liveMargin = 0.0;
+
     // Beat grid. When set, grains start on multiples of gridDivision (in
     // quarter notes) of the host position instead of every 1/rateHz seconds;
     // a note's first grain still starts on the note. rateHz should match the
@@ -144,6 +155,7 @@ private:
     int grainLength (const GrainParams&, const Region&, double ratio) const noexcept;
     float readGrain (const Grain&, int channel) const noexcept;
     double grainStartFor (const Region&, double spanFrames) const noexcept;
+    double liveStart (const GrainParams&, const SampleBuffer& ring, int length, double ratio, double scatter) const noexcept;
     double scatterWithin (const Region&, double spanFrames, double scatter) const noexcept;
     static Region regionOf (const GrainParams&, const SampleBuffer&) noexcept;
 

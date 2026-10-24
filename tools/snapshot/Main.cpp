@@ -18,12 +18,21 @@ void runMessageLoop (int ms)
     juce::MessageManager::getInstance()->runDispatchLoopUntil (ms);
 }
 
+// The sample also streams into the input (the sidechain), so Live mode has
+// something to granulate.
+juce::AudioBuffer<float> input;
+int inputPos = 0;
+
 void play (SiltProcessor& silt, double seconds, bool startNote)
 {
     juce::AudioBuffer<float> buffer (juce::jmax (silt.getTotalNumInputChannels(), silt.getTotalNumOutputChannels()), 512);
     for (int done = 0; done < (int) (seconds * 48000.0); done += 512)
     {
         buffer.clear();
+        for (int ch = 0; ch < silt.getTotalNumInputChannels(); ++ch)   // main input and sidechain alike
+            for (int i = 0; i < 512 && input.getNumSamples() > 0; ++i)
+                buffer.setSample (ch, i, input.getSample (ch % input.getNumChannels(), (inputPos + i) % input.getNumSamples()));
+        inputPos += 512;
         juce::MidiBuffer midi;
         if (startNote && done == 0)
             midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
@@ -61,6 +70,16 @@ int main (int argc, char* argv[])
             std::cerr << "unknown parameter " << id << "\n";
     }
 
+    {
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        if (std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (sample)); reader != nullptr)
+        {
+            input.setSize ((int) reader->numChannels, (int) reader->lengthInSamples);
+            reader->read (&input, 0, input.getNumSamples(), 0, true, true);
+        }
+    }
+
     silt.loadFile (sample);
     for (int i = 0; i < 50 && silt.getSampleGeneration() == 0; ++i)
         runMessageLoop (20);
@@ -70,7 +89,7 @@ int main (int argc, char* argv[])
         return 1;
     }
 
-    play (silt, 0.6, true);
+    play (silt, 3.0, true);
 
     std::unique_ptr<juce::AudioProcessorEditor> editor (silt.createEditor());
     editor->setVisible (true);

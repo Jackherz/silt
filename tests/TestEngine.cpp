@@ -528,3 +528,113 @@ TEST_CASE ("Keys transpose around the root note")
     const int octave = crossings (72);
     CHECK (std::abs (octave - 2 * root) < root / 20);
 }
+
+// --- Live mode -------------------------------------------------------------------
+
+namespace
+{
+// Runs a live engine over generated input, 128 samples at a time.
+template <typename Input>
+Rendered renderLive (Engine& engine, const GrainParams& p, int totalSamples, Input&& input, int freezeFrom = -1)
+{
+    Rendered out;
+    out.left.resize ((size_t) totalSamples);
+    out.right.resize ((size_t) totalSamples);
+    std::vector<float> in (128);
+    for (int start = 0; start < totalSamples; start += 128)
+    {
+        const int len = std::min (128, totalSamples - start);
+        for (int i = 0; i < len; ++i)
+            in[(size_t) i] = input (start + i);
+        auto block = p;
+        block.freeze = freezeFrom >= 0 && start >= freezeFrom;
+        engine.process (out.left.data() + start, out.right.data() + start, len,
+                        in.data(), in.data(), nullptr, 0, block);
+    }
+    return out;
+}
+
+struct LiveEngine : Engine
+{
+    LiveEngine() { prepare (sampleRate, 128); setSeed (3); }
+};
+} // namespace
+
+TEST_CASE ("Live grains never read across the write head")
+{
+    // Until the ring fills, the audio just behind the write head is a sine and
+    // just ahead of it is silence, so any grain crossing the write head clicks.
+    for (double pitch : { 0.0, 12.0, 24.0 })
+        for (double size : { 50.0, 400.0, 1500.0 })
+            for (double delay : { 10.0, 300.0 })
+            {
+                LiveEngine engine;
+                GrainParams p;
+                p.live = true;
+                p.liveDelayMs = delay;
+                p.pitchSemitones = pitch;
+                p.sizeMs = size;
+                p.spray = 0.3;
+                p.reverseChance = 0.5;
+                const auto out = renderLive (engine, p, 96000, [] (int i)
+                {
+                    return 0.5f * (float) std::sin (6.283185307179586 * 230.3 * i / sampleRate);
+                });
+
+                // From 0.5 s: before that, 4x grains can reach back to where the
+                // test sine itself starts abruptly from silence.
+                INFO ("pitch " << pitch << " size " << size << " delay " << delay);
+                const std::vector<float> settled (out.left.begin() + 24000, out.left.end());
+                CHECK (maxSecondDifference (settled) < 0.05f);
+                CHECK (peak (settled) > 0.05f);
+            }
+}
+
+TEST_CASE ("Full live feedback stays bounded")
+{
+    LiveEngine engine;
+    GrainParams p;
+    p.live = true;
+    p.feedback = 1.0;
+    p.grainCount = 16;
+    p.sizeMs = 150.0;
+    p.liveDelayMs = 200.0;
+    Random noise (9);
+    const auto out = renderLive (engine, p, (int) (10 * sampleRate), [&noise] (int) { return 0.5f * noise.nextBipolar(); });
+
+    bool finite = true;
+    for (float v : out.left)
+        finite &= std::isfinite (v);
+    CHECK (finite);
+    CHECK (peak (out.left) < 2.0f);
+}
+
+TEST_CASE ("Freeze holds the sound after the input stops")
+{
+    const auto lastSecond = [] (bool freeze)
+    {
+        LiveEngine engine;
+        GrainParams p;
+        p.live = true;
+        p.liveDelayMs = 300.0;
+        const int total = (int) (4 * sampleRate), inputEnds = (int) (2 * sampleRate);
+        const auto out = renderLive (engine, p, total, [inputEnds] (int i)
+        {
+            return i < inputEnds ? 0.5f * (float) std::sin (6.283185307179586 * 240.0 * i / sampleRate) : 0.0f;
+        }, freeze ? inputEnds : -1);
+        return peak ({ out.left.end() - 48000, out.left.end() });
+    };
+
+    CHECK (lastSecond (true) > 0.1f);
+    CHECK (lastSecond (false) < 0.01f);
+}
+
+TEST_CASE ("Without RUN, live mode waits for notes")
+{
+    LiveEngine engine;
+    GrainParams p;
+    p.live = true;
+    p.liveRun = false;
+    const auto out = renderLive (engine, p, 48000, [] (int i) { return 0.5f * (float) std::sin (0.03 * i); });
+    CHECK (peak (out.left) == 0.0f);
+}
