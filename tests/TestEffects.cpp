@@ -276,3 +276,101 @@ TEST_CASE ("Resonator: a tone on a band rings no louder than it went in")
         CHECK (peak < 0.7f);   // below the soft clip's knee: no saturation
     }
 }
+
+namespace
+{
+// How alike the signal is to itself one period later: near 1 for a clear
+// pitch, low for something close to the noise that went in.
+double periodicity (const std::vector<float>& x, int from, int to, int lag)
+{
+    double cross = 0.0, a = 0.0, b = 0.0;
+    for (int i = from; i < to; ++i)
+    {
+        cross += (double) x[(size_t) i] * x[(size_t) (i + lag)];
+        a += (double) x[(size_t) i] * x[(size_t) i];
+        b += (double) x[(size_t) (i + lag)] * x[(size_t) (i + lag)];
+    }
+    return cross / std::sqrt (a * b + 1.0e-30);
+}
+
+// Energy in the second difference: clicks and zipper steps light it up; a
+// smooth low tone hardly does.
+double roughness (const std::vector<float>& x, int from, int to)
+{
+    double sum = 0.0;
+    for (int i = from + 2; i < to; ++i)
+    {
+        const double d = (double) x[(size_t) i] - 2.0 * x[(size_t) i - 1] + x[(size_t) i - 2];
+        sum += d * d;
+    }
+    return sum / (to - from);
+}
+} // namespace
+
+TEST_CASE ("Resonator: a short decay still sounds pitched while sound comes in")
+{
+    Resonator res;
+    res.prepare (rate);
+    auto s = noise ((int) rate, 0.3f);
+    run (res, s, singleBand (69.0f, 0.05f));   // A4, 50 ms
+    const double alike = periodicity (s.left, (int) rate / 2, (int) rate - 200, (int) std::lround (rate / 440.0));
+    INFO ("periodicity " << alike);
+    CHECK (alike > 0.8);
+}
+
+TEST_CASE ("Resonator: a short decay stops soon after the sound does")
+{
+    Resonator res;
+    res.prepare (rate);
+    auto s = noise ((int) rate, 0.3f);
+    const int stop = (int) rate / 2;
+    for (int i = stop; i < (int) rate; ++i)
+        s.left[(size_t) i] = s.right[(size_t) i] = 0.0f;
+    auto p = singleBand (45.0f, 0.05f);   // A2: at Q 30 it would ring ~1 s unchoked
+    run (res, s, p);
+    const double during = db (rms (s.left, stop - 4800, stop));
+    const double after = db (rms (s.left, stop + 9600, stop + 14400));   // 200–300 ms later
+    INFO ("during " << during << " dB, 200 ms after " << after << " dB");
+    CHECK (during - after > 40.0);
+}
+
+TEST_CASE ("Resonator: sweeping range, decay, bright and width doesn't zipper")
+{
+    const auto render = [] (int which, bool sweep)
+    {
+        Resonator res;
+        res.prepare (rate);
+        Stereo s ((int) rate * 2);
+        for (size_t i = 0; i < s.left.size(); ++i)   // a steady low tone on a band
+            s.left[i] = s.right[i] = 0.25f * (float) std::sin (2.0 * 3.14159265358979 * 110.0 * (double) i / rate);
+        ResonatorParams p;
+        p.scale = Scale::minor;
+        p.key = 9;
+        p.rootNote = 45.0f;
+        p.decaySeconds = 2.0f;
+        p.mix = 1.0f;
+        for (int i = 0; i < (int) s.left.size(); i += 256)   // a host block, knob moved each block
+        {
+            const float t = sweep ? 0.5f + 0.5f * (float) std::sin (2.0 * 3.14159265358979 * 2.0 * i / rate) : 0.5f;
+            switch (which)
+            {
+                case 0: p.rangeOctaves = 1.0f + 3.0f * t; break;
+                case 1: p.decaySeconds = 0.05f * std::pow (200.0f, t); break;
+                case 2: p.bright = t; break;
+                default: p.width = t; break;
+            }
+            res.process (s.left.data() + i, s.right.data() + i, std::min (256, (int) s.left.size() - i), p);
+        }
+        // Roughness against level, so a louder sweep isn't counted as zipper.
+        const double level = rms (s.left, (int) rate / 2, (int) rate * 2);
+        return roughness (s.left, (int) rate / 2, (int) rate * 2) / (level * level + 1.0e-20);
+    };
+
+    const char* names[] { "range", "decay", "bright", "width" };
+    for (int which = 0; which < 4; ++which)
+    {
+        const double still = render (which, false), swept = render (which, true);
+        INFO (names[which] << ": swept " << swept << ", still " << still);
+        CHECK (swept < still * 4.0);
+    }
+}

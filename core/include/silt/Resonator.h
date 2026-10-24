@@ -26,7 +26,8 @@ struct ResonatorParams
 
 // A bank of up to 12 ringing band-pass filters (TPT state-variable, in double
 // so long rings at low notes stay clean). The input's mono sum excites every
-// band; each band rings at its note for the decay time. The rings are kept
+// band; each band rings at its note. While sound comes in the bands stay
+// narrow (pitched); when it stops they ring out for the decay time. The rings are kept
 // no louder than the input, so a tone on a band can't run away.
 //
 // Audio thread only, after prepare(). Coefficients follow the parameters every
@@ -53,18 +54,22 @@ private:
     {
         double s1 = 0.0, s2 = 0.0;             // integrator states
         double a1 = 0.0, a2 = 0.0, a3 = 0.0, k = 1.0;
-        double frequency = 0.0;
-        float gainLeft = 0.0f, gainRight = 0.0f;
+        double frequency = 0.0;                // 0: not sounding
+        double gainLeft = 0.0, gainRight = 0.0;  // at the start of this block
+        double nextLeft = 0.0, nextRight = 0.0;  // at its end
     };
 
     void updateCoefficients (const ResonatorParams&, bool snap) noexcept;
 
     static constexpr int controlInterval = 32;
+    static constexpr double resonanceQ = 30.0;   // the narrowest the bands get while sound comes in
     double sampleRate = 44100.0;
     std::array<Band, maxBands> bands {};
     int numBands = 0;
     float mixNow = 0.0f;
+    ResonatorParams smoothed;   // the knobs, gliding
     double inMean = 0.0, inPower = 0.0, wetPower = 0.0, ringGain = 1.0;   // level match
+    double inSlow = 0.0, choke = 0.0;   // choke: 1 once the input has dropped away
     bool active = false;   // false: bands are silent and the input passes through
 };
 

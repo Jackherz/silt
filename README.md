@@ -40,7 +40,8 @@ evenly around the region at full SPREAD; in Live mode, further back in time).
 **RESONATOR page:** a bank of up to 12 ringing band-pass filters after the grains.
 TUNE (the lowest band), NOTES (SCALE: the PITCH page's scale and key, or the root and
 fifths with no scale; HARMONICS; BELL partials), RANGE (1–4 octaves the bands reach),
-DECAY (ring time, 50 ms–20 s), BRIGHT (how much quieter and shorter the high bands
+DECAY (how long the bands ring once the sound stops, 50 ms–20 s; while sound comes in
+they stay narrow and pitched, so short decays still colour it), BRIGHT (how much quieter and shorter the high bands
 are), WIDTH (bands alternate left and right), FOLLOW (tune to the last note played),
 MIX (0 is an exact bypass). The rings are held to the input's level, so a tone
 right on a band can't run away; anything left over saturates softly rather than clips.
