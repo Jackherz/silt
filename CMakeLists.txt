@@ -36,9 +36,39 @@ set(SILT_BUNDLE_PREFIX com.siltaudio)
 
 # The engine: plain C++ with no JUCE dependency, so the same code builds into
 # both plug-ins, the tests and the offline render tool (plan §3).
-add_library(silt_core STATIC core/src/LevelMeter.cpp)
+add_library(silt_core STATIC
+    core/src/Engine.cpp
+    core/src/GrainVoice.cpp
+    core/src/LevelMeter.cpp
+    core/src/SampleBuffer.cpp)
 target_include_directories(silt_core PUBLIC core/include)
+target_compile_options(silt_core PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W4> $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wshadow>)
 set_target_properties(silt_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+option(SILT_BUILD_TESTS "Build the core unit tests (fetches Catch2)" ON)
+if(SILT_BUILD_TESTS)
+    FetchContent_Declare(Catch2
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG v3.15.3
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(Catch2)
+
+    add_executable(silt_tests tests/TestDsp.cpp tests/TestEngine.cpp)
+    target_link_libraries(silt_tests PRIVATE silt_core Catch2::Catch2WithMain)
+
+    enable_testing()
+    list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
+    include(Catch)
+    catch_discover_tests(silt_tests)
+endif()
+
+# Offline renderer: audio file + notes + settings in, WAV out.
+juce_add_console_app(silt_render PRODUCT_NAME "silt-render")
+target_sources(silt_render PRIVATE tools/render/Main.cpp)
+target_compile_definitions(silt_render PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(silt_render
+    PRIVATE silt_core juce::juce_audio_formats
+    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
 function(silt_add_plugin target)
     cmake_parse_arguments(ARG "" "PRODUCT_NAME;PLUGIN_CODE;BUNDLE_SUFFIX;IS_SYNTH;AU_MAIN_TYPE"

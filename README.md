@@ -9,9 +9,49 @@ A granular sampler for VST3 / AU / CLAP, built twice from one codebase:
 
 Design and build plan: [`../granular-sampler-vst-research/09-implementation-plan.md`](../granular-sampler-vst-research/09-implementation-plan.md).
 
-**Status: M0.** No engine yet. Both builds show a test panel reporting what the host
-sends them: capture source and level, MIDI notes, tempo and transport. The instrument
-outputs silence unless **Monitor input** is on; Silt FX passes its input through.
+**Status: M1 (engine core, headless).** The grain engine runs in the unit tests and the
+offline render tool, not yet inside the plug-ins. The plug-ins are still the M0 test
+panel reporting what the host sends them: capture source and level, MIDI notes, tempo
+and transport. The instrument outputs silence unless **Monitor input** is on; Silt FX
+passes its input through.
+
+## Engine (core/)
+
+One MIDI-played voice: a playhead moving through the sample, a grain scheduler (Sync
+timing), a 64-grain pool, Hann envelopes, cubic or linear interpolation.
+
+- **Controls:** pitch, size, rate, spray (start scatter up to ±1 s, plus stereo
+  scatter), start, scan (playhead speed, −4…+4×), reverse chance, root note, and what
+  the playhead does at the end of the sample (loop / hold / stop).
+- **Grains latch their settings** when they start; a full pool drops new grains rather
+  than cutting old ones off.
+- **Buffer swaps are lock-free:** grains already playing finish on the old buffer, which
+  then goes back to the message thread to be freed.
+
+## Tests and listening
+
+```bash
+ctest --test-dir build --output-on-failure      # or ./build/silt_tests
+tools/render/make-listening-set.sh               # renders build/listen/*.wav
+```
+
+The tests cover the window and interpolation maths, the reverse-grain span, deterministic
+output per seed, ten minutes of noise without NaN or denormals, click-free output over a
+192-setting grid, buffer swaps and key transposition. A negative control checks that the
+click detector does catch a real click.
+
+The listening set renders a sine, a synthesised drum loop and text-to-speech through the
+recipes from research doc 01 §4 (time-stretch, pad, glitch, chops, reverse, one-shot).
+`silt_render` also takes your own files:
+
+```bash
+build/silt_render_artefacts/Release/silt_render --in loop.wav --out out.wav \
+    --note 64 --hold 6 --set size=150 --set spray=0.2 --set scan=0.5
+```
+
+**Known limits, for M2:** a grain that crosses the loop point of a sample that doesn't
+loop cleanly clicks (needs a loop crossfade); there's no output limiter yet, so dense
+settings on loud material can peak just over 0 dBFS.
 
 ## Build
 
@@ -74,6 +114,8 @@ them in before the first public build; after that they never change.
 ## Layout
 
 ```
-core/      engine code, plain C++ (no JUCE), shared by both plug-ins, tests and tools
-plugin/    the JUCE processor and editor, compiled once per build
+core/          engine code, plain C++ (no JUCE), shared by both plug-ins, tests and tools
+plugin/        the JUCE processor and editor, compiled once per build
+tests/         Catch2 unit tests for core/
+tools/render/  offline renderer and the listening-set script
 ```
