@@ -14,7 +14,7 @@ const juce::StringArray divisionNames { "1/64", "1/32", "1/16T", "1/16", "1/8T",
                                         "1/8D", "1/4", "1/2T", "1/4D", "1/2", "1/2D", "1 bar", "2 bars", "4 bars" };
 constexpr double divisionQuarters[] { 1.0 / 16, 1.0 / 8, 1.0 / 6, 1.0 / 4, 1.0 / 3, 3.0 / 8, 1.0 / 2, 2.0 / 3,
                                       3.0 / 4, 1.0, 4.0 / 3, 3.0 / 2, 2.0, 3.0, 4.0, 8.0, 16.0 };
-constexpr int sixteenth = 3, eighth = 6;
+constexpr int sixteenth = 3, eighth = 6, dottedEighth = 8;
 constexpr double maxDelayMs = 4000.0;
 
 // In silt::Scale order.
@@ -226,6 +226,28 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 percent ("colorWow", "Color wow", 0.0f),
                 percent ("colorMix", "Color mix", 100.0f));
 
+    // Space: delay and reverb sends, last in the chain.
+    layout.add (withUnit ("spaceTime", "Delay time", skewed (10.0f, 4000.0f, 400.0f), 375.0f, formatMs),
+                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "spaceSync", 1 }, "Delay sync", false),
+                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "spaceDiv", 1 }, "Delay time (synced)",
+                                                              divisionNames, dottedEighth),
+                percent ("spaceFeedback", "Delay feedback", 35.0f),
+                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "spaceMode", 1 }, "Delay mode",
+                                                              juce::StringArray { "Ping-pong", "Stereo" }, 0),
+                percent ("spaceDelay", "Delay level", 0.0f),
+                percent ("spaceSize", "Reverb size", 50.0f),
+                withUnit ("spaceDecay", "Reverb decay", skewed (0.3f, 30.0f, 3.0f), 3.0f,
+                          [] (float v, int) { return formatMs (v * 1000.0f, 0); }),
+                withUnit ("spaceTone", "Space tone", Range (0.0f, 100.0f, 0.1f), 50.0f, [] (float v, int)
+                {
+                    const int n = juce::roundToInt (v);
+                    return n < 50 ? "DARK " + juce::String ((50 - n) * 2) + "%"
+                         : n > 50 ? "BRIGHT " + juce::String ((n - 50) * 2) + "%" : juce::String ("NATURAL");
+                }),
+                percent ("spaceShimmer", "Reverb shimmer", 0.0f),
+                percent ("spaceReverb", "Reverb level", 0.0f),
+                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "spaceFreeze", 1 }, "Space freeze", false));
+
     // Capture and output
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "captureBars", 1 }, "Capture length",
                                                               captureBarChoices, 1),
@@ -274,6 +296,9 @@ struct SiltProcessor::RawParams
         filterDrive = p ("filterDrive"); filterEnv = p ("filterEnv"); filterKey = p ("filterKey"); filterMix = p ("filterMix");
         colorDrive = p ("colorDrive"); colorTone = p ("colorTone"); colorBits = p ("colorBits"); colorRate = p ("colorRate");
         colorComp = p ("colorComp"); colorNoise = p ("colorNoise"); colorWow = p ("colorWow"); colorMix = p ("colorMix");
+        spaceTime = p ("spaceTime"); spaceSync = p ("spaceSync"); spaceDiv = p ("spaceDiv"); spaceFeedback = p ("spaceFeedback");
+        spaceMode = p ("spaceMode"); spaceDelay = p ("spaceDelay"); spaceSize = p ("spaceSize"); spaceDecay = p ("spaceDecay");
+        spaceTone = p ("spaceTone"); spaceShimmer = p ("spaceShimmer"); spaceReverb = p ("spaceReverb"); spaceFreeze = p ("spaceFreeze");
         monitor = p ("monitor"); mix = p ("mix");   // one of these is null, per build
     }
 
@@ -287,6 +312,8 @@ struct SiltProcessor::RawParams
     std::atomic<float>* resTune, *resNotes, *resRange, *resDecay, *resBright, *resWidth, *resFollow, *resMix;
     std::atomic<float>* filterMode, *filterCutoff, *filterReso, *filterMorph, *filterDrive, *filterEnv, *filterKey, *filterMix;
     std::atomic<float>* colorDrive, *colorTone, *colorBits, *colorRate, *colorComp, *colorNoise, *colorWow, *colorMix;
+    std::atomic<float>* spaceTime, *spaceSync, *spaceDiv, *spaceFeedback, *spaceMode, *spaceDelay, *spaceSize, *spaceDecay;
+    std::atomic<float>* spaceTone, *spaceShimmer, *spaceReverb, *spaceFreeze;
 };
 
 juce::AudioProcessor::BusesProperties SiltProcessor::makeBuses()
@@ -340,6 +367,7 @@ void SiltProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamples
     resonator.prepare (sampleRate);
     filter.prepare (sampleRate);
     color.prepare (sampleRate);
+    space.prepare (sampleRate);
     lastNote = -1;
     liveColumn = -1;
     liveColumnPeak = 0.0f;
@@ -504,6 +532,26 @@ silt::ColorParams SiltProcessor::readColorParams() const noexcept
     return p;
 }
 
+// Audio thread. A synced time follows the host tempo (the last one seen while stopped).
+silt::SpaceParams SiltProcessor::readSpaceParams() const noexcept
+{
+    const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
+    const double msPerQuarter = 60000.0 / juce::jlimit (20.0, 400.0, hostBpm.load (std::memory_order_relaxed));
+    silt::SpaceParams p;
+    p.delayMs = v (raw->spaceSync) > 0.5f ? (float) juce::jlimit (10.0, silt::Space::maxDelaySeconds * 1000.0, quartersFor (raw->spaceDiv) * msPerQuarter)
+                                          : v (raw->spaceTime);
+    p.feedback = v (raw->spaceFeedback) * 0.01f;
+    p.delayLevel = v (raw->spaceDelay) * 0.01f;
+    p.pingPong = (int) v (raw->spaceMode) == 0;
+    p.size = v (raw->spaceSize) * 0.01f;
+    p.decaySeconds = v (raw->spaceDecay);
+    p.tone = v (raw->spaceTone) * 0.01f;
+    p.shimmer = v (raw->spaceShimmer) * 0.01f;
+    p.reverbLevel = v (raw->spaceReverb) * 0.01f;
+    p.freeze = v (raw->spaceFreeze) > 0.5f;
+    return p;
+}
+
 // Audio thread. Armed: wait for the next bar line (or start now when the host
 // is stopped), then record until the target is full.
 void SiltProcessor::runCapture (const juce::AudioBuffer<float>& capture, const juce::AudioPlayHead::PositionInfo* pos)
@@ -618,6 +666,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     const auto resonatorParams = readResonatorParams (grainParams);
     const auto filterParams = readFilterParams();
     const auto colorParams = readColorParams();
+    const auto spaceParams = readSpaceParams();
 
     // Synced Rate locks grains to the beat grid while the host plays; stopped,
     // they free-run at the synced rate.
@@ -652,6 +701,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         resonator.process (wet.getWritePointer (0), wet.getWritePointer (1), len, resonatorParams);
         filter.process (wet.getWritePointer (0), wet.getWritePointer (1), len, filterParams);
         color.process (wet.getWritePointer (0), wet.getWritePointer (1), len, colorParams);
+        space.process (wet.getWritePointer (0), wet.getWritePointer (1), len, spaceParams);
 
         // Sample by sample, reading the input before writing the output: the
         // two can share memory.
@@ -785,6 +835,13 @@ juce::String SiltProcessor::slotParameter (int page, int slot) const
         case 6:   // COLOR
         {
             const char* ids[] { "colorDrive", "colorTone", "colorBits", "colorRate", "colorComp", "colorNoise", "colorWow", "colorMix" };
+            return ids[slot];
+        }
+        case 7:   // SPACE
+        {
+            const char* ids[] { nullptr, "spaceFeedback", "spaceDelay", "spaceSize", "spaceDecay", "spaceTone", "spaceShimmer", "spaceReverb" };
+            if (slot == 0)
+                return v ("spaceSync") > 0.5f ? "spaceDiv" : "spaceTime";
             return ids[slot];
         }
         case 3:   // PLAY

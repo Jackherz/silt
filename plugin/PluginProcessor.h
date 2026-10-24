@@ -7,6 +7,7 @@
 #include <silt/Filter.h>
 #include <silt/LevelMeter.h>
 #include <silt/Resonator.h>
+#include <silt/Space.h>
 
 #include <atomic>
 
@@ -58,7 +59,7 @@ public:
     // editor's (GRAIN / SHAPE / PITCH / PLAY), alternatives following the modes.
     // A knob takes over a parameter only once it reaches the parameter's value
     // (pickup), so switching pages never makes values jump.
-    static constexpr int numPages = 7, slotsPerPage = 8;
+    static constexpr int numPages = 8, slotsPerPage = 8;
     std::atomic<int> currentPage { 0 };
     std::array<std::atomic<int>, slotsPerPage> knobCCs {};
     std::atomic<int> previousPageCC { 78 }, nextPageCC { 79 };
@@ -126,6 +127,7 @@ private:
     silt::ResonatorParams readResonatorParams (const silt::GrainParams&) const noexcept;
     silt::FilterParams readFilterParams() const noexcept;
     silt::ColorParams readColorParams() const noexcept;
+    silt::SpaceParams readSpaceParams() const noexcept;
     void runCapture (const juce::AudioBuffer<float>& capture, const juce::AudioPlayHead::PositionInfo*);
     void timerCallback() override;
 
@@ -139,6 +141,7 @@ private:
     silt::Resonator resonator;   // after the grains
     silt::Filter filter;         // after the resonator
     silt::Color color;           // after the filter
+    silt::Space space;           // last: delay and reverb sends
     int lastNote = -1;           // the last note played, for FOLLOW and KEY (audio thread)
     double currentSampleRate = 48000.0;
 

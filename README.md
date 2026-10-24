@@ -60,8 +60,19 @@ to 200 Hz), COMP (one knob: threshold down, ratio up, makeup to match), NOISE (h
 that rides the signal's level, so silence stays silent), WOW (slow wow and faster
 flutter; no added delay at zero), MIX.
 
+**SPACE page** (last; delay and reverb are sends, so DELAY and REVERB at 0 leave the
+sound untouched; design notes in research doc 10): TIME (10 ms–4 s, or note values
+with SYNC), FEEDBACK (repeats darken and soften through TONE's filters and a gentle
+saturation, so even 100% stays bounded; PING-PONG or STEREO under it), DELAY (level;
+the repeats also feed the reverb), SIZE (room to cathedral: line lengths and
+pre-delay), DECAY (0.3–30 s, the same at any SIZE; FREEZE under it holds both tails
+and shuts the input out), TONE (dark to bright: reverb bandwidth, how fast highs die,
+the delay's loop filters), SHIMMER (octave-up feedback in the reverb), REVERB (level).
+The reverb is an 8-channel diffuser into an 8-line feedback delay network with
+per-line modulation and absorption filters; changing TIME glides like tape.
+
 **8-knob controller:** a controller's 8 knobs move the 8 slots of the current page
-(GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER / COLOR), following the modes; two buttons step pages; works with
+(GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER / COLOR / SPACE), following the modes; two buttons step pages; works with
 the window closed. Defaults: knobs CC 70–77, pages CC 78/79. **LEARN**: turn knobs 1–8,
 then press previous and next page. A knob takes over only when it reaches the
 parameter's value (pickup), so changing page never makes values jump. The mapping and

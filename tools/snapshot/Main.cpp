@@ -4,7 +4,7 @@
 //   silt_snapshot sample.wav out-folder [param=value ...]
 //
 // Loads the sample, holds a note so grains are sounding, then writes one PNG
-// per page (grain.png, shape.png, pitch.png, play.png, resonator.png, filter.png, color.png). Parameter values are in the
+// per page (grain.png, shape.png, pitch.png, play.png, resonator.png, filter.png, color.png, space.png). Parameter values are in the
 // parameter's own units (ms, %, st...).
 
 #include "../../plugin/PluginEditor.h"
@@ -95,7 +95,7 @@ int main (int argc, char* argv[])
     editor->setVisible (true);
     runMessageLoop (100);
 
-    for (const auto* name : { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER", "COLOR" })
+    for (const auto* name : { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER", "COLOR", "SPACE" })
     {
         for (auto* child : editor->getChildren())
             if (auto* tab = dynamic_cast<juce::TextButton*> (child); tab != nullptr && tab->getButtonText() == name)

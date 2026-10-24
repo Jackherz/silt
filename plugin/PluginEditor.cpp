@@ -648,6 +648,30 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addKnob (Page::color, 6, "colorWow", "WOW");
     addKnob (Page::color, 7, "colorMix", "MIX");
 
+    // SPACE: delay and reverb, both sends. SYNC sits under TIME, the delay mode
+    // under FEEDBACK, FREEZE (both tails) under DECAY.
+    const auto spaceSynced = std::function<bool()> ([this] { return spaceSyncButton.getToggleState(); });
+    addKnob (Page::space, 0, "spaceTime", "TIME").shown = [=] { return ! spaceSynced(); };
+    addKnob (Page::space, 0, "spaceDiv", "TIME").shown = spaceSynced;
+    addKnob (Page::space, 1, "spaceFeedback", "FEEDBACK");
+    addKnob (Page::space, 2, "spaceDelay", "DELAY");
+    addKnob (Page::space, 3, "spaceSize", "SIZE");
+    addKnob (Page::space, 4, "spaceDecay", "DECAY");
+    addKnob (Page::space, 5, "spaceTone", "TONE");
+    addKnob (Page::space, 6, "spaceShimmer", "SHIMMER");
+    addKnob (Page::space, 7, "spaceReverb", "REVERB");
+    for (auto* b : { &spaceSyncButton, &spaceFreezeButton })
+    {
+        b->setClickingTogglesState (true);
+        addChildComponent (*b);
+    }
+    buttonAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "spaceSync", spaceSyncButton));
+    buttonAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "spaceFreeze", spaceFreezeButton));
+    spaceSyncButton.onStateChange = [this] { updateVisibility(); };
+    spaceMode.addItemList ({ "PING-PONG", "STEREO" }, 1);
+    addChildComponent (spaceMode);
+    menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "spaceMode", spaceMode));
+
     // Rate mode and Size SYNC sit under their knobs on the GRAIN page.
     rateMode.addItemList ({ "FREE", "SYNC", "GRAINS" }, 1);
     addChildComponent (rateMode);
@@ -659,7 +683,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     sizeSyncButton.onStateChange = [this] { updateVisibility(); };
 
     // Page tabs.
-    const char* names[] { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER", "COLOR" };
+    const char* names[] { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER", "COLOR", "SPACE" };
     for (size_t i = 0; i < pageTabs.size(); ++i)
     {
         auto& tab = pageTabs[i];
@@ -808,6 +832,8 @@ void SiltEditor::updateVisibility()
     sizeSyncButton.setVisible (page == Page::grain);
     delaySyncButton.setVisible (page == Page::play && keyMode.getSelectedItemIndex() == 1);
     snapMenu.setVisible (page == Page::play && keyMode.getSelectedItemIndex() == 0);
+    for (juce::Component* c : { (juce::Component*) &spaceSyncButton, (juce::Component*) &spaceMode, (juce::Component*) &spaceFreezeButton })
+        c->setVisible (page == Page::space);
     repaint (pagePanel);
 }
 
@@ -981,6 +1007,9 @@ void SiltEditor::resized()
     delaySyncButton.setBounds (under (1, 60));
     snapMenu.setBounds (under (1, 104));
     rateMode.setBounds (under (2, 92));
+    spaceSyncButton.setBounds (under (0, 60));
+    spaceMode.setBounds (under (1, 104));
+    spaceFreezeButton.setBounds (under (4, 72));
 }
 
 void SiltEditor::paintPreview (juce::Graphics& g)
