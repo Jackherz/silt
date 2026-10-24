@@ -143,6 +143,60 @@ private:
     std::uint64_t state = 0;
 };
 
+// Scales for pitch snapping, as sets of pitch classes above the key.
+enum class Scale { off, chromatic, major, minor, dorian, phrygian, lydian, mixolydian,
+                   majorPentatonic, minorPentatonic, wholeTone, octaves, fifths };
+
+constexpr int scaleCount = 13;
+
+// Bit n set = n semitones above the key is in the scale.
+constexpr std::uint16_t scaleMask (Scale s) noexcept
+{
+    switch (s)
+    {
+        case Scale::off:
+        case Scale::chromatic:       return 0xfff;
+        case Scale::major:           return 0b101010110101;   // 0 2 4 5 7 9 11
+        case Scale::minor:           return 0b010110101101;   // 0 2 3 5 7 8 10
+        case Scale::dorian:          return 0b011010101101;   // 0 2 3 5 7 9 10
+        case Scale::phrygian:        return 0b010110101011;   // 0 1 3 5 7 8 10
+        case Scale::lydian:          return 0b101011010101;   // 0 2 4 6 7 9 11
+        case Scale::mixolydian:      return 0b011010110101;   // 0 2 4 5 7 9 10
+        case Scale::majorPentatonic: return 0b001010010101;   // 0 2 4 7 9
+        case Scale::minorPentatonic: return 0b010010101001;   // 0 3 5 7 10
+        case Scale::wholeTone:       return 0b010101010101;   // 0 2 4 6 8 10
+        case Scale::octaves:         return 0b000000000001;   // 0
+        case Scale::fifths:          return 0b000010000001;   // 0 7
+    }
+    return 0xfff;
+}
+
+// Snaps a (fractional) MIDI pitch to the nearest note of the scale in the
+// given key (0 = C … 11 = B); ties go down. Scale::off leaves it unchanged.
+inline double snapToScale (double pitch, Scale scale, int key) noexcept
+{
+    if (scale == Scale::off)
+        return pitch;
+    const auto mask = scaleMask (scale);
+    const int nearest = (int) std::lround (pitch);
+    double best = nearest;
+    double bestDistance = 1.0e9;
+    for (int offset = -12; offset <= 12; ++offset)
+    {
+        const int candidate = nearest + offset;
+        const int degree = ((candidate - key) % 12 + 12) % 12;
+        if ((mask >> degree & 1u) == 0)
+            continue;
+        const double distance = std::abs (candidate - pitch);
+        if (distance < bestDistance - 1.0e-9)
+        {
+            bestDistance = distance;
+            best = candidate;
+        }
+    }
+    return best;
+}
+
 // The span of buffer frames a grain reads, [lo, hi), before wrapping.
 // A reversed grain starts at the far end of the forward grain's span and
 // reads back to its start, so both directions cover the same audio

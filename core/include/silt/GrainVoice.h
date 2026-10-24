@@ -37,6 +37,21 @@ struct GrainParams
     double ease = 0.5;
     double declickMs = 1.0;        // shortest fade allowed
 
+    // Pitch page. Each grain's pitch is the key's transposition + pitchSemitones
+    // + a random offset (±randomPitch) + the pattern's current step × patternDepth,
+    // then snapped to the scale in key (0 = C … 11 = B).
+    double randomPitch = 0.0;       // semitones either way
+    Scale scale = Scale::off;
+    int key = 0;
+    double patternDepth = 0.0;      // semitones at a pattern value of ±1
+    int patternSteps = 8;
+    const float* pattern = nullptr; // patternSteps values in −1…1 (set by the engine)
+    std::uint32_t patternSeed = 1;  // picks the pattern; the engine makes it
+    // Heads: playheads per note, spread across the region (or further back in
+    // time in Live mode) by headSpread; grains take turns between them.
+    int heads = 1;
+    double headSpread = 0.5;        // 0…1 of the region (Live: of 1 s)
+
     // Grains mode (after Tonverk's Grainer "amount"): when > 0, this many grains
     // sound at once on average and the start interval follows the grain length,
     // so changing Size keeps the texture equally thick. rateHz is then ignored.
@@ -110,6 +125,7 @@ public:
     int getActiveGrainCount() const noexcept { return activeGrains; }
     std::uint64_t getGrainsStarted() const noexcept { return grainsStarted; }
     double getLastGrainStart() const noexcept { return lastGrainStart; }   // buffer frames
+    double getLastGrainSemitones() const noexcept { return lastGrainSemitones; }   // above the root note
 
     // Playhead as a share of the buffer, for the UI.
     float getPlayheadPosition() const noexcept { return playheadPosition; }
@@ -158,6 +174,7 @@ private:
     struct GainEstimate { float estimate, coherent, incoherent; };
     GainEstimate gainEstimate (const GrainParams&, const SampleBuffer*) const noexcept;
     double pitchRatio (const GrainParams&, const SampleBuffer&) const noexcept;
+    double nextGrainSemitones (const GrainParams&) noexcept;
     int grainLength (const GrainParams&, const Region&, double ratio) const noexcept;
     float readGrain (const Grain&, int channel) const noexcept;
     double grainStartFor (const Region&, double spanFrames) const noexcept;
@@ -179,7 +196,8 @@ private:
     double samplesToNextGrain = 0.0;
     bool spawning = false;
     std::uint64_t grainsStarted = 0;
-    double lastGrainStart = 0.0;
+    double lastGrainStart = 0.0, lastGrainSemitones = 0.0;
+    int patternStep = 0, headCounter = 0;
 
     // Beat-grid scheduling: the next grid line, and where the previous render
     // call ended, to notice transport jumps.

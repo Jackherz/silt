@@ -16,6 +16,11 @@ constexpr double divisionQuarters[] { 1.0 / 16, 1.0 / 8, 1.0 / 6, 1.0 / 4, 1.0 /
                                       3.0 / 4, 1.0, 4.0 / 3, 3.0 / 2, 2.0, 3.0, 4.0, 8.0, 16.0 };
 constexpr int sixteenth = 3, eighth = 6;
 constexpr double maxDelayMs = 4000.0;
+
+// In silt::Scale order.
+const juce::StringArray scaleNames { "Off", "Chromatic", "Major", "Minor", "Dorian", "Phrygian", "Lydian",
+                                     "Mixolydian", "Major pent.", "Minor pent.", "Whole tone", "Octaves", "Fifths" };
+const juce::StringArray keyNames { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
 constexpr int rateModeSync = 1, rateModeGrains = 2;   // "rateMode" choices; 0 is Free
 constexpr double maxSyncedSizeMs = 4000.0;
 
@@ -114,6 +119,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                         return juce::MidiMessage::getMidiNoteName (note, true, true, 3);
                     })));
 
+    // Pitch page: random pitch, scale snapping, pattern, heads.
+    const auto semitonesSpread = [] (float v, int) { return (v < 0.05f ? juce::String ("0") : juce::String::fromUTF8 ("\xc2\xb1") + juce::String (v, 1)) + " st"; };
+    const auto semitonesDepth = [] (float v, int) { return juce::String (v, 1) + " st"; };
+    layout.add (withUnit ("randPitch", "Random pitch", Range (0.0f, 24.0f, 0.01f), 0.0f, semitonesSpread),
+                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "scale", 1 }, "Scale", scaleNames, 0),
+                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "key", 1 }, "Key", keyNames, 0),
+                withUnit ("patternDepth", "Pattern", Range (0.0f, 24.0f, 0.01f), 0.0f, semitonesDepth),
+                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "patternSteps", 1 }, "Pattern steps", 2, 16, 8,
+                    juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int n, int) { return juce::String (n) + " steps"; })),
+                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "patternSeed", 1 }, "Pattern seed", 1, 9999, 1),
+                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "heads", 1 }, "Heads", 1, 8, 1,
+                    juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int n, int) { return juce::String (n) + (n == 1 ? " head" : " heads"); })),
+                percent ("headSpread", "Head spread", 50.0f));
+
     // Mode: the sample (PITCH) or the live input (LIVE: a granular delay).
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "keyMode", 1 }, "Mode",
                                                               juce::StringArray { "Pitch", "Live" },
@@ -169,6 +188,8 @@ struct SiltProcessor::RawParams
         captureBars = p ("captureBars"); gain = p ("gain");
         keyMode = p ("keyMode"); liveDelay = p ("liveDelay"); delaySync = p ("delaySync"); delayDiv = p ("delayDiv");
         feedback = p ("feedback"); freeze = p ("freeze"); liveRun = p ("liveRun");
+        randPitch = p ("randPitch"); scale = p ("scale"); key = p ("key"); patternDepth = p ("patternDepth");
+        patternSteps = p ("patternSteps"); patternSeed = p ("patternSeed"); heads = p ("heads"); headSpread = p ("headSpread");
         monitor = p ("monitor"); mix = p ("mix");   // one of these is null, per build
     }
 
@@ -178,6 +199,7 @@ struct SiltProcessor::RawParams
     std::atomic<float>* attack, *decay, *sustain, *release, *root;
     std::atomic<float>* captureBars, *gain, *monitor, *mix;
     std::atomic<float>* keyMode, *liveDelay, *delaySync, *delayDiv, *feedback, *freeze, *liveRun;
+    std::atomic<float>* randPitch, *scale, *key, *patternDepth, *patternSteps, *patternSeed, *heads, *headSpread;
 };
 
 juce::AudioProcessor::BusesProperties SiltProcessor::makeBuses()
@@ -299,6 +321,15 @@ silt::GrainParams SiltProcessor::readParams() const noexcept
     p.sustain = v (raw->sustain) * 0.01;
     p.releaseMs = v (raw->release);
     p.rootNote = (int) v (raw->root);
+
+    p.randomPitch = v (raw->randPitch);
+    p.scale = (silt::Scale) juce::jlimit (0, silt::scaleCount - 1, (int) v (raw->scale));
+    p.key = juce::jlimit (0, 11, (int) v (raw->key));
+    p.patternDepth = v (raw->patternDepth);
+    p.patternSteps = (int) v (raw->patternSteps);
+    p.patternSeed = (std::uint32_t) v (raw->patternSeed);
+    p.heads = juce::jlimit (1, 8, (int) v (raw->heads));
+    p.headSpread = v (raw->headSpread) * 0.01;
 
     p.live = (int) v (raw->keyMode) == 1;
     p.feedback = v (raw->feedback) * 0.01;

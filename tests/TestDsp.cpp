@@ -103,3 +103,24 @@ TEST_CASE ("Random is deterministic per seed and stays in range")
     }
     CHECK (differs);
 }
+
+TEST_CASE ("Scale snapping lands on the nearest scale note, ties going down")
+{
+    CHECK (snapToScale (60.0, Scale::major, 0) == 60.0);    // C in C major
+    CHECK (snapToScale (61.0, Scale::major, 0) == 60.0);    // C# → C (tie, down)
+    CHECK (snapToScale (61.4, Scale::major, 0) == 62.0);    // nearer D
+    CHECK (snapToScale (66.0, Scale::major, 0) == 65.0);    // F# → F (tie, down)
+    CHECK (snapToScale (61.0, Scale::major, 2) == 61.0);    // C# is in D major
+    CHECK (snapToScale (63.0, Scale::minorPentatonic, 0) == 63.0);
+    CHECK (snapToScale (64.0, Scale::minorPentatonic, 0) == 63.0);
+    CHECK (snapToScale (66.0, Scale::octaves, 0) == 60.0);  // tie between 60 and 72, down
+    CHECK (snapToScale (67.0, Scale::octaves, 0) == 72.0);
+    CHECK (snapToScale (60.37, Scale::chromatic, 0) == 60.0);
+    CHECK (snapToScale (60.37, Scale::off, 0) == 60.37);
+}
+
+TEST_CASE ("Every scale contains its key")
+{
+    for (int s = 0; s < scaleCount; ++s)
+        CHECK ((scaleMask ((Scale) s) & 1u) == 1u);
+}

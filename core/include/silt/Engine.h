@@ -96,6 +96,11 @@ private:
     int heldNotes = 0;
     int droneVoice = -1;                             // the voice playing with no keys held, if any
 
+    // The pitch pattern, regenerated when its seed changes.
+    std::array<float, 16> pattern {};
+    std::uint32_t patternSeed = 0;
+    bool patternMade = false;
+
     // Input follower (LiveTrigger::follow): fast and slow level envelopes, the
     // gate they open, and the time since the last trigger.
     float fastLevel = 0.0f, slowLevel = 0.0f;

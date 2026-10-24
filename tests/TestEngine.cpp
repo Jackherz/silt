@@ -675,3 +675,116 @@ TEST_CASE ("Follow: the input's level plays the envelope")
     const auto always = run (LiveTrigger::always);
     CHECK (rms (always, 1.1, 1.3) > 0.05);
 }
+
+// --- Pitch page --------------------------------------------------------------------
+
+namespace
+{
+// Each new grain's pitch (semitones above the root) over a held note.
+std::vector<double> grainPitches (GrainParams p, int note, int grainsWanted)
+{
+    TestEngine engine (makeSine (240.0, 4.0));
+    p.rateHz = 50.0;
+    p.sizeMs = 40.0;
+    std::vector<float> l (64), r (64);
+    NoteEvent on { 0, note, 1.0f, true };
+    std::vector<double> pitches;
+    std::uint64_t seen = 0;
+    for (int done = 0; (int) pitches.size() < grainsWanted && done < 48000 * 30; done += 64)
+    {
+        engine.process (l.data(), r.data(), 64, done == 0 ? &on : nullptr, done == 0 ? 1 : 0, p);
+        if (engine.getVoice (0).getGrainsStarted() != seen)
+        {
+            seen = engine.getVoice (0).getGrainsStarted();
+            pitches.push_back (engine.getVoice (0).getLastGrainSemitones());
+        }
+    }
+    return pitches;
+}
+} // namespace
+
+TEST_CASE ("Random pitch with a scale keeps every grain in key")
+{
+    GrainParams p;
+    p.randomPitch = 12.0;
+    p.scale = Scale::minorPentatonic;
+    p.key = 9;   // A
+    const auto pitches = grainPitches (p, 64, 300);   // E: a key in the scale, 4 above the root
+
+    bool allInScale = true, varied = false;
+    for (double s : pitches)
+    {
+        const int midi = (int) std::lround (p.rootNote + s);
+        allInScale &= std::abs (p.rootNote + s - midi) < 1.0e-9;
+        allInScale &= ((scaleMask (p.scale) >> (((midi - p.key) % 12 + 12) % 12)) & 1u) == 1u;
+        varied |= std::abs (s - pitches.front()) > 0.5;
+    }
+    CHECK (allInScale);
+    CHECK (varied);
+}
+
+TEST_CASE ("Random pitch without a scale is free, within its range")
+{
+    GrainParams p;
+    p.randomPitch = 3.0;
+    const auto pitches = grainPitches (p, 60, 200);
+    bool inRange = true, fractional = false;
+    for (double s : pitches)
+    {
+        inRange &= std::abs (s) <= 3.0;
+        fractional |= std::abs (s - std::round (s)) > 0.05;
+    }
+    CHECK (inRange);
+    CHECK (fractional);
+}
+
+TEST_CASE ("The pattern repeats every STEPS grains, and a new seed changes it")
+{
+    GrainParams p;
+    p.patternDepth = 7.0;
+    p.patternSteps = 5;
+    const auto first = grainPitches (p, 60, 20);
+    REQUIRE (first.size() == 20);
+    for (size_t i = 5; i < first.size(); ++i)
+        CHECK (first[i] == first[i - 5]);
+
+    p.patternSeed = 2;
+    const auto second = grainPitches (p, 60, 5);
+    CHECK (std::vector<double> (first.begin(), first.begin() + 5) != second);
+}
+
+TEST_CASE ("Heads spread grain starts across the region")
+{
+    // 3 heads at full spread over the whole sample: consecutive grains start
+    // about a third of the region apart, cycling through three places.
+    TestEngine engine (makeSine (240.0, 4.0));
+    GrainParams p;
+    p.heads = 3;
+    p.headSpread = 1.0;
+    p.rateHz = 30.0;
+    std::vector<float> l (64), r (64);
+    NoteEvent on { 0, 60, 1.0f, true };
+    std::vector<double> starts;
+    std::uint64_t seen = 0;
+    for (int done = 0; starts.size() < 9; done += 64)
+    {
+        engine.process (l.data(), r.data(), 64, done == 0 ? &on : nullptr, done == 0 ? 1 : 0, p);
+        if (engine.getVoice (0).getGrainsStarted() != seen)
+        {
+            seen = engine.getVoice (0).getGrainsStarted();
+            starts.push_back (engine.getVoice (0).getLastGrainStart());
+        }
+    }
+
+    const double frames = 4.0 * sampleRate;
+    const auto apart = [frames] (double a, double b)
+    {
+        const double d = std::fmod (std::abs (a - b), frames);
+        return std::min (d, frames - d) / frames;
+    };
+    for (size_t i = 1; i < starts.size(); ++i)
+    {
+        INFO ("grain " << i);
+        CHECK (apart (starts[i], starts[i - 1]) > 0.3);
+    }
+}

@@ -387,6 +387,26 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addKnob (Page::shape, 5, "sustain", "SUSTAIN");
     addKnob (Page::shape, 6, "release", "RELEASE");
 
+    // PITCH: random pitch, the scale it snaps to, a repeating pattern, and heads.
+    addKnob (Page::pitch, 0, "randPitch", "RND PITCH");
+    scaleMenu.addItemList ({ "OFF", "CHROMATIC", "MAJOR", "MINOR", "DORIAN", "PHRYGIAN", "LYDIAN",
+                             "MIXOLYDIAN", "MAJOR PENT", "MINOR PENT", "WHOLE TONE", "OCTAVES", "FIFTHS" }, 1);
+    addMenu (Page::pitch, 1, scaleMenu, "SCALE");
+    keyMenu.addItemList ({ "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" }, 1);
+    addMenu (Page::pitch, 2, keyMenu, "KEY");
+    addKnob (Page::pitch, 3, "patternDepth", "PATTERN");
+    addKnob (Page::pitch, 4, "patternSteps", "STEPS");
+    addAction (Page::pitch, 5, newPatternButton, "NEW PATTERN");
+    newPatternButton.onClick = [this]
+    {
+        if (auto* seed = dynamic_cast<juce::RangedAudioParameter*> (silt.params.getParameter ("patternSeed")))
+            seed->setValueNotifyingHost (seed->convertTo0to1 ((float) juce::Random::getSystemRandom().nextInt ({ 1, 10000 })));
+    };
+    addKnob (Page::pitch, 6, "heads", "HEADS");
+    addKnob (Page::pitch, 7, "headSpread", "SPREAD");
+    menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "scale", scaleMenu));
+    menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "key", keyMenu));
+
     // PLAY: the mode, then what it plays from. PITCH: a region of the sample and
     // how the playhead moves through it. LIVE: how far behind the input the
     // grains read, feedback, freeze, and what plays grains without notes
@@ -435,7 +455,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     sizeSyncButton.onStateChange = [this] { updateVisibility(); };
 
     // Page tabs.
-    const char* names[] { "GRAIN", "SHAPE", "PLAY" };
+    const char* names[] { "GRAIN", "SHAPE", "PITCH", "PLAY" };
     for (size_t i = 0; i < pageTabs.size(); ++i)
     {
         auto& tab = pageTabs[i];
@@ -532,6 +552,19 @@ SiltEditor::Control& SiltEditor::addButton (Page p, int slot, juce::Button& butt
     button.setClickingTogglesState (true);
     addChildComponent (button);
     buttonAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, paramId, button));
+    controls.push_back (std::move (c));
+    return *controls.back();
+}
+
+// A momentary button in a slot, not tied to a parameter (its onClick does the work).
+SiltEditor::Control& SiltEditor::addAction (Page p, int slot, juce::Button& button, const juce::String& label)
+{
+    auto c = std::make_unique<Control>();
+    c->button = &button;
+    c->label = label;
+    c->page = p;
+    c->slot = slot;
+    addChildComponent (button);
     controls.push_back (std::move (c));
     return *controls.back();
 }

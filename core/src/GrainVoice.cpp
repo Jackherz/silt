@@ -66,6 +66,8 @@ void GrainVoice::noteOn (int note, float vel, const SampleBuffer& buffer, const 
     noteRatio = semitonesToRatio (note - p.rootNote);
     playhead = p.scan < 0.0 ? region.end - 1.0 : region.begin;   // reverse scans start at the end
     samplesToNextGrain = 0.0;      // first grain on the note itself
+    patternStep = 0;
+    headCounter = 0;
     firstGrainPending = true;
     spawning = true;
     envStage = EnvStage::attack;   // from the current level: retriggers don't click
@@ -76,6 +78,22 @@ void GrainVoice::noteOn (int note, float vel, const SampleBuffer& buffer, const 
 double GrainVoice::pitchRatio (const GrainParams& p, const SampleBuffer& buffer) const noexcept
 {
     return noteRatio * semitonesToRatio (p.pitchSemitones) * (buffer.getSampleRate() / sampleRate);
+}
+
+// This grain's pitch above the root note, per the Pitch page: transposition,
+// random offset and pattern step, then snapped to the scale (plan gap 5: the
+// parts are added first and snapped once, so intervals come out right).
+double GrainVoice::nextGrainSemitones (const GrainParams& p) noexcept
+{
+    double semitones = (currentNote - p.rootNote) + p.pitchSemitones;
+    if (p.randomPitch > 0.0)
+        semitones += random.nextBipolar() * p.randomPitch;
+    if (p.pattern != nullptr && p.patternSteps > 0)
+    {
+        semitones += p.pattern[patternStep % p.patternSteps] * p.patternDepth;
+        patternStep = (patternStep + 1) % p.patternSteps;
+    }
+    return snapToScale (p.rootNote + semitones, p.scale, p.key) - p.rootNote;
 }
 
 // Grains only ever read the region. In LOOP mode they read through the loop
@@ -280,7 +298,9 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
         return;
 
     const int frames = buffer.getNumFrames();
-    const double ratio = pitchRatio (p, buffer);
+    const double semitones = nextGrainSemitones (p);
+    const double ratio = semitonesToRatio (semitones) * (buffer.getSampleRate() / sampleRate);
+    lastGrainSemitones = semitones;
 
     // Grains only ever read the region: what's shaded on screen is all you hear.
     // A grain longer than the region is shortened to fit it, and spray scatter
@@ -289,9 +309,20 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     const auto region = regionOf (p, buffer);
     const int length = grainLength (p, region, ratio);
 
-    const double scatter = random.nextBipolar() * p.spray * maxSpraySeconds * buffer.getSampleRate();
+    double scatter = random.nextBipolar() * p.spray * maxSpraySeconds * buffer.getSampleRate();
     const bool looping = p.endMode == EndMode::loop;
     const double regionFrames = std::max (1.0, region.end - region.begin);
+
+    // Heads take turns: each grain goes to the next. At full spread they sit
+    // evenly around the region (head k at k/heads of the way through), since
+    // the region wraps; in Live mode they sit further back in time, up to 1 s.
+    if (p.heads > 1)
+    {
+        const int head = headCounter++ % p.heads;
+        const double spread = std::clamp (p.headSpread, 0.0, 1.0);
+        scatter += p.live ? -(double) head / (double) (p.heads - 1) * spread * buffer.getSampleRate()
+                          : (double) head / (double) p.heads * spread * regionFrames;
+    }
 
     // LOOP: grains start at the playhead (spray wraps around the loop), so Scan 1
     // plays the region at its own speed. HOLD / STOP: grains must fit before the

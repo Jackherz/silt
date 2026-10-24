@@ -281,9 +281,22 @@ void Engine::process (float* left, float* right, int numSamples,
     const SampleBuffer* source = p.live ? live.get() : current;
     updateDrone (p, source, inLeft, inRight, numSamples);
 
+    // The pitch pattern: steps in −1…1, fixed for a seed so it's the same every
+    // time the set is opened.
+    if (! patternMade || p.patternSeed != patternSeed)
+    {
+        Random r (0x9e3779b97f4a7c15ull ^ p.patternSeed);
+        for (auto& step : pattern)
+            step = r.nextBipolar();
+        patternSeed = p.patternSeed;
+        patternMade = true;
+    }
+
     // Render in segments between events so notes start sample-accurately.
     auto segment = p;
     segment.liveMargin = maxBlock;
+    segment.pattern = pattern.data();
+    segment.patternSteps = std::clamp (p.patternSteps, 1, (int) pattern.size());
     int pos = 0;
     for (int e = 0; e <= numEvents; ++e)
     {

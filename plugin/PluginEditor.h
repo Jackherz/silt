@@ -4,7 +4,7 @@
 
 // The panel, drawn natively in the plan §5 palette. A screen on top shows the
 // sample and every sounding grain; below it, one page of controls at a time
-// (GRAIN / SHAPE / PLAY), at most 8 each so a page maps onto an 8-knob controller.
+// (GRAIN / SHAPE / PITCH / PLAY), at most 8 each so a page maps onto an 8-knob controller.
 class SiltEditor final : public juce::AudioProcessorEditor,
                          public juce::FileDragAndDropTarget,
                          private juce::Timer
@@ -22,7 +22,7 @@ public:
     void filesDropped (const juce::StringArray& files, int, int) override;
 
 private:
-    enum class Page { grain, shape, play };
+    enum class Page { grain, shape, pitch, play };
 
     // One control in the page row: a knob or a menu, its label, and its slot.
     struct Control
@@ -53,6 +53,7 @@ private:
     Control& addKnob (Page, int slot, const char* paramId, const juce::String& label);
     Control& addMenu (Page, int slot, juce::ComboBox&, const juce::String& label);
     Control& addButton (Page, int slot, juce::Button&, const char* paramId, const juce::String& label);
+    Control& addAction (Page, int slot, juce::Button&, const juce::String& label);
     void showPage (Page);
     void updateVisibility();
     juce::Rectangle<int> slotBounds (int slot) const;
@@ -65,13 +66,13 @@ private:
     std::unique_ptr<GrainScreen> screen;
 
     std::vector<std::unique_ptr<Control>> controls;
-    std::array<juce::TextButton, 3> pageTabs;
+    std::array<juce::TextButton, 4> pageTabs;
     Page page = Page::grain;
 
     juce::TextButton armButton, loadButton { "LOAD" }, sizeSyncButton { "SYNC" }, delaySyncButton { "SYNC" };
-    juce::TextButton freezeButton { "FREEZE" };
+    juce::TextButton freezeButton { "FREEZE" }, newPatternButton { "NEW" };
     juce::ToggleButton monitorButton { "MONITOR" };
-    juce::ComboBox captureBars, endMode, rateMode, keyMode, liveTrigger;
+    juce::ComboBox captureBars, endMode, rateMode, keyMode, liveTrigger, scaleMenu, keyMenu;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>> menuAttachments;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
     std::unique_ptr<juce::FileChooser> chooser;

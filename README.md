@@ -31,7 +31,13 @@ level plays the note envelope; getting louder starts Attack/Decay/Sustain, going
 Releases, a sudden jump retriggers, and louder hits play louder). Keys still transpose. Grains are kept
 clear of the write head. The screen scrolls the input with the newest audio at the right.
 
-Not yet (M3): scale quantize, Pattern, random pitch, Slice mode, Heads, MIDI CC paging.
+**PITCH page:** RND PITCH (±0–24 st per grain), SCALE (off, chromatic, major, minor,
+modes, pentatonics, whole tone, octaves, fifths) and KEY (every grain's pitch is added up
+first, then snapped once), PATTERN (a repeating pitch pattern, stepping each grain) with
+STEPS and NEW (a new pattern, saved with the set), and HEADS (1–8 playheads per note,
+evenly around the region at full SPREAD; in Live mode, further back in time).
+
+Not yet (M3): Slice mode, MIDI CC paging.
 
 ## Engine (core/)
 
