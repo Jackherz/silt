@@ -106,7 +106,15 @@ public:
     juce::Label* createSliderTextBox (juce::Slider& s) override
     {
         auto* l = LookAndFeel_V4::createSliderTextBox (s);
-        l->setFont (lcdFont (12.0f));
+        l->setFont (lcdFont (13.0f));
+        l->setJustificationType (juce::Justification::centred);
+        l->setColour (juce::Label::backgroundColourId, lcdGreen);
+        l->setColour (juce::Label::textColourId, lcdText);
+        l->setColour (juce::Label::outlineColourId, ink);
+        l->setColour (juce::Label::backgroundWhenEditingColourId, bone);
+        l->setColour (juce::Label::textWhenEditingColourId, ink);
+        l->setColour (juce::Label::outlineWhenEditingColourId, ink);
+        l->setColour (juce::TextEditor::highlightColourId, rust.withAlpha (0.4f));
         return l;
     }
 };

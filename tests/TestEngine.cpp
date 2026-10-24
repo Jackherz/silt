@@ -240,6 +240,35 @@ TEST_CASE ("Grains only read inside the region, whatever their size and spray")
                 }
 }
 
+TEST_CASE ("Grain starts keep moving through the whole region (no freeze at its end)")
+{
+    // A 1 s region, 400 ms grains, scan at real time: over one pass the grain
+    // starts must keep advancing, including through the region's last 400 ms.
+    TestEngine engine (makeSine (240.0, 2.0));
+    GrainParams p;
+    p.length = 0.5;
+    p.sizeMs = 400.0;
+    p.rateHz = 20.0;
+
+    std::vector<float> l (128), r (128);
+    NoteEvent on { 0, 60, 1.0f, true };
+    std::vector<double> starts;
+    std::uint64_t seen = 0;
+    for (int done = 0; done < 47000; done += 128)
+    {
+        engine.process (l.data(), r.data(), 128, done == 0 ? &on : nullptr, done == 0 ? 1 : 0, p);
+        if (engine.getVoice (0).getGrainsStarted() != seen)
+        {
+            seen = engine.getVoice (0).getGrainsStarted();
+            starts.push_back (engine.getVoice (0).getLastGrainStart());
+        }
+    }
+
+    REQUIRE (starts.size() >= 18);
+    for (size_t i = 1; i < starts.size(); ++i)
+        CHECK (starts[i] > starts[i - 1]);
+}
+
 TEST_CASE ("A shorter region changes the sound")
 {
     GrainParams p;

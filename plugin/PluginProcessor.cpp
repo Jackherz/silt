@@ -31,16 +31,32 @@ Range skewed (float lo, float hi, float centre)
     return r;
 }
 
+// How values read on the panel and in the host: a few significant digits and the unit.
+using Format = std::function<juce::String (float, int)>;
+
+juce::String formatMs (float v, int)
+{
+    if (v >= 1000.0f)
+        return juce::String (v / 1000.0f, 2) + " s";
+    return juce::String (v, v < 10.0f ? 1 : 0) + " ms";
+}
+
+juce::String formatHz (float v, int) { return juce::String (v, v < 10.0f ? 2 : 1) + " Hz"; }
+juce::String formatPercent (float v, int) { return juce::String (juce::roundToInt (v)) + "%"; }
+juce::String formatSemitones (float v, int) { return (v >= 0.005f ? "+" : v <= -0.005f ? "" : " ") + juce::String (std::abs (v) < 0.005f ? 0.0f : v, 2) + " st"; }
+juce::String formatTimes (float v, int) { return juce::String (v, 2) + "x"; }
+juce::String formatDb (float v, int) { return v <= -47.95f ? juce::String ("-inf dB") : juce::String (v, 1) + " dB"; }
+
 std::unique_ptr<Float> percent (const char* id, const char* name, float def)
 {
     return std::make_unique<Float> (juce::ParameterID { id, 1 }, name, Range (0.0f, 100.0f, 0.1f), def,
-                                    juce::AudioParameterFloatAttributes().withLabel ("%"));
+                                    juce::AudioParameterFloatAttributes().withStringFromValueFunction (formatPercent));
 }
 
-std::unique_ptr<Float> withUnit (const char* id, const char* name, Range range, float def, const char* unit)
+std::unique_ptr<Float> withUnit (const char* id, const char* name, Range range, float def, Format format)
 {
     return std::make_unique<Float> (juce::ParameterID { id, 1 }, name, range, def,
-                                    juce::AudioParameterFloatAttributes().withLabel (unit));
+                                    juce::AudioParameterFloatAttributes().withStringFromValueFunction (std::move (format)));
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
@@ -48,9 +64,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
     // Grain
-    layout.add (withUnit ("pitch", "Pitch", Range (-24.0f, 24.0f, 0.01f), 0.0f, "st"),
-                withUnit ("size", "Size", skewed (10.0f, 2000.0f, 150.0f), 100.0f, "ms"),
-                withUnit ("rate", "Rate", skewed (0.1f, 100.0f, 10.0f), 20.0f, "Hz"),
+    layout.add (withUnit ("pitch", "Pitch", Range (-24.0f, 24.0f, 0.01f), 0.0f, formatSemitones),
+                withUnit ("size", "Size", skewed (10.0f, 2000.0f, 150.0f), 100.0f, formatMs),
+                withUnit ("rate", "Rate", skewed (0.1f, 100.0f, 10.0f), 20.0f, formatHz),
                 percent ("spray", "Spray", 0.0f),
                 percent ("reverse", "Reverse", 0.0f),
                 percent ("randAmp", "Random amp", 0.0f),
@@ -69,21 +85,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
     // Region and playhead
     layout.add (percent ("start", "Start", 0.0f),
                 percent ("length", "Length", 100.0f),
-                withUnit ("scan", "Scan", Range (-4.0f, 4.0f, 0.01f), 1.0f, "x"),
+                withUnit ("scan", "Scan", Range (-4.0f, 4.0f, 0.01f), 1.0f, formatTimes),
                 std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "endMode", 1 }, "End",
                                                               juce::StringArray { "Loop", "Hold", "Stop" }, 0));
 
     // Voice
-    layout.add (withUnit ("attack", "Attack", skewed (0.0f, 5000.0f, 100.0f), 5.0f, "ms"),
-                withUnit ("decay", "Decay", skewed (1.0f, 5000.0f, 200.0f), 200.0f, "ms"),
+    layout.add (withUnit ("attack", "Attack", skewed (0.0f, 5000.0f, 100.0f), 5.0f, formatMs),
+                withUnit ("decay", "Decay", skewed (1.0f, 5000.0f, 200.0f), 200.0f, formatMs),
                 percent ("sustain", "Sustain", 100.0f),
-                withUnit ("release", "Release", skewed (1.0f, 10000.0f, 400.0f), 300.0f, "ms"),
-                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "root", 1 }, "Root note", 0, 127, 60));
+                withUnit ("release", "Release", skewed (1.0f, 10000.0f, 400.0f), 300.0f, formatMs),
+                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "root", 1 }, "Root note", 0, 127, 60,
+                    juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int note, int)
+                    {
+                        return juce::MidiMessage::getMidiNoteName (note, true, true, 3);
+                    })));
 
     // Capture and output
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "captureBars", 1 }, "Capture length",
                                                               captureBarChoices, 1),
-                withUnit ("gain", "Output", Range (-48.0f, 12.0f, 0.1f), 0.0f, "dB"));
+                withUnit ("gain", "Output", Range (-48.0f, 12.0f, 0.1f), 0.0f, formatDb));
 
     if constexpr (SiltProcessor::isInstrument)
         layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "monitor", 1 }, "Monitor input", false));

@@ -72,6 +72,7 @@ public:
     int getCurrentNote() const noexcept { return currentNote; }
     int getActiveGrainCount() const noexcept { return activeGrains; }
     std::uint64_t getGrainsStarted() const noexcept { return grainsStarted; }
+    double getLastGrainStart() const noexcept { return lastGrainStart; }   // buffer frames
 
     // Playhead as a share of the buffer, for the UI.
     float getPlayheadPosition() const noexcept { return playheadPosition; }
@@ -109,6 +110,8 @@ private:
     float targetGain (const GrainParams&, const SampleBuffer*) const noexcept;
     double pitchRatio (const GrainParams&, const SampleBuffer&) const noexcept;
     int grainLength (const GrainParams&, const Region&, double ratio) const noexcept;
+    double grainStartFor (const Region&, double spanFrames) const noexcept;
+    double scatterWithin (const Region&, double spanFrames, double scatter) const noexcept;
     static Region regionOf (const GrainParams&, const SampleBuffer&) noexcept;
 
     double sampleRate = 48000.0;
@@ -125,6 +128,7 @@ private:
     double samplesToNextGrain = 0.0;
     bool spawning = false;
     std::uint64_t grainsStarted = 0;
+    double lastGrainStart = 0.0;
 
     // Beat-grid scheduling: the next grid line, and where the previous render
     // call ended, to notice transport jumps.

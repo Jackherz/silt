@@ -161,6 +161,30 @@ float GrainVoice::nextEnvelope (const GrainParams& p) noexcept
     return envLevel;
 }
 
+// Where a grain starts for the current playhead. A grain must fit inside the
+// region, so its start can only range over the region minus one grain; the
+// playhead's place in the region is scaled onto that range. Clamping instead
+// would park every grain at the same spot while the playhead crosses the
+// region's last grain-length, and the sound would freeze there.
+double GrainVoice::grainStartFor (const Region& region, double spanFrames) const noexcept
+{
+    const double regionFrames = region.end - region.begin;
+    const double range = std::max (0.0, regionFrames - 2.0 * edgeGuardFrames - spanFrames);
+    const double along = std::clamp ((playhead - region.begin) / std::max (1.0, regionFrames), 0.0, 1.0);
+    return region.begin + edgeGuardFrames + along * range;
+}
+
+// Spray offset from grainStartFor()'s position, wrapped so the grain stays in
+// the same start range.
+double GrainVoice::scatterWithin (const Region& region, double spanFrames, double scatter) const noexcept
+{
+    const double range = std::max (0.0, region.end - region.begin - 2.0 * edgeGuardFrames - spanFrames);
+    if (range < 1.0)
+        return 0.0;
+    const double base = grainStartFor (region, spanFrames) - (region.begin + edgeGuardFrames);
+    return std::fmod (std::fmod (base + scatter, range) + range, range) - base;
+}
+
 // Moves the playhead one output sample. Returns false once a `stop` playhead
 // runs out of its region.
 bool GrainVoice::advancePlayhead (const GrainParams& p, const SampleBuffer& buffer) noexcept
@@ -203,13 +227,8 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     const int length = grainLength (p, region, ratio);
 
     const double scatter = random.nextBipolar() * p.spray * maxSpraySeconds * buffer.getSampleRate();
-    const double regionFrames = region.end - region.begin;
-    double start = region.begin + wrapFrames (playhead + scatter - region.begin, (int) std::max (1.0, regionFrames));
+    const double start = grainStartFor (region, length * ratio) + scatterWithin (region, length * ratio, scatter);
     const bool reversed = random.next01() < p.reverseChance;
-
-    const double spanFrames = length * ratio;
-    const double lowest = region.begin + edgeGuardFrames;
-    start = std::clamp (start, lowest, std::max (lowest, region.end - edgeGuardFrames - spanFrames));
     const auto span = grainReadSpan (start, length, ratio);
 
     // Stereo scatter as balance, so a centred grain keeps both channels at full level.
@@ -229,6 +248,7 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     g.interpolation = p.interpolation;
     ++activeGrains;
     ++grainsStarted;
+    lastGrainStart = span.lo;
 }
 
 void GrainVoice::render (float* left, float* right, int numSamples,
@@ -333,8 +353,14 @@ void GrainVoice::render (float* left, float* right, int numSamples,
         }
     }
 
+    // The UI shows where grains start, which is the playhead scaled onto the
+    // range a whole grain fits in (grainStartFor).
     if (buffer != nullptr)
-        playheadPosition = (float) (playhead / buffer->getNumFrames());
+    {
+        const auto region = regionOf (p, *buffer);
+        const double ratio = pitchRatio (p, *buffer);
+        playheadPosition = (float) (grainStartFor (region, grainLength (p, region, ratio) * ratio) / buffer->getNumFrames());
+    }
 }
 
 } // namespace silt
