@@ -44,6 +44,12 @@ then press previous and next page. A knob takes over only when it reaches the
 parameter's value (pickup), so changing page never makes values jump. The mapping and
 page are saved with the set. Moves are applied off the audio thread as normal automation.
 
+**Fine control and SNAP:** shift-drag any knob for 10× finer moves, or click its value
+and type. START and LENGTH move in 0.001 % steps. SNAP (under START): OFF, ZERO (region
+edges on the nearest zero crossing, for click-free loops) or TRANS (edges on detected
+transients, so START/LENGTH pick slices; ticks on the waveform show them). The sample is
+analysed once when it's loaded or recorded.
+
 Not yet (M3): Slice mode.
 
 ## Engine (core/)

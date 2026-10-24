@@ -308,6 +308,15 @@ public:
         livePeaks = peaks;
     }
 
+    void setTransientsShown (bool shown)
+    {
+        if (shown != transientsShown)
+        {
+            transientsShown = shown;
+            repaint();
+        }
+    }
+
     void resized() override { waveCache = {}; }
 
     void paint (juce::Graphics& g) override
@@ -360,6 +369,16 @@ public:
         g.drawText (juce::String (overview.seconds, 2) + " S", top, juce::Justification::centredRight);
 
         drawWave (g, waveArea);
+        if (transientsShown)
+        {
+            // The transients SNAP can land on: ticks along the top of the waveform.
+            g.setColour (screenLime.withAlpha (0.8f));
+            for (float t : overview.transients)
+            {
+                const float x = (float) waveArea.getX() + t * (float) waveArea.getWidth();
+                g.fillRect (x, (float) waveArea.getY(), 1.0f, 7.0f);
+            }
+        }
         drawRegion (g, waveArea, rollArea);
         drawGrains (g, waveArea, rollArea);
 
@@ -490,7 +509,7 @@ private:
 
     SiltProcessor::Overview overview;
     juce::Image waveCache;
-    bool live = false, frozen = false;
+    bool live = false, frozen = false, transientsShown = false;
     float writeShare = 0.0f;
     std::array<float, SiltProcessor::liveColumns> livePeaks {};
     float start = 0.0f, length = 1.0f;
@@ -563,6 +582,9 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     const auto delaySynced = std::function<bool()> ([this] { return delaySyncButton.getToggleState(); });
 
     addKnob (Page::play, 1, "start", "START").shown = pitchMode;
+    snapMenu.addItemList ({ "SNAP OFF", "SNAP ZERO", "SNAP TRANS" }, 1);
+    addChildComponent (snapMenu);
+    menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "snap", snapMenu));
     addKnob (Page::play, 2, "length", "LENGTH").shown = pitchMode;
     addKnob (Page::play, 3, "scan", "SCAN").shown = pitchMode;
     endMode.addItemList ({ "LOOP", "HOLD", "STOP" }, 1);
@@ -748,6 +770,7 @@ void SiltEditor::updateVisibility()
     rateMode.setVisible (page == Page::grain);
     sizeSyncButton.setVisible (page == Page::grain);
     delaySyncButton.setVisible (page == Page::play && keyMode.getSelectedItemIndex() == 1);
+    snapMenu.setVisible (page == Page::play && keyMode.getSelectedItemIndex() == 0);
     repaint (pagePanel);
 }
 
@@ -812,7 +835,9 @@ void SiltEditor::timerCallback()
         seenGeneration = generation;
         screen->setOverview (silt.getOverview());
     }
-    screen->setRegion (param ("start") * 0.01f, param ("length") * 0.01f);
+    const auto [regionStart, regionLength] = silt.shownRegion();
+    screen->setRegion (regionStart, regionLength);
+    screen->setTransientsShown (param ("snap") > 1.5f);
 
     // The grains: the screen only repaints while something is moving.
     static std::array<silt::GrainView, SiltProcessor::maxGrainViews> views;
@@ -917,6 +942,7 @@ void SiltEditor::resized()
     };
     sizeSyncButton.setBounds (under (1, 60));
     delaySyncButton.setBounds (under (1, 60));
+    snapMenu.setBounds (under (1, 104));
     rateMode.setBounds (under (2, 92));
 }
 

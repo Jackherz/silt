@@ -48,19 +48,21 @@ void GrainVoice::reset() noexcept
     currentNote = -1;
 }
 
-GrainVoice::Region GrainVoice::regionOf (const GrainParams& p, const SampleBuffer& buffer) noexcept
+GrainVoice::Region GrainVoice::computeRegion (const GrainParams& p, const SampleBuffer& buffer) noexcept
 {
     const double frames = buffer.getNumFrames();
     if (p.live)   // the live ring has no region: grains place themselves by delay
         return { 0.0, frames };
     const double begin = std::clamp (p.start, 0.0, 1.0) * (frames - 1.0);
     const double end = std::min (frames, begin + std::max (1.0, std::clamp (p.length, 0.0, 1.0) * frames));
-    return { begin, end };
+    const auto snapped = snapRegion (begin, end, buffer.getNumFrames(), p.snap,
+                                     buffer.getZeroCrossings(), buffer.getTransients());
+    return { snapped.begin, snapped.end };
 }
 
 void GrainVoice::noteOn (int note, float vel, const SampleBuffer& buffer, const GrainParams& p) noexcept
 {
-    const auto region = regionOf (p, buffer);
+    const auto region = computeRegion (p, buffer);
     currentNote = note;
     velocity = vel;
     noteRatio = semitonesToRatio (note - p.rootNote);
@@ -408,6 +410,10 @@ void GrainVoice::render (float* left, float* right, int numSamples,
 {
     if (! isActive())
         return;
+
+    regionBuffer = buffer;
+    if (buffer != nullptr)
+        blockRegion = computeRegion (p, *buffer);
 
     // Auto-gain (after Mutable Instruments Beads): whether overlapping grains add
     // in phase or like noise depends on the audio as much as the settings (a

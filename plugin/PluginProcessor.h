@@ -80,8 +80,10 @@ public:
         std::vector<float> minimum, maximum;
         double seconds = 0.0;
         juce::String name;
+        std::vector<float> transients;   // shares of the sample
     };
     Overview getOverview() const;
+    std::pair<float, float> shownRegion() const;   // start and length as they'll play (snapped)
 
     // Sounding grains for the screen. The audio thread publishes a snapshot
     // about 60 times a second; readGrainViews copies the latest (lock-free,
@@ -137,6 +139,7 @@ private:
     double sampleCopyRate = 0.0;
     juce::String sampleName;
     juce::MemoryBlock encodedSample;   // FLAC, cached for state saves
+    std::vector<int> sampleZeroCrossings, sampleTransients;   // the sample's analysis, for the screen
     std::atomic<int> sampleGeneration { 0 };
 
     // Capture: the message thread allocates the target, the audio thread fills it.

@@ -2,6 +2,7 @@
 
 #include <silt/Dsp.h>
 #include <silt/SampleBuffer.h>
+#include <silt/Snap.h>
 
 #include <array>
 
@@ -82,6 +83,7 @@ struct GrainParams
     double length = 1.0;           // 0…1: region length as a share of the sample
     double scan = 1.0;             // playhead speed, −4…+4 (1 = real time, 0 = frozen)
     EndMode endMode = EndMode::loop;
+    Snap snap = Snap::off;         // where the region's edges snap to
 
     // Voice
     int rootNote = 60;             // the key that plays at the sample's own pitch
@@ -180,7 +182,14 @@ private:
     double grainStartFor (const Region&, double spanFrames) const noexcept;
     double liveStart (const GrainParams&, const SampleBuffer& ring, int length, double ratio, double scatter) const noexcept;
     double scatterWithin (const Region&, double spanFrames, double scatter) const noexcept;
-    static Region regionOf (const GrainParams&, const SampleBuffer&) noexcept;
+    static Region computeRegion (const GrainParams&, const SampleBuffer&) noexcept;
+    // The region, computed once per render call (snapping searches the analysis).
+    Region regionOf (const GrainParams& p, const SampleBuffer& buffer) const noexcept
+    {
+        return &buffer == regionBuffer ? blockRegion : computeRegion (p, buffer);
+    }
+    Region blockRegion { 0.0, 0.0 };
+    const SampleBuffer* regionBuffer = nullptr;
 
     double sampleRate = 48000.0;
     HannWindow window;

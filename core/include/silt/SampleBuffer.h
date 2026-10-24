@@ -19,10 +19,17 @@ public:
     float* getWritePointer (int channel) noexcept { return data[(size_t) channel].data(); }
     const float* getReadPointer (int channel) const noexcept { return data[(size_t) channel].data(); }
 
+    // Finds zero crossings and transients, for snapping region edges. Runs off
+    // the audio thread, after the audio is in and before the engine gets it.
+    void analyse();
+    const std::vector<int>& getZeroCrossings() const noexcept { return zeroCrossings; }
+    const std::vector<int>& getTransients() const noexcept { return transients; }
+
 private:
     int numFrames;
     double sampleRate;
     std::vector<float> data[2];
+    std::vector<int> zeroCrossings, transients;   // sorted frame positions
 };
 
 } // namespace silt

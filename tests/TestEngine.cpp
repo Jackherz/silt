@@ -788,3 +788,94 @@ TEST_CASE ("Heads spread grain starts across the region")
         CHECK (apart (starts[i], starts[i - 1]) > 0.3);
     }
 }
+
+// --- Snapping ----------------------------------------------------------------------
+
+namespace
+{
+// Silence with decaying noise bursts starting at the given seconds.
+std::unique_ptr<SampleBuffer> makeBursts (std::initializer_list<double> at, double seconds = 3.0)
+{
+    auto buffer = std::make_unique<SampleBuffer> ((int) (seconds * sampleRate), sampleRate);
+    Random noise (4);
+    for (double start : at)
+    {
+        const int from = (int) (start * sampleRate);
+        for (int i = 0; i < (int) (0.15 * sampleRate) && from + i < buffer->getNumFrames(); ++i)
+        {
+            const float v = 0.6f * noise.nextBipolar() * std::exp (-(float) i / 2000.0f);
+            buffer->getWritePointer (0)[from + i] = v;
+            buffer->getWritePointer (1)[from + i] = v;
+        }
+    }
+    buffer->analyse();
+    return buffer;
+}
+} // namespace
+
+TEST_CASE ("Analysis finds every burst as a transient, at its start")
+{
+    const auto buffer = makeBursts ({ 0.5, 1.0, 1.7, 2.4 });
+    const auto& t = buffer->getTransients();
+    REQUIRE (t.size() == 5);   // the sample's start, then the four bursts
+    CHECK (t[0] == 0);
+    const double expected[] { 0.5, 1.0, 1.7, 2.4 };
+    for (size_t i = 0; i < 4; ++i)
+    {
+        INFO ("burst " << i);
+        CHECK (std::abs (t[i + 1] / sampleRate - expected[i]) < 0.005);
+    }
+}
+
+TEST_CASE ("Zero-crossing snap puts region edges where the waveform crosses zero")
+{
+    auto buffer = makeSine (230.3, 2.0);
+    buffer->analyse();
+    const auto* data = buffer->getReadPointer (0);
+    for (double start : { 0.1, 0.333, 0.71 })
+    {
+        const auto region = snapRegion (start * buffer->getNumFrames(), (start + 0.2) * buffer->getNumFrames(),
+                                        buffer->getNumFrames(), Snap::zeroCrossing,
+                                        buffer->getZeroCrossings(), buffer->getTransients());
+        const int b = (int) region.begin, e = (int) region.end;
+        INFO ("start " << start);
+        CHECK (((data[b - 1] < 0.0f) != (data[b] < 0.0f)));   // a crossing between b−1 and b
+        CHECK (((data[e - 1] < 0.0f) != (data[e] < 0.0f)));
+        CHECK (std::abs (region.begin - start * buffer->getNumFrames()) < sampleRate / 230.3);
+    }
+}
+
+TEST_CASE ("Transient snap turns Start and Length into slices")
+{
+    auto buffer = makeBursts ({ 0.5, 1.0, 1.7, 2.4 });
+    const auto& t = buffer->getTransients();
+    const double frames = buffer->getNumFrames();
+
+    // Start near the second burst, length reaching most of the way to the third.
+    const auto region = snapRegion (0.32 * frames, 0.53 * frames, buffer->getNumFrames(), Snap::transient,
+                                    buffer->getZeroCrossings(), t);
+    CHECK (region.begin == t[2]);   // 1.0 s
+    CHECK (region.end == t[3]);     // 1.7 s
+
+    // Past the last transient, the end is the sample's end.
+    const auto last = snapRegion (0.8 * frames, 0.99 * frames, buffer->getNumFrames(), Snap::transient,
+                                  buffer->getZeroCrossings(), t);
+    CHECK (last.begin == t[4]);
+    CHECK (last.end == frames);
+}
+
+TEST_CASE ("A snapped region is what plays")
+{
+    // HOLD so the first grain starts at the region start (spray 0).
+    auto buffer = makeBursts ({ 0.5, 1.0, 1.7, 2.4 });
+    const int expectedStart = buffer->getTransients()[2];
+    TestEngine engine (std::move (buffer));
+    GrainParams p;
+    p.snap = Snap::transient;
+    p.endMode = EndMode::hold;
+    p.start = 0.32;
+    p.length = 0.2;
+    p.sizeMs = 20.0;
+    render (engine, p, 64, { { 0, 60, true } });
+    CHECK (std::abs (engine.getVoice (0).getLastGrainStart() - expectedStart) < 4.0);
+}

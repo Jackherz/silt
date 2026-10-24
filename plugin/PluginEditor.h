@@ -25,9 +25,20 @@ private:
     enum class Page { grain, shape, pitch, play };
 
     // One control in the page row: a knob or a menu, its label, and its slot.
+    // A knob that moves ten times finer while Shift is held as the drag starts.
+    struct FineSlider final : juce::Slider
+    {
+        FineSlider() : juce::Slider (RotaryHorizontalVerticalDrag, TextBoxBelow) {}
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            setMouseDragSensitivity (e.mods.isShiftDown() ? 2500 : 250);
+            juce::Slider::mouseDown (e);
+        }
+    };
+
     struct Control
     {
-        juce::Slider slider { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
+        FineSlider slider;
         juce::ComboBox* menu = nullptr;    // set for menu slots instead of the slider
         juce::Button* button = nullptr;    // set for button slots instead of the slider
         juce::String label;
@@ -72,7 +83,7 @@ private:
     juce::TextButton armButton, loadButton { "LOAD" }, learnButton { "LEARN" }, sizeSyncButton { "SYNC" }, delaySyncButton { "SYNC" };
     juce::TextButton freezeButton { "FREEZE" }, newPatternButton { "NEW" };
     juce::ToggleButton monitorButton { "MONITOR" };
-    juce::ComboBox captureBars, endMode, rateMode, keyMode, liveTrigger, scaleMenu, keyMenu;
+    juce::ComboBox captureBars, endMode, rateMode, keyMode, liveTrigger, scaleMenu, keyMenu, snapMenu;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>> menuAttachments;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
     std::unique_ptr<juce::FileChooser> chooser;
