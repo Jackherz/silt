@@ -49,39 +49,57 @@ public:
         setColour (juce::TextButton::textColourOnId, bone);
     }
 
+    // A guitar control knob, seen from above: a black skirt printed 0–10 that
+    // turns with the value, a gold metal cap, and a fixed marker at the top.
+    // The number under the marker is the value, as on a guitar.
     void drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos,
-                           float startAngle, float endAngle, juce::Slider&) override
+                           float, float, juce::Slider&) override
     {
         const auto bounds = juce::Rectangle<int> (x, y, w, h).toFloat();
-        const auto centre = bounds.getCentre();
-        const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f - 2.0f;
+        const auto centre = bounds.getCentre().translated (0.0f, 3.0f);
+        const float skirt = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f - 8.0f;
+        const float cap = skirt * 0.6f;
+        constexpr float degreesPerNumber = 30.0f;   // 0–10 over 300°, like a guitar knob
 
-        g.setColour (inkSoft);
-        for (int i = 0; i <= 10; ++i)
+        // Shadow, skirt and its rim.
+        g.setColour (juce::Colours::black.withAlpha (0.22f));
+        g.fillEllipse (juce::Rectangle<float> (skirt * 2.0f, skirt * 2.0f).withCentre (centre.translated (1.5f, 2.5f)));
+        g.setColour (knobCap);
+        g.fillEllipse (juce::Rectangle<float> (skirt * 2.0f, skirt * 2.0f).withCentre (centre));
+        g.setColour (knobSkirt);
+        g.drawEllipse (juce::Rectangle<float> (skirt * 2.0f - 1.0f, skirt * 2.0f - 1.0f).withCentre (centre), 1.0f);
+
+        // Numbers 0–10 round the skirt, turning with the value: the current
+        // value's number sits at 12 o'clock, under the marker.
+        g.setFont (juce::Font (juce::FontOptions (juce::jlimit (7.0f, 10.0f, skirt * 0.24f), juce::Font::bold)));
+        const float numberRadius = (skirt + cap) * 0.5f + 1.0f;
+        for (int n = 0; n <= 10; ++n)
         {
-            const float a = startAngle + (endAngle - startAngle) * (float) i / 10.0f;
-            const float inner = i % 5 == 0 ? radius - 5.0f : radius - 3.0f;
-            g.drawLine (juce::Line<float> (centre.getPointOnCircumference (inner, a),
-                                           centre.getPointOnCircumference (radius, a)), 1.0f);
+            const float angle = juce::degreesToRadians (((float) n - 10.0f * pos) * -degreesPerNumber);
+            const auto at = centre.getPointOnCircumference (numberRadius, angle);
+            g.setColour (bone.withAlpha (n % 5 == 0 ? 1.0f : 0.8f));
+            g.drawText (juce::String (n), juce::Rectangle<float> (16.0f, 10.0f).withCentre (at), juce::Justification::centred);
         }
 
-        // The travelled arc, thin, so the value reads at a glance.
-        const float arcRadius = radius - 7.0f;
-        juce::Path arc;
-        arc.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f, startAngle, startAngle + pos * (endAngle - startAngle), true);
+        // The gold cap: a lit metal insert with a dark rim and machined rings.
+        const auto capBounds = juce::Rectangle<float> (cap * 2.0f, cap * 2.0f).withCentre (centre);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffefe2b0), capBounds.getX(), capBounds.getY(),
+                                                 juce::Colour (0xff8a6f3e), capBounds.getRight(), capBounds.getBottom(), false));
+        g.fillEllipse (capBounds);
+        g.setColour (juce::Colour (0xff5e4b2a));
+        g.drawEllipse (capBounds, 1.2f);
+        g.setColour (juce::Colours::white.withAlpha (0.12f));
+        for (float r : { 0.75f, 0.5f })
+            g.drawEllipse (juce::Rectangle<float> (cap * 2.0f * r, cap * 2.0f * r).withCentre (centre), 0.8f);
+        g.setColour (juce::Colours::white.withAlpha (0.35f));
+        g.fillEllipse (juce::Rectangle<float> (cap * 0.7f, cap * 0.35f).withCentre (centre.translated (-cap * 0.3f, -cap * 0.45f)));
+
+        // The fixed marker above the knob.
+        juce::Path marker;
+        const float top = centre.y - skirt - 2.0f;
+        marker.addTriangle (centre.x - 4.0f, top - 5.0f, centre.x + 4.0f, top - 5.0f, centre.x, top);
         g.setColour (rust);
-        g.strokePath (arc, juce::PathStrokeType (2.0f));
-
-        const float skirt = radius - 10.0f;
-        g.setColour (knobSkirt);
-        g.fillEllipse (juce::Rectangle<float> (skirt * 2.0f, skirt * 2.0f).withCentre (centre));
-        g.setColour (knobCap);
-        g.fillEllipse (juce::Rectangle<float> (skirt * 1.6f, skirt * 1.6f).withCentre (centre));
-
-        const float angle = startAngle + pos * (endAngle - startAngle);
-        g.setColour (bone);
-        g.drawLine (juce::Line<float> (centre.getPointOnCircumference (skirt * 0.2f, angle),
-                                       centre.getPointOnCircumference (skirt * 0.75f, angle)), 2.5f);
+        g.fillPath (marker);
     }
 
     void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool hover, bool down) override
