@@ -219,13 +219,13 @@ SiltEditor::SiltEditor (SiltProcessor& p)
 
     addKnob (syncedKnobs, "sizeDiv", "SIZE");
     addKnob (syncedKnobs, "rateDiv", "RATE");
-    for (auto* b : { &sizeSyncButton, &rateSyncButton })
-    {
-        b->setClickingTogglesState (true);
-        addAndMakeVisible (*b);
-    }
+    addKnob (syncedKnobs, "grains", "GRAINS");
+    sizeSyncButton.setClickingTogglesState (true);
+    addAndMakeVisible (sizeSyncButton);
     sizeSyncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "sizeSync", sizeSyncButton);
-    rateSyncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "rateSync", rateSyncButton);
+    rateMode.addItemList ({ "FREE", "SYNC", "GRAINS" }, 1);
+    addAndMakeVisible (rateMode);
+    rateModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "rateMode", rateMode);
 
     addKnob (regionKnobs, "start", "START");
     addKnob (regionKnobs, "length", "LENGTH");
@@ -356,11 +356,13 @@ void SiltEditor::timerCallback()
         heads[i] = silt.voicePlayheads[i].load();
     sampleView->setPlayheads (heads);
 
-    const bool sizeSynced = sizeSyncButton.getToggleState(), rateSynced = rateSyncButton.getToggleState();
+    const bool sizeSynced = sizeSyncButton.getToggleState();
+    const int mode = rateMode.getSelectedItemIndex();   // 0 free, 1 sync, 2 grains
     grainKnobs[1]->slider.setVisible (! sizeSynced);
     syncedKnobs[0]->slider.setVisible (sizeSynced);
-    grainKnobs[2]->slider.setVisible (! rateSynced);
-    syncedKnobs[1]->slider.setVisible (rateSynced);
+    grainKnobs[2]->slider.setVisible (mode == 0);
+    syncedKnobs[1]->slider.setVisible (mode == 1);
+    syncedKnobs[2]->slider.setVisible (mode == 2);
 
     const bool capturing = silt.captureState.load() != SiltProcessor::CaptureState::idle;
     armButton.setButtonText (capturing ? "CANCEL" : juce::String (juce::CharPointer_UTF8 ("\xe2\x97\x8f ARM")));
@@ -402,14 +404,19 @@ void SiltEditor::resized()
     const auto syncRow = grainArea.removeFromBottom (18);
     layoutRow (grainKnobs, grainArea);
 
-    // The synced knobs sit exactly over Size and Rate, with SYNC under each.
-    for (int i = 0; i < 2; ++i)
+    // The alternative knobs sit exactly over Size and Rate: SYNC under Size,
+    // the Rate mode under Rate.
+    const auto underneath = [&syncRow] (const juce::Component& c, int width)
     {
-        const auto& knob = grainKnobs[(size_t) i + 1]->slider;
-        syncedKnobs[(size_t) i]->slider.setBounds (knob.getBounds());
-        (i == 0 ? sizeSyncButton : rateSyncButton)
-            .setBounds (knob.getBounds().withY (syncRow.getY()).withHeight (syncRow.getHeight()).withSizeKeepingCentre (56, 18));
-    }
+        return c.getBounds().withY (syncRow.getY()).withHeight (syncRow.getHeight()).withSizeKeepingCentre (width, 18);
+    };
+    const auto& sizeKnob = grainKnobs[1]->slider;
+    const auto& rateKnob = grainKnobs[2]->slider;
+    syncedKnobs[0]->slider.setBounds (sizeKnob.getBounds());
+    syncedKnobs[1]->slider.setBounds (rateKnob.getBounds());
+    syncedKnobs[2]->slider.setBounds (rateKnob.getBounds());
+    sizeSyncButton.setBounds (underneath (sizeKnob, 56));
+    rateMode.setBounds (underneath (rateKnob, 92));
     r.removeFromTop (10);
 
     auto lower = r;

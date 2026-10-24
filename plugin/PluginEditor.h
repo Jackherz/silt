@@ -43,10 +43,13 @@ private:
 
     std::vector<std::unique_ptr<Knob>> grainKnobs, regionKnobs, voiceKnobs, outKnobs;
 
-    // Size and Rate in note values, shown in place of the ms/Hz knobs when SYNC is on.
+    // Size and Rate in note values, and Rate as a grain count, shown in place of the
+    // ms/Hz knobs by SYNC and the Rate mode.
     std::vector<std::unique_ptr<Knob>> syncedKnobs;
-    juce::TextButton sizeSyncButton { "SYNC" }, rateSyncButton { "SYNC" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> sizeSyncAttachment, rateSyncAttachment;
+    juce::TextButton sizeSyncButton { "SYNC" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> sizeSyncAttachment;
+    juce::ComboBox rateMode;   // FREE (Hz), SYNC (note value) or GRAINS (count)
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> rateModeAttachment;
 
     juce::TextButton armButton { "ARM" }, loadButton { "LOAD" };
     juce::ComboBox captureBars, endMode;

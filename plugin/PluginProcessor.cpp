@@ -15,6 +15,7 @@ const juce::StringArray divisionNames { "1/64", "1/32", "1/16T", "1/16", "1/8T",
 constexpr double divisionQuarters[] { 1.0 / 16, 1.0 / 8, 1.0 / 6, 1.0 / 4, 1.0 / 3, 3.0 / 8, 1.0 / 2, 2.0 / 3,
                                       3.0 / 4, 1.0, 4.0 / 3, 3.0 / 2, 2.0, 3.0, 4.0, 8.0, 16.0 };
 constexpr int sixteenth = 3;
+constexpr int rateModeSync = 1, rateModeGrains = 2;   // "rateMode" choices; 0 is Free
 constexpr double maxSyncedSizeMs = 4000.0;
 
 double quartersFor (const std::atomic<float>* choice) noexcept
@@ -78,9 +79,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
     layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "sizeSync", 1 }, "Size sync", false),
                 std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "sizeDiv", 1 }, "Size (synced)",
                                                               divisionNames, sixteenth),
-                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "rateSync", 1 }, "Rate sync", false),
+                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "rateMode", 1 }, "Rate mode",
+                                                              juce::StringArray { "Free", "Sync", "Grains" }, 0),
                 std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "rateDiv", 1 }, "Rate (synced)",
-                                                              divisionNames, sixteenth));
+                                                              divisionNames, sixteenth),
+                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "grains", 1 }, "Grains", 1, 32, 8,
+                    juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int n, int)
+                    {
+                        return juce::String (n) + (n == 1 ? " grain" : " grains");
+                    })));
 
     // Region and playhead
     layout.add (percent ("start", "Start", 0.0f),
@@ -134,7 +141,7 @@ struct SiltProcessor::RawParams
         const auto p = [&s] (const char* id) { return s.getRawParameterValue (id); };
         pitch = p ("pitch"); size = p ("size"); rate = p ("rate"); spray = p ("spray");
         reverse = p ("reverse"); randAmp = p ("randAmp"); fade = p ("fade"); slant = p ("slant"); ease = p ("ease");
-        sizeSync = p ("sizeSync"); sizeDiv = p ("sizeDiv"); rateSync = p ("rateSync"); rateDiv = p ("rateDiv");
+        sizeSync = p ("sizeSync"); sizeDiv = p ("sizeDiv"); rateMode = p ("rateMode"); rateDiv = p ("rateDiv"); grains = p ("grains");
         start = p ("start"); length = p ("length"); scan = p ("scan"); endMode = p ("endMode");
         attack = p ("attack"); decay = p ("decay"); sustain = p ("sustain"); release = p ("release"); root = p ("root");
         captureBars = p ("captureBars"); gain = p ("gain");
@@ -142,7 +149,7 @@ struct SiltProcessor::RawParams
     }
 
     std::atomic<float>* pitch, *size, *rate, *spray, *reverse, *randAmp, *fade, *slant, *ease;
-    std::atomic<float>* sizeSync, *sizeDiv, *rateSync, *rateDiv;
+    std::atomic<float>* sizeSync, *sizeDiv, *rateMode, *rateDiv, *grains;
     std::atomic<float>* start, *length, *scan, *endMode;
     std::atomic<float>* attack, *decay, *sustain, *release, *root;
     std::atomic<float>* captureBars, *gain, *monitor, *mix;
@@ -266,10 +273,17 @@ silt::GrainParams SiltProcessor::readParams() const noexcept
     const double msPerQuarter = 60000.0 / juce::jlimit (20.0, 400.0, hostBpm.load (std::memory_order_relaxed));
     if (v (raw->sizeSync) > 0.5)
         p.sizeMs = juce::jlimit (10.0, maxSyncedSizeMs, quartersFor (raw->sizeDiv) * msPerQuarter);
-    if (v (raw->rateSync) > 0.5)
+    switch ((int) v (raw->rateMode))
     {
-        p.gridDivision = quartersFor (raw->rateDiv);
-        p.rateHz = 1000.0 / (p.gridDivision * msPerQuarter);
+        case rateModeSync:
+            p.gridDivision = quartersFor (raw->rateDiv);
+            p.rateHz = 1000.0 / (p.gridDivision * msPerQuarter);
+            break;
+        case rateModeGrains:
+            p.grainCount = (int) v (raw->grains);
+            break;
+        default:
+            break;
     }
     return p;
 }
@@ -383,7 +397,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     // Synced Rate locks grains to the beat grid while the host plays; stopped,
     // they free-run at the synced rate.
     double blockPpq = 0.0;
-    if (raw->rateSync->load (std::memory_order_relaxed) > 0.5f && position && position->getIsPlaying())
+    if ((int) raw->rateMode->load (std::memory_order_relaxed) == rateModeSync && position && position->getIsPlaying())
         if (const auto ppq = position->getPpqPosition())
             if (const auto bpm = position->getBpm(); bpm && *bpm > 0.0)
             {

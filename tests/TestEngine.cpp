@@ -186,6 +186,36 @@ TEST_CASE ("A transport jump re-locks the grid")
     CHECK (engine.getVoice (0).getGrainsStarted() == before + 1);
 }
 
+TEST_CASE ("Grains mode holds the grain count whatever the size")
+{
+    for (int count : { 1, 4, 8, 16 })
+        for (double size : { 30.0, 200.0, 900.0 })
+        {
+            TestEngine engine (makeSine (240.0, 4.0));
+            GrainParams p;
+            p.grainCount = count;
+            p.sizeMs = size;
+            p.rateHz = 1.0;   // ignored in Grains mode
+
+            std::vector<float> l (64), r (64);
+            NoteEvent on { 0, 60, 1.0f, true };
+            int lowest = 1000, highest = 0;
+            for (int done = 0; done < 96000; done += 64)
+            {
+                engine.process (l.data(), r.data(), 64, done == 0 ? &on : nullptr, done == 0 ? 1 : 0, p);
+                if (done > 48000)   // after the first second has filled up
+                {
+                    lowest = std::min (lowest, engine.getActiveGrainCount());
+                    highest = std::max (highest, engine.getActiveGrainCount());
+                }
+            }
+
+            INFO ("count " << count << " size " << size);
+            CHECK (highest <= count);
+            CHECK (lowest >= count - 1);
+        }
+}
+
 TEST_CASE ("ADSR settles at the sustain level")
 {
     GrainParams p;

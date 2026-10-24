@@ -3,7 +3,8 @@
 //   silt-render --in drums.wav --out out.wav [--midi notes.mid | --note 60 --hold 4]
 //               [--tail 1] [--seed 1] [--rate 48000] [--set key=value ...]
 //
-// --set keys: pitch (st), size (ms), rate (Hz), spray, reverse, randamp,
+// --set keys: pitch (st), size (ms), rate (Hz), grains (count; overrides rate),
+// spray, reverse, randamp,
 // fade, slant, ease, start, length (all 0–1), scan (×), attack, decay,
 // release (ms), sustain (0–1), root (note), end (loop|hold|stop),
 // interp (linear|cubic)
@@ -43,6 +44,7 @@ void applySetting (silt::GrainParams& p, const juce::String& setting)
     else if (key == "start")   p.start = v;
     else if (key == "scan")    p.scan = v;
     else if (key == "reverse") p.reverseChance = v;
+    else if (key == "grains")  p.grainCount = value.getIntValue();
     else if (key == "randamp") p.randomAmp = v;
     else if (key == "fade")    p.fade = v;
     else if (key == "slant")   p.slant = v;

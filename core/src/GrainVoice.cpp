@@ -120,7 +120,7 @@ float GrainVoice::targetGain (const GrainParams& p, const SampleBuffer* buffer) 
     const double fade = std::clamp (p.fade, 0.0, 1.0);
     const double mean = 1.0 - 0.5 * fade;
     const double meanSquare = 1.0 - 0.625 * fade;
-    const double overlap = sizeMs * 0.001 * p.rateHz;
+    const double overlap = p.grainCount > 0 ? (double) p.grainCount : sizeMs * 0.001 * p.rateHz;
     const double coherent = 1.0 / std::max (1.0, overlap * mean);
     const double incoherent = 1.0 / std::max (1.0, std::sqrt (overlap * meanSquare));
     const double spread = std::clamp (p.spray * 4.0, 0.0, 1.0) * room;
@@ -211,7 +211,10 @@ bool GrainVoice::advancePlayhead (const GrainParams& p, const SampleBuffer& buff
 
 void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) noexcept
 {
-    // A full pool drops the grain rather than cutting one off mid-envelope.
+    // Grains mode holds the count exactly; a full pool drops the grain rather
+    // than cutting one off mid-envelope.
+    if (p.grainCount > 0 && activeGrains >= p.grainCount)
+        return;
     auto free = std::find_if (grains.begin(), grains.end(), [] (const Grain& g) { return g.remaining <= 0; });
     if (free == grains.end())
         return;
@@ -258,7 +261,12 @@ void GrainVoice::render (float* left, float* right, int numSamples,
         return;
 
     const float gainTarget = targetGain (p, buffer);
-    const double interval = sampleRate / std::clamp (p.rateHz, 0.1, 1000.0);
+    double interval = sampleRate / std::clamp (p.rateHz, 0.1, 1000.0);
+    if (p.grainCount > 0 && buffer != nullptr)
+    {
+        const auto region = regionOf (p, *buffer);
+        interval = std::max (1.0, grainLength (p, region, pitchRatio (p, *buffer)) / (double) p.grainCount);
+    }
     const bool grid = p.gridSync && p.ppqPerSample > 0.0 && p.gridDivision > 0.0;
 
     // Lock to the grid: on first use, a new division, or when the host position

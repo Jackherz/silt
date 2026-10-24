@@ -28,6 +28,11 @@ struct GrainParams
     double ease = 0.5;
     double declickMs = 1.0;        // shortest fade allowed
 
+    // Grains mode (after Tonverk's Grainer "amount"): when > 0, this many grains
+    // sound at once and the start interval follows the grain length, so
+    // changing Size keeps the texture equally thick. rateHz is then ignored.
+    int grainCount = 0;
+
     // Beat grid. When set, grains start on multiples of gridDivision (in
     // quarter notes) of the host position instead of every 1/rateHz seconds;
     // a note's first grain still starts on the note. rateHz should match the
