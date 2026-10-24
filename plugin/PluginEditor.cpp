@@ -52,47 +52,117 @@ public:
     // A guitar control knob, seen from above: a black skirt printed 0–10 that
     // turns with the value, a gold metal cap, and a fixed marker at the top.
     // The number under the marker is the value, as on a guitar.
+    //
+    // Each knob is worn in its own way, like well-used, badly kept gear: dust
+    // settled round its base (more below), a tarnished cap with scratches and a
+    // fingertip-polished edge, faded numbers and nicks in the skirt. The wear
+    // comes from a seed per parameter, so it's the same every time; the dust
+    // stays put on the panel while cap and skirt marks turn with the knob.
     void drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos,
-                           float, float, juce::Slider&) override
+                           float, float, juce::Slider& slider) override
     {
         const auto bounds = juce::Rectangle<int> (x, y, w, h).toFloat();
         const auto centre = bounds.getCentre().translated (0.0f, 3.0f);
         const float skirt = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f - 8.0f;
         const float cap = skirt * 0.6f;
         constexpr float degreesPerNumber = 30.0f;   // 0–10 over 300°, like a guitar knob
+        const float turn = juce::degreesToRadians (pos * 10.0f * degreesPerNumber);
 
-        // Shadow, skirt and its rim.
+        juce::Random wear (slider.getComponentID().hashCode64());
+        const auto spot = [&wear] (float lo, float hi) { return lo + wear.nextFloat() * (hi - lo); };
+        const auto onCircle = [&centre, turn] (float radius, float angle) { return centre.getPointOnCircumference (radius, angle + turn); };
+
+        // Dust on the panel round the base: specks and a few fibres, heavier below.
+        for (int i = 0; i < 80; ++i)
+        {
+            const float angle = spot (0.0f, juce::MathConstants<float>::twoPi);
+            const float below = 0.5f + 0.5f * std::cos (angle);   // 1 at 6 o'clock
+            if (wear.nextFloat() > 0.35f + 0.65f * below)
+                continue;
+            const auto at = centre.getPointOnCircumference (skirt + spot (-0.5f, 9.0f), angle);
+            const float size = spot (0.7f, 2.2f);
+            g.setColour (juce::Colour (0xff7d7061).withAlpha (spot (0.25f, 0.6f)));
+            g.fillEllipse (juce::Rectangle<float> (size, size).withCentre (at));
+        }
+        for (int i = 0; i < 3; ++i)
+        {
+            const float angle = spot (2.0f, 4.3f);   // lower half
+            const auto from = centre.getPointOnCircumference (skirt + spot (1.0f, 5.0f), angle);
+            g.setColour (juce::Colour (0xff8a7d6c).withAlpha (0.35f));
+            g.drawLine (juce::Line<float> (from, from.translated (spot (-5.0f, 5.0f), spot (-2.0f, 2.0f))), 0.6f);
+        }
+
+        // Shadow, skirt, and its rim with a few chips.
         g.setColour (juce::Colours::black.withAlpha (0.22f));
         g.fillEllipse (juce::Rectangle<float> (skirt * 2.0f, skirt * 2.0f).withCentre (centre.translated (1.5f, 2.5f)));
         g.setColour (knobCap);
         g.fillEllipse (juce::Rectangle<float> (skirt * 2.0f, skirt * 2.0f).withCentre (centre));
         g.setColour (knobSkirt);
         g.drawEllipse (juce::Rectangle<float> (skirt * 2.0f - 1.0f, skirt * 2.0f - 1.0f).withCentre (centre), 1.0f);
+        for (int i = 0; i < 3; ++i)
+        {
+            const float angle = spot (0.0f, juce::MathConstants<float>::twoPi);
+            juce::Path chip;
+            chip.addCentredArc (centre.x, centre.y, skirt - 1.0f, skirt - 1.0f, 0.0f, angle + turn, angle + turn + spot (0.08f, 0.22f), true);
+            g.setColour (juce::Colour (0xff6b6157).withAlpha (0.7f));
+            g.strokePath (chip, juce::PathStrokeType (1.4f));
+        }
 
         // Numbers 0–10 round the skirt, turning with the value: the current
-        // value's number sits at 12 o'clock, under the marker.
+        // value's number sits at 12 o'clock, under the marker. Some are rubbed thin.
         g.setFont (juce::Font (juce::FontOptions (juce::jlimit (7.0f, 10.0f, skirt * 0.24f), juce::Font::bold)));
         const float numberRadius = (skirt + cap) * 0.5f + 1.0f;
         for (int n = 0; n <= 10; ++n)
         {
             const float angle = juce::degreesToRadians (((float) n - 10.0f * pos) * -degreesPerNumber);
             const auto at = centre.getPointOnCircumference (numberRadius, angle);
-            g.setColour (bone.withAlpha (n % 5 == 0 ? 1.0f : 0.8f));
+            const float faded = wear.nextFloat() < 0.3f ? spot (0.35f, 0.6f) : spot (0.75f, 0.95f);
+            g.setColour (juce::Colour (0xffe4d9bd).withAlpha (faded));
             g.drawText (juce::String (n), juce::Rectangle<float> (16.0f, 10.0f).withCentre (at), juce::Justification::centred);
         }
 
-        // The gold cap: a lit metal insert with a dark rim and machined rings.
+        // The gold cap: old brass, darker toward the rim, no shine.
         const auto capBounds = juce::Rectangle<float> (cap * 2.0f, cap * 2.0f).withCentre (centre);
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffefe2b0), capBounds.getX(), capBounds.getY(),
-                                                 juce::Colour (0xff8a6f3e), capBounds.getRight(), capBounds.getBottom(), false));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffc9b178), centre.x - cap * 0.3f, centre.y - cap * 0.4f,
+                                                 juce::Colour (0xff7a6236), capBounds.getRight(), capBounds.getBottom(), true));
         g.fillEllipse (capBounds);
-        g.setColour (juce::Colour (0xff5e4b2a));
+
+        // Tarnish: a few broad, faint patches that dull the brass unevenly.
+        for (int i = 0; i < 3; ++i)
+        {
+            const auto at = onCircle (cap * spot (0.2f, 0.7f), spot (0.0f, juce::MathConstants<float>::twoPi));
+            const float size = cap * spot (0.8f, 1.3f);
+            for (float layer : { 1.0f, 0.65f })   // two layers soften the edge
+            {
+                g.setColour (juce::Colour (0xff4a3a1e).withAlpha (spot (0.03f, 0.06f)));
+                g.fillEllipse (juce::Rectangle<float> (size * layer, size * layer * 0.8f).withCentre (at));
+            }
+        }
+        // Scratches across the cap, and an edge fingertips have polished.
+        {
+        juce::Graphics::ScopedSaveState clip (g);
+        juce::Path capShape;
+        capShape.addEllipse (capBounds);
+        g.reduceClipRegion (capShape);
+        for (int i = 0; i < 6; ++i)
+        {
+            const float angle = spot (0.0f, juce::MathConstants<float>::twoPi);
+            const auto from = onCircle (cap * spot (0.0f, 0.9f), angle);
+            const float length = cap * spot (0.3f, 1.1f);
+            const float direction = angle + turn + spot (1.0f, 2.2f);
+            const auto to = from.getPointOnCircumference (length, direction);
+            g.setColour ((i % 2 == 0 ? juce::Colour (0xfff0e2b4) : juce::Colour (0xff3e3018)).withAlpha (spot (0.12f, 0.3f)));
+            g.drawLine (juce::Line<float> (from, to), spot (0.4f, 0.8f));
+        }
+        juce::Path rub;
+        const float rubAt = spot (-0.8f, 0.8f);
+        rub.addCentredArc (centre.x, centre.y, cap - 1.5f, cap - 1.5f, 0.0f, rubAt + turn, rubAt + turn + spot (0.6f, 1.2f), true);
+        g.setColour (juce::Colour (0xffe6d39a).withAlpha (0.35f));
+        g.strokePath (rub, juce::PathStrokeType (1.5f));
+        }
+
+        g.setColour (juce::Colour (0xff4f3f22));
         g.drawEllipse (capBounds, 1.2f);
-        g.setColour (juce::Colours::white.withAlpha (0.12f));
-        for (float r : { 0.75f, 0.5f })
-            g.drawEllipse (juce::Rectangle<float> (cap * 2.0f * r, cap * 2.0f * r).withCentre (centre), 0.8f);
-        g.setColour (juce::Colours::white.withAlpha (0.35f));
-        g.fillEllipse (juce::Rectangle<float> (cap * 0.7f, cap * 0.35f).withCentre (centre.translated (-cap * 0.3f, -cap * 0.45f)));
 
         // The fixed marker above the knob.
         juce::Path marker;
@@ -551,6 +621,7 @@ SiltEditor::Control& SiltEditor::addKnob (Page p, int slot, const char* paramId,
     c->page = p;
     c->slot = slot;
     c->slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 76, 16);
+    c->slider.setComponentID (paramId);   // seeds this knob's wear
     // Set on the slider itself: its text box is made before it joins the
     // editor, so it never sees the panel look's colours.
     c->slider.setColour (juce::Slider::textBoxTextColourId, lcdText);
