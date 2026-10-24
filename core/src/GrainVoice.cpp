@@ -211,9 +211,10 @@ bool GrainVoice::advancePlayhead (const GrainParams& p, const SampleBuffer& buff
 
 void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) noexcept
 {
-    // Grains mode holds the count exactly; a full pool drops the grain rather
-    // than cutting one off mid-envelope.
-    if (p.grainCount > 0 && activeGrains >= p.grainCount)
+    // Grains mode keeps a ceiling of twice the count: while Size shrinks, the
+    // longer grains already playing would otherwise block new ones and leave
+    // gaps. A full pool drops the grain rather than cutting one off mid-envelope.
+    if (p.grainCount > 0 && activeGrains >= 2 * p.grainCount)
         return;
     auto free = std::find_if (grains.begin(), grains.end(), [] (const Grain& g) { return g.remaining <= 0; });
     if (free == grains.end())
@@ -314,7 +315,10 @@ void GrainVoice::render (float* left, float* right, int numSamples,
             else if (samplesToNextGrain <= 0.0)
             {
                 spawnGrain (p, *buffer);
-                samplesToNextGrain += interval;
+                // Jitter spreads the next start over 0…2 intervals at full amount,
+                // keeping the average rate.
+                const double jitter = std::clamp (p.jitter, 0.0, 1.0);
+                samplesToNextGrain += interval * (1.0 + jitter * random.nextBipolar());
             }
             firstGrainPending = false;
             samplesToNextGrain -= 1.0;

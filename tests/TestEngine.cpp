@@ -211,9 +211,41 @@ TEST_CASE ("Grains mode holds the grain count whatever the size")
             }
 
             INFO ("count " << count << " size " << size);
-            CHECK (highest <= count);
+            CHECK (highest <= count + 1);
             CHECK (lowest >= count - 1);
         }
+}
+
+TEST_CASE ("Jitter breaks up the comb tone of evenly spaced grains")
+{
+    // 32 grains of 40 ms with a frozen playhead start every 60 samples, all
+    // reading the same audio: the sum repeats every 60 samples (a 800 Hz tone).
+    const auto correlationAtSpacing = [] (double jitter)
+    {
+        TestEngine engine (makeNoise (2.0));
+        GrainParams p;
+        p.grainCount = 32;
+        p.sizeMs = 40.0;
+        p.scan = 0.0;
+        p.jitter = jitter;
+        const auto out = render (engine, p, 96000, { { 0, 60, true } });
+
+        const std::vector<float> x (out.left.begin() + 24000, out.left.end());
+        constexpr size_t lag = 60;
+        double same = 0.0, energy = 0.0;
+        for (size_t i = 0; i + lag < x.size(); ++i)
+        {
+            same += (double) x[i] * x[i + lag];
+            energy += (double) x[i] * x[i];
+        }
+        return same / energy;
+    };
+
+    const double clockwork = correlationAtSpacing (0.0);
+    const double jittered = correlationAtSpacing (0.5);
+    INFO ("clockwork " << clockwork << ", jittered " << jittered);
+    CHECK (clockwork > 0.5);
+    CHECK (jittered < 0.2);
 }
 
 TEST_CASE ("ADSR settles at the sustain level")

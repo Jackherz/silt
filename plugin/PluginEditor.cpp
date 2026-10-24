@@ -211,6 +211,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addKnob (grainKnobs, "size", "SIZE");
     addKnob (grainKnobs, "rate", "RATE");
     addKnob (grainKnobs, "spray", "SPRAY");
+    addKnob (grainKnobs, "jitter", "JITTER");
     addKnob (grainKnobs, "reverse", "REVERSE");
     addKnob (grainKnobs, "randAmp", "RND AMP");
     addKnob (grainKnobs, "fade", "FADE");
@@ -291,6 +292,12 @@ void SiltEditor::addKnob (std::vector<std::unique_ptr<Knob>>& row, const char* p
     auto knob = std::make_unique<Knob>();
     knob->label = label;
     knob->slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 74, 18);
+    // Set on the slider itself: its text box is made before it joins the
+    // editor, so it never sees the panel look's colours.
+    knob->slider.setColour (juce::Slider::textBoxTextColourId, lcdText);
+    knob->slider.setColour (juce::Slider::textBoxBackgroundColourId, lcdGreen);
+    knob->slider.setColour (juce::Slider::textBoxOutlineColourId, ink);
+    knob->slider.setColour (juce::Slider::textBoxHighlightColourId, rust.withAlpha (0.4f));
     addAndMakeVisible (knob->slider);
     knob->attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (silt.params, paramId, knob->slider);
     row.push_back (std::move (knob));

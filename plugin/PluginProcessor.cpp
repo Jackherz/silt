@@ -37,9 +37,10 @@ using Format = std::function<juce::String (float, int)>;
 
 juce::String formatMs (float v, int)
 {
+    // juce::String (v, 0) means "no limit", not "no decimals": round instead.
     if (v >= 1000.0f)
         return juce::String (v / 1000.0f, 2) + " s";
-    return juce::String (v, v < 10.0f ? 1 : 0) + " ms";
+    return (v < 10.0f ? juce::String (v, 1) : juce::String (juce::roundToInt (v))) + " ms";
 }
 
 juce::String formatHz (float v, int) { return juce::String (v, v < 10.0f ? 2 : 1) + " Hz"; }
@@ -69,6 +70,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 withUnit ("size", "Size", skewed (10.0f, 2000.0f, 150.0f), 100.0f, formatMs),
                 withUnit ("rate", "Rate", skewed (0.1f, 100.0f, 10.0f), 20.0f, formatHz),
                 percent ("spray", "Spray", 0.0f),
+                percent ("jitter", "Jitter", 50.0f),
                 percent ("reverse", "Reverse", 0.0f),
                 percent ("randAmp", "Random amp", 0.0f),
                 percent ("fade", "Fade", 100.0f),
@@ -139,7 +141,7 @@ struct SiltProcessor::RawParams
     explicit RawParams (juce::AudioProcessorValueTreeState& s)
     {
         const auto p = [&s] (const char* id) { return s.getRawParameterValue (id); };
-        pitch = p ("pitch"); size = p ("size"); rate = p ("rate"); spray = p ("spray");
+        pitch = p ("pitch"); size = p ("size"); rate = p ("rate"); spray = p ("spray"); jitter = p ("jitter");
         reverse = p ("reverse"); randAmp = p ("randAmp"); fade = p ("fade"); slant = p ("slant"); ease = p ("ease");
         sizeSync = p ("sizeSync"); sizeDiv = p ("sizeDiv"); rateMode = p ("rateMode"); rateDiv = p ("rateDiv"); grains = p ("grains");
         start = p ("start"); length = p ("length"); scan = p ("scan"); endMode = p ("endMode");
@@ -148,7 +150,7 @@ struct SiltProcessor::RawParams
         monitor = p ("monitor"); mix = p ("mix");   // one of these is null, per build
     }
 
-    std::atomic<float>* pitch, *size, *rate, *spray, *reverse, *randAmp, *fade, *slant, *ease;
+    std::atomic<float>* pitch, *size, *rate, *spray, *jitter, *reverse, *randAmp, *fade, *slant, *ease;
     std::atomic<float>* sizeSync, *sizeDiv, *rateMode, *rateDiv, *grains;
     std::atomic<float>* start, *length, *scan, *endMode;
     std::atomic<float>* attack, *decay, *sustain, *release, *root;
@@ -254,6 +256,7 @@ silt::GrainParams SiltProcessor::readParams() const noexcept
     p.sizeMs = v (raw->size);
     p.rateHz = v (raw->rate);
     p.spray = v (raw->spray) * 0.01;
+    p.jitter = v (raw->jitter) * 0.01;
     p.reverseChance = v (raw->reverse) * 0.01;
     p.randomAmp = v (raw->randAmp) * 0.01;
     p.fade = v (raw->fade) * 0.01;

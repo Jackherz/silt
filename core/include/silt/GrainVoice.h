@@ -22,6 +22,9 @@ struct GrainParams
     double rateHz = 20.0;          // grains started per second, 0.1…100
     double spray = 0.0;            // 0…1: start scatter up to ±1 s, plus stereo scatter
     double reverseChance = 0.0;    // 0…1: chance a grain plays backwards
+    double jitter = 0.0;           // 0…1: random spread of grain start times (0 = clockwork).
+                                   // Evenly spaced grains at fast rates sum to a pitched
+                                   // comb tone; jitter breaks it up. Not used on the beat grid.
     double randomAmp = 0.0;        // 0…1: per-grain random level drop
     double fade = 1.0;             // grain envelope (GrainEnvelope)
     double slant = 0.5;
@@ -29,8 +32,8 @@ struct GrainParams
     double declickMs = 1.0;        // shortest fade allowed
 
     // Grains mode (after Tonverk's Grainer "amount"): when > 0, this many grains
-    // sound at once and the start interval follows the grain length, so
-    // changing Size keeps the texture equally thick. rateHz is then ignored.
+    // sound at once on average and the start interval follows the grain length,
+    // so changing Size keeps the texture equally thick. rateHz is then ignored.
     int grainCount = 0;
 
     // Beat grid. When set, grains start on multiples of gridDivision (in
