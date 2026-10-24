@@ -93,6 +93,8 @@ void Resonator::reset() noexcept
     for (auto& b : bands)
         b = Band {};
     numBands = 0;
+    inMean = inPower = wetPower = 0.0;
+    ringGain = 1.0;
 }
 
 void Resonator::updateCoefficients (const ResonatorParams& p, bool snap) noexcept
@@ -152,6 +154,16 @@ void Resonator::process (float* left, float* right, int numSamples, const Resona
         updateCoefficients (p, true);
     }
 
+    // Level match: the input's level, held as long as a ring lasts, against the
+    // rings' level; the rings are turned down when they'd be louder than the
+    // input (a tone right on a band otherwise rings ~15 dB hotter).
+    const auto coefficient = [this] (double seconds) { return 1.0 - std::exp (-1.0 / (seconds * sampleRate)); };
+    const double inAttack = coefficient (0.005);
+    const double inRelease = coefficient (std::max (0.05, (double) p.decaySeconds / 6.9));
+    const double wetSmoothing = coefficient (0.02);
+    const double gainDown = coefficient (0.005), gainUp = coefficient (0.3);
+    constexpr double headroom = 1.0;   // power: the input's own level
+
     for (int start = 0; start < numSamples; start += controlInterval)
     {
         const int len = std::min (controlInterval, numSamples - start);
@@ -175,9 +187,15 @@ void Resonator::process (float* left, float* right, int numSamples, const Resona
                 wetLeft += y * b.gainLeft;
                 wetRight += y * b.gainRight;
             }
+            inMean += wetSmoothing * (x * x - inMean);   // averaged first, so the hold follows level, not peaks
+            inPower += (inMean > inPower ? inAttack : inRelease) * (inMean - inPower);
+            wetPower += wetSmoothing * (0.5 * (wetLeft * wetLeft + wetRight * wetRight) - wetPower);
+            const double target = wetPower > headroom * inPower ? std::sqrt (headroom * inPower / wetPower) : 1.0;
+            ringGain += (target < ringGain ? gainDown : gainUp) * (target - ringGain);
+
             mixNow += mixStep;
-            left[i] = inLeft * (1.0f - mixNow) + softClip ((float) wetLeft) * mixNow;
-            right[i] = inRight * (1.0f - mixNow) + softClip ((float) wetRight) * mixNow;
+            left[i] = inLeft * (1.0f - mixNow) + softClip ((float) (wetLeft * ringGain)) * mixNow;
+            right[i] = inRight * (1.0f - mixNow) + softClip ((float) (wetRight * ringGain)) * mixNow;
         }
         mixNow = mixTarget;
 

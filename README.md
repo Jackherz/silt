@@ -42,7 +42,8 @@ TUNE (the lowest band), NOTES (SCALE: the PITCH page's scale and key, or the roo
 fifths with no scale; HARMONICS; BELL partials), RANGE (1–4 octaves the bands reach),
 DECAY (ring time, 50 ms–20 s), BRIGHT (how much quieter and shorter the high bands
 are), WIDTH (bands alternate left and right), FOLLOW (tune to the last note played),
-MIX (0 is an exact bypass). Dense rings saturate softly rather than clip.
+MIX (0 is an exact bypass). The rings are held to the input's level, so a tone
+right on a band can't run away; anything left over saturates softly rather than clips.
 
 **8-knob controller:** a controller's 8 knobs move the 8 slots of the current page
 (GRAIN / SHAPE / PITCH / PLAY / RESONATOR), following the modes; two buttons step pages; works with

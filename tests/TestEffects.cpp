@@ -247,3 +247,32 @@ TEST_CASE ("Resonator: width moves alternate bands apart")
     run (mono, m, p);
     CHECK (m.left == m.right);
 }
+
+TEST_CASE ("Resonator: a tone on a band rings no louder than it went in")
+{
+    for (const float decay : { 0.3f, 2.0f, 12.0f })
+    {
+        Resonator res;
+        res.prepare (rate);
+        Stereo s ((int) rate * 3);
+        for (size_t i = 0; i < s.left.size(); ++i)   // A3, a band of A minor
+            s.left[i] = s.right[i] = 0.25f * (float) std::sin (2.0 * 3.14159265358979 * 220.0 * (double) i / rate);
+        ResonatorParams p;
+        p.scale = Scale::minor;
+        p.key = 9;
+        p.rootNote = 57.0f;
+        p.decaySeconds = decay;
+        p.mix = 1.0f;
+        run (res, s, p);
+
+        const double bothChannels = std::sqrt (0.5 * (std::pow (rms (s.left, (int) rate * 2, (int) rate * 3), 2.0)
+                                                     + std::pow (rms (s.right, (int) rate * 2, (int) rate * 3), 2.0)));
+        const double gain = db (bothChannels) - db (0.25 / std::sqrt (2.0));
+        float peak = 0.0f;
+        for (size_t i = 0; i < s.left.size(); ++i)
+            peak = std::max ({ peak, std::abs (s.left[i]), std::abs (s.right[i]) });
+        INFO ("decay " << decay << " s: " << gain << " dB, peak " << peak);
+        CHECK (gain < 1.5);
+        CHECK (peak < 0.7f);   // below the soft clip's knee: no saturation
+    }
+}

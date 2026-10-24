@@ -26,7 +26,8 @@ struct ResonatorParams
 
 // A bank of up to 12 ringing band-pass filters (TPT state-variable, in double
 // so long rings at low notes stay clean). The input's mono sum excites every
-// band; each band rings at its note for the decay time.
+// band; each band rings at its note for the decay time. The rings are kept
+// no louder than the input, so a tone on a band can't run away.
 //
 // Audio thread only, after prepare(). Coefficients follow the parameters every
 // 32 samples, with the band frequencies gliding, so TUNE can be swept.
@@ -63,6 +64,7 @@ private:
     std::array<Band, maxBands> bands {};
     int numBands = 0;
     float mixNow = 0.0f;
+    double inMean = 0.0, inPower = 0.0, wetPower = 0.0, ringGain = 1.0;   // level match
     bool active = false;   // false: bands are silent and the input passes through
 };
 
