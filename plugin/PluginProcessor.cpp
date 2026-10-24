@@ -85,6 +85,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                                                               juce::StringArray { "Free", "Sync", "Grains" }, 0),
                 std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "rateDiv", 1 }, "Rate (synced)",
                                                               divisionNames, sixteenth),
+                // Size in Grains mode: its own range, with half the knob below 60 ms
+                // where the texture changes most.
+                withUnit ("grainSize", "Size (grains)", skewed (10.0f, 500.0f, 60.0f), 80.0f, formatMs),
                 std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "grains", 1 }, "Grains", 1, 32, 8,
                     juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int n, int)
                     {
@@ -143,7 +146,7 @@ struct SiltProcessor::RawParams
         const auto p = [&s] (const char* id) { return s.getRawParameterValue (id); };
         pitch = p ("pitch"); size = p ("size"); rate = p ("rate"); spray = p ("spray"); jitter = p ("jitter");
         reverse = p ("reverse"); randAmp = p ("randAmp"); fade = p ("fade"); slant = p ("slant"); ease = p ("ease");
-        sizeSync = p ("sizeSync"); sizeDiv = p ("sizeDiv"); rateMode = p ("rateMode"); rateDiv = p ("rateDiv"); grains = p ("grains");
+        sizeSync = p ("sizeSync"); sizeDiv = p ("sizeDiv"); rateMode = p ("rateMode"); rateDiv = p ("rateDiv"); grains = p ("grains"); grainSize = p ("grainSize");
         start = p ("start"); length = p ("length"); scan = p ("scan"); endMode = p ("endMode");
         attack = p ("attack"); decay = p ("decay"); sustain = p ("sustain"); release = p ("release"); root = p ("root");
         captureBars = p ("captureBars"); gain = p ("gain");
@@ -151,7 +154,7 @@ struct SiltProcessor::RawParams
     }
 
     std::atomic<float>* pitch, *size, *rate, *spray, *jitter, *reverse, *randAmp, *fade, *slant, *ease;
-    std::atomic<float>* sizeSync, *sizeDiv, *rateMode, *rateDiv, *grains;
+    std::atomic<float>* sizeSync, *sizeDiv, *rateMode, *rateDiv, *grains, *grainSize;
     std::atomic<float>* start, *length, *scan, *endMode;
     std::atomic<float>* attack, *decay, *sustain, *release, *root;
     std::atomic<float>* captureBars, *gain, *monitor, *mix;
@@ -284,6 +287,8 @@ silt::GrainParams SiltProcessor::readParams() const noexcept
             break;
         case rateModeGrains:
             p.grainCount = (int) v (raw->grains);
+            if (v (raw->sizeSync) < 0.5)
+                p.sizeMs = v (raw->grainSize);
             break;
         default:
             break;

@@ -221,6 +221,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addKnob (syncedKnobs, "sizeDiv", "SIZE");
     addKnob (syncedKnobs, "rateDiv", "RATE");
     addKnob (syncedKnobs, "grains", "GRAINS");
+    addKnob (syncedKnobs, "grainSize", "SIZE");
     sizeSyncButton.setClickingTogglesState (true);
     addAndMakeVisible (sizeSyncButton);
     sizeSyncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "sizeSync", sizeSyncButton);
@@ -365,8 +366,9 @@ void SiltEditor::timerCallback()
 
     const bool sizeSynced = sizeSyncButton.getToggleState();
     const int mode = rateMode.getSelectedItemIndex();   // 0 free, 1 sync, 2 grains
-    grainKnobs[1]->slider.setVisible (! sizeSynced);
+    grainKnobs[1]->slider.setVisible (! sizeSynced && mode != 2);
     syncedKnobs[0]->slider.setVisible (sizeSynced);
+    syncedKnobs[3]->slider.setVisible (! sizeSynced && mode == 2);
     grainKnobs[2]->slider.setVisible (mode == 0);
     syncedKnobs[1]->slider.setVisible (mode == 1);
     syncedKnobs[2]->slider.setVisible (mode == 2);
@@ -420,6 +422,7 @@ void SiltEditor::resized()
     const auto& sizeKnob = grainKnobs[1]->slider;
     const auto& rateKnob = grainKnobs[2]->slider;
     syncedKnobs[0]->slider.setBounds (sizeKnob.getBounds());
+    syncedKnobs[3]->slider.setBounds (sizeKnob.getBounds());
     syncedKnobs[1]->slider.setBounds (rateKnob.getBounds());
     syncedKnobs[2]->slider.setBounds (rateKnob.getBounds());
     sizeSyncButton.setBounds (underneath (sizeKnob, 56));
