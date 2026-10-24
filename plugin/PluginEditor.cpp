@@ -624,6 +624,19 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addButton (Page::resonator, 6, followButton, "resFollow", "FOLLOW");
     addKnob (Page::resonator, 7, "resMix", "MIX");
 
+    // FILTER: after the resonator. MORPH blends low, band and high pass; ENV lets
+    // the level move the cutoff; KEY follows the notes played.
+    filterMode.addItemList ({ "OFF", "12 DB", "24 DB" }, 1);
+    addMenu (Page::filter, 0, filterMode, "MODE");
+    menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "filterMode", filterMode));
+    addKnob (Page::filter, 1, "filterCutoff", "CUTOFF");
+    addKnob (Page::filter, 2, "filterReso", "RESO");
+    addKnob (Page::filter, 3, "filterMorph", "MORPH");
+    addKnob (Page::filter, 4, "filterDrive", "DRIVE");
+    addKnob (Page::filter, 5, "filterEnv", "ENV");
+    addKnob (Page::filter, 6, "filterKey", "KEY");
+    addKnob (Page::filter, 7, "filterMix", "MIX");
+
     // Rate mode and Size SYNC sit under their knobs on the GRAIN page.
     rateMode.addItemList ({ "FREE", "SYNC", "GRAINS" }, 1);
     addChildComponent (rateMode);
@@ -635,7 +648,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     sizeSyncButton.onStateChange = [this] { updateVisibility(); };
 
     // Page tabs.
-    const char* names[] { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR" };
+    const char* names[] { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER" };
     for (size_t i = 0; i < pageTabs.size(); ++i)
     {
         auto& tab = pageTabs[i];

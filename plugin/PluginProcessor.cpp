@@ -176,6 +176,33 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "resFollow", 1 }, "Resonator follows notes", false),
                 percent ("resMix", "Resonator mix", 0.0f));
 
+    // Filter: after the resonator.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "filterMode", 1 }, "Filter",
+                                                              juce::StringArray { "Off", "12 dB", "24 dB" }, 0),
+                withUnit ("filterCutoff", "Filter cutoff", skewed (20.0f, 20000.0f, 1000.0f), 1000.0f, [] (float v, int)
+                {
+                    return v >= 1000.0f ? juce::String (v / 1000.0f, v >= 10000.0f ? 1 : 2) + " kHz"
+                                        : juce::String (juce::roundToInt (v)) + " Hz";
+                }),
+                percent ("filterReso", "Filter resonance", 0.0f),
+                withUnit ("filterMorph", "Filter morph", Range (0.0f, 2.0f, 0.001f), 0.0f, [] (float v, int)
+                {
+                    const char* names[] { "LP", "BP", "HP" };
+                    const int nearest = juce::roundToInt (v);
+                    if (std::abs (v - (float) nearest) < 0.02f)
+                        return juce::String (names[nearest]);
+                    const int lower = juce::jmin (1, (int) v);
+                    return juce::String (names[lower]) + "-" + names[lower + 1] + " " + juce::String (juce::roundToInt ((v - (float) lower) * 100.0f)) + "%";
+                }),
+                percent ("filterDrive", "Filter drive", 0.0f),
+                withUnit ("filterEnv", "Filter envelope", Range (-100.0f, 100.0f, 0.1f), 0.0f, [] (float v, int)
+                {
+                    const int n = juce::roundToInt (v);
+                    return (n > 0 ? "+" : "") + juce::String (n) + "%";
+                }),
+                percent ("filterKey", "Filter key tracking", 0.0f),
+                percent ("filterMix", "Filter mix", 100.0f));
+
     // Capture and output
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "captureBars", 1 }, "Capture length",
                                                               captureBarChoices, 1),
@@ -220,6 +247,8 @@ struct SiltProcessor::RawParams
         patternSteps = p ("patternSteps"); patternSeed = p ("patternSeed"); heads = p ("heads"); headSpread = p ("headSpread");
         resTune = p ("resTune"); resNotes = p ("resNotes"); resRange = p ("resRange"); resDecay = p ("resDecay");
         resBright = p ("resBright"); resWidth = p ("resWidth"); resFollow = p ("resFollow"); resMix = p ("resMix");
+        filterMode = p ("filterMode"); filterCutoff = p ("filterCutoff"); filterReso = p ("filterReso"); filterMorph = p ("filterMorph");
+        filterDrive = p ("filterDrive"); filterEnv = p ("filterEnv"); filterKey = p ("filterKey"); filterMix = p ("filterMix");
         monitor = p ("monitor"); mix = p ("mix");   // one of these is null, per build
     }
 
@@ -231,6 +260,7 @@ struct SiltProcessor::RawParams
     std::atomic<float>* keyMode, *liveDelay, *delaySync, *delayDiv, *feedback, *freeze, *liveRun;
     std::atomic<float>* randPitch, *scale, *key, *patternDepth, *patternSteps, *patternSeed, *heads, *headSpread;
     std::atomic<float>* resTune, *resNotes, *resRange, *resDecay, *resBright, *resWidth, *resFollow, *resMix;
+    std::atomic<float>* filterMode, *filterCutoff, *filterReso, *filterMorph, *filterDrive, *filterEnv, *filterKey, *filterMix;
 };
 
 juce::AudioProcessor::BusesProperties SiltProcessor::makeBuses()
@@ -282,7 +312,8 @@ void SiltProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamples
     currentSampleRate = sampleRate;
     engine.prepare (sampleRate, juce::jmax (1, maximumExpectedSamplesPerBlock));
     resonator.prepare (sampleRate);
-    resonatorNote = -1;
+    filter.prepare (sampleRate);
+    lastNote = -1;
     liveColumn = -1;
     liveColumnPeak = 0.0f;
     for (auto& c : livePeaks)
@@ -402,7 +433,7 @@ silt::ResonatorParams SiltProcessor::readResonatorParams (const silt::GrainParam
 {
     const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
     silt::ResonatorParams p;
-    p.rootNote = v (raw->resFollow) > 0.5f && resonatorNote >= 0 ? (float) resonatorNote : v (raw->resTune);
+    p.rootNote = v (raw->resFollow) > 0.5f && lastNote >= 0 ? (float) lastNote : v (raw->resTune);
     p.notes = (silt::ResonatorNotes) juce::jlimit (0, 2, (int) v (raw->resNotes));
     p.scale = grain.scale;
     p.key = grain.key;
@@ -411,6 +442,22 @@ silt::ResonatorParams SiltProcessor::readResonatorParams (const silt::GrainParam
     p.bright = v (raw->resBright) * 0.01f;
     p.width = v (raw->resWidth) * 0.01f;
     p.mix = v (raw->resMix) * 0.01f;
+    return p;
+}
+
+// Audio thread. KEY tracks the last note played around middle C.
+silt::FilterParams SiltProcessor::readFilterParams() const noexcept
+{
+    const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
+    silt::FilterParams p;
+    p.slope = (silt::FilterSlope) juce::jlimit (0, 2, (int) v (raw->filterMode));
+    p.cutoffHz = v (raw->filterCutoff);
+    p.resonance = v (raw->filterReso) * 0.01f;
+    p.morph = v (raw->filterMorph);
+    p.drive = v (raw->filterDrive) * 0.01f;
+    p.envAmount = v (raw->filterEnv) * 0.01f;
+    p.keyOctaves = lastNote >= 0 ? v (raw->filterKey) * 0.01f * (float) (lastNote - 60) / 12.0f : 0.0f;
+    p.mix = v (raw->filterMix) * 0.01f;
     return p;
 }
 
@@ -502,7 +549,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         {
             noteEvents.push_back ({ event.samplePosition, m.getNoteNumber(), m.getFloatVelocity(), m.isNoteOn() });
             if (m.isNoteOn())
-                resonatorNote = m.getNoteNumber();
+                lastNote = m.getNoteNumber();
         }
         else if (m.isAllNotesOff() || m.isAllSoundOff())
             allOff = true;
@@ -526,6 +573,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     const float mix = isInstrument ? 1.0f : raw->mix->load (std::memory_order_relaxed) * 0.01f;
     auto grainParams = readParams();
     const auto resonatorParams = readResonatorParams (grainParams);
+    const auto filterParams = readFilterParams();
 
     // Synced Rate locks grains to the beat grid while the host plays; stopped,
     // they free-run at the synced rate.
@@ -558,6 +606,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         if (grainParams.live && ! grainParams.freeze)
             trackLivePeaks (liveWriteBefore, len);
         resonator.process (wet.getWritePointer (0), wet.getWritePointer (1), len, resonatorParams);
+        filter.process (wet.getWritePointer (0), wet.getWritePointer (1), len, filterParams);
 
         // Sample by sample, reading the input before writing the output: the
         // two can share memory.
@@ -681,6 +730,11 @@ juce::String SiltProcessor::slotParameter (int page, int slot) const
         case 4:   // RESONATOR
         {
             const char* ids[] { "resTune", "resNotes", "resRange", "resDecay", "resBright", "resWidth", "resFollow", "resMix" };
+            return ids[slot];
+        }
+        case 5:   // FILTER
+        {
+            const char* ids[] { "filterMode", "filterCutoff", "filterReso", "filterMorph", "filterDrive", "filterEnv", "filterKey", "filterMix" };
             return ids[slot];
         }
         case 3:   // PLAY

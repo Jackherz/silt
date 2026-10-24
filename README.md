@@ -46,8 +46,15 @@ are), WIDTH (bands alternate left and right), FOLLOW (tune to the last note play
 MIX (0 is an exact bypass). The rings are held to the input's level, so a tone
 right on a band can't run away; anything left over saturates softly rather than clips.
 
+**FILTER page** (after the resonator): MODE (OFF, an exact bypass; 12 or 24 dB/oct),
+CUTOFF, RESO (up to a strong ringing peak; the passband dips as it rises, as on many
+analogue filters), MORPH (low pass → band pass → high pass, blended), DRIVE (up to
++24 dB into a soft saturation), ENV (± the input's level moves the cutoff up to 4
+octaves), KEY (the cutoff follows the last note played), MIX. Everything glides, so
+sweeps and slope changes don't zipper or click.
+
 **8-knob controller:** a controller's 8 knobs move the 8 slots of the current page
-(GRAIN / SHAPE / PITCH / PLAY / RESONATOR), following the modes; two buttons step pages; works with
+(GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER), following the modes; two buttons step pages; works with
 the window closed. Defaults: knobs CC 70–77, pages CC 78/79. **LEARN**: turn knobs 1–8,
 then press previous and next page. A knob takes over only when it reaches the
 parameter's value (pickup), so changing page never makes values jump. The mapping and

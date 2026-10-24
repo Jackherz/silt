@@ -144,6 +144,17 @@ private:
 };
 
 // Scales for pitch snapping, as sets of pitch classes above the key.
+// Linear to the knee, then a smooth bend to full scale: effects that can run
+// hot (rings, resonance) saturate instead of clipping.
+inline float softClip (float x) noexcept
+{
+    constexpr float knee = 0.7f;
+    const float a = std::abs (x);
+    if (a <= knee)
+        return x;
+    return std::copysign (knee + (1.0f - knee) * std::tanh ((a - knee) / (1.0f - knee)), x);
+}
+
 enum class Scale { off, chromatic, major, minor, dorian, phrygian, lydian, mixolydian,
                    majorPentatonic, minorPentatonic, wholeTone, octaves, fifths };
 

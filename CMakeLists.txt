@@ -38,6 +38,7 @@ set(SILT_BUNDLE_PREFIX com.siltaudio)
 # both plug-ins, the tests and the offline render tool (plan §3).
 add_library(silt_core STATIC
     core/src/Engine.cpp
+    core/src/Filter.cpp
     core/src/GrainVoice.cpp
     core/src/LevelMeter.cpp
     core/src/Onsets.cpp

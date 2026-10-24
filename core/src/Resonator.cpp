@@ -14,16 +14,6 @@ constexpr double pi = 3.14159265358979323846;
 constexpr std::array<double, 9> bellPartials { 1.0, 1.643, 2.125, 3.054, 3.571, 4.893, 5.357, 6.714, 7.268 };
 
 double noteToHz (double note) noexcept { return 440.0 * std::pow (2.0, (note - 69.0) / 12.0); }
-
-// Linear to the knee, then a smooth bend: dense rings saturate instead of clipping.
-float softClip (float x) noexcept
-{
-    constexpr float knee = 0.7f;
-    const float a = std::abs (x);
-    if (a <= knee)
-        return x;
-    return std::copysign (knee + (1.0f - knee) * std::tanh ((a - knee) / (1.0f - knee)), x);
-}
 } // namespace
 
 int Resonator::bandRatios (const ResonatorParams& p, std::array<double, maxBands>& ratios) noexcept

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <silt/Filter.h>
 #include <silt/Resonator.h>
 
 #include <cmath>
@@ -372,5 +373,157 @@ TEST_CASE ("Resonator: sweeping range, decay, bright and width doesn't zipper")
         const double still = render (which, false), swept = render (which, true);
         INFO (names[which] << ": swept " << swept << ", still " << still);
         CHECK (swept < still * 4.0);
+    }
+}
+
+// --- Filter -----------------------------------------------------------------------
+
+namespace
+{
+Stereo sine (int n, double hz, float level)
+{
+    Stereo s (n);
+    for (int i = 0; i < n; ++i)
+        s.left[(size_t) i] = s.right[(size_t) i] = level * (float) std::sin (2.0 * 3.14159265358979 * hz * i / rate);
+    return s;
+}
+
+void run (Filter& f, Stereo& s, const FilterParams& p, int block = 512)
+{
+    for (int i = 0; i < (int) s.left.size(); i += block)
+        f.process (s.left.data() + i, s.right.data() + i, std::min (block, (int) s.left.size() - i), p);
+}
+
+// Gain in dB of a sine through the filter, measured after it settles.
+double gainAt (double hz, const FilterParams& p)
+{
+    Filter f;
+    f.prepare (rate);
+    auto s = sine ((int) rate / 2, hz, 0.1f);
+    run (f, s, p);
+    return db (rms (s.left, (int) rate / 4, (int) rate / 2)) - db (0.1 / std::sqrt (2.0));
+}
+
+FilterParams lowPass (FilterSlope slope)
+{
+    FilterParams p;
+    p.slope = slope;
+    p.cutoffHz = 1000.0f;
+    return p;
+}
+} // namespace
+
+TEST_CASE ("Filter: off passes the input through untouched")
+{
+    Filter f;
+    f.prepare (rate);
+    auto s = noise (10000, 0.5f);
+    const auto original = s.left;
+    run (f, s, FilterParams {});
+    CHECK (s.left == original);
+}
+
+TEST_CASE ("Filter: low pass at 12 and 24 dB per octave")
+{
+    for (const auto slope : { FilterSlope::db12, FilterSlope::db24 })
+    {
+        const auto p = lowPass (slope);
+        const double pass = gainAt (100.0, p), corner = gainAt (1000.0, p), stop = gainAt (8000.0, p);
+        INFO ((slope == FilterSlope::db12 ? "12" : "24") << " dB: 100 Hz " << pass << ", 1 kHz " << corner << ", 8 kHz " << stop);
+        CHECK (std::abs (pass) < 0.5);
+        CHECK (std::abs (corner + 3.0) < 1.0);
+        CHECK (stop < (slope == FilterSlope::db12 ? -30.0 : -60.0));
+    }
+}
+
+TEST_CASE ("Filter: morph moves from low pass through band pass to high pass")
+{
+    auto p = lowPass (FilterSlope::db12);
+    p.morph = 1.0f;   // band pass
+    CHECK (gainAt (1000.0, p) - gainAt (100.0, p) > 15.0);
+    CHECK (gainAt (1000.0, p) - gainAt (10000.0, p) > 15.0);
+    p.morph = 2.0f;   // high pass
+    CHECK (gainAt (100.0, p) < -30.0);
+    CHECK (std::abs (gainAt (10000.0, p)) < 0.5);
+}
+
+TEST_CASE ("Filter: resonance raises a peak at the cutoff")
+{
+    for (const auto slope : { FilterSlope::db12, FilterSlope::db24 })
+    {
+        auto p = lowPass (slope);
+        const double flat = gainAt (1000.0, p) - gainAt (100.0, p);
+        p.resonance = 1.0f;
+        const double peaked = gainAt (1000.0, p) - gainAt (100.0, p);
+        INFO ("peak over the passband: " << flat << " dB flat, " << peaked << " dB resonant");
+        CHECK (peaked > flat + 20.0);
+    }
+}
+
+TEST_CASE ("Filter: ENV opens the cutoff with the input's level")
+{
+    auto p = lowPass (FilterSlope::db24);
+    p.cutoffHz = 300.0f;
+    const double closed = gainAt (3000.0, p);
+    p.envAmount = 1.0f;
+    const double opened = gainAt (3000.0, p);
+    INFO ("3 kHz: " << closed << " dB, with ENV " << opened << " dB");
+    CHECK (opened > closed + 20.0);
+}
+
+TEST_CASE ("Filter: stays finite and bounded at extreme settings")
+{
+    for (const auto slope : { FilterSlope::db12, FilterSlope::db24 })
+        for (const float morph : { 0.0f, 1.0f, 2.0f })
+        {
+            Filter f;
+            f.prepare (rate);
+            auto s = noise ((int) rate, 1.0f);
+            FilterParams p;
+            p.slope = slope;
+            p.morph = morph;
+            p.resonance = 1.0f;
+            p.drive = 1.0f;
+            p.envAmount = 1.0f;
+            p.keyOctaves = 4.0f;
+            for (int i = 0; i < (int) s.left.size(); i += 64)
+            {
+                p.cutoffHz = (i / 64) % 2 == 0 ? 20.0f : 20000.0f;   // the worst jumps there are
+                f.process (s.left.data() + i, s.right.data() + i, 64, p);
+            }
+            for (size_t i = 0; i < s.left.size(); ++i)
+            {
+                REQUIRE (std::isfinite (s.left[i]));
+                REQUIRE (std::abs (s.left[i]) <= 1.0f);
+            }
+        }
+}
+
+TEST_CASE ("Filter: sweeping the cutoff and switching slope don't zipper or click")
+{
+    const auto render = [] (int which, bool move)
+    {
+        Filter f;
+        f.prepare (rate);
+        auto s = sine ((int) rate * 2, 110.0, 0.25f);
+        auto p = lowPass (FilterSlope::db12);
+        p.resonance = 0.3f;
+        for (int i = 0; i < (int) s.left.size(); i += 256)
+        {
+            const float t = move ? 0.5f + 0.5f * (float) std::sin (2.0 * 3.14159265358979 * 2.0 * i / rate) : 0.5f;
+            if (which == 0)
+                p.cutoffHz = 400.0f * std::pow (20.0f, t);
+            else
+                p.slope = move && (i / 4096) % 2 == 1 ? FilterSlope::db24 : FilterSlope::db12;
+            f.process (s.left.data() + i, s.right.data() + i, std::min (256, (int) s.left.size() - i), p);
+        }
+        const double level = rms (s.left, (int) rate / 2, (int) rate * 2);
+        return roughness (s.left, (int) rate / 2, (int) rate * 2) / (level * level + 1.0e-20);
+    };
+    for (int which = 0; which < 2; ++which)
+    {
+        const double still = render (which, false), moved = render (which, true);
+        INFO ((which == 0 ? "cutoff" : "slope") << ": moved " << moved << ", still " << still);
+        CHECK (moved < still * 4.0);
     }
 }
