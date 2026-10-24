@@ -3,6 +3,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <silt/Engine.h>
+#include <silt/Color.h>
 #include <silt/Filter.h>
 #include <silt/LevelMeter.h>
 #include <silt/Resonator.h>
@@ -57,7 +58,7 @@ public:
     // editor's (GRAIN / SHAPE / PITCH / PLAY), alternatives following the modes.
     // A knob takes over a parameter only once it reaches the parameter's value
     // (pickup), so switching pages never makes values jump.
-    static constexpr int numPages = 6, slotsPerPage = 8;
+    static constexpr int numPages = 7, slotsPerPage = 8;
     std::atomic<int> currentPage { 0 };
     std::array<std::atomic<int>, slotsPerPage> knobCCs {};
     std::atomic<int> previousPageCC { 78 }, nextPageCC { 79 };
@@ -124,6 +125,7 @@ private:
     silt::GrainParams readParams() const noexcept;
     silt::ResonatorParams readResonatorParams (const silt::GrainParams&) const noexcept;
     silt::FilterParams readFilterParams() const noexcept;
+    silt::ColorParams readColorParams() const noexcept;
     void runCapture (const juce::AudioBuffer<float>& capture, const juce::AudioPlayHead::PositionInfo*);
     void timerCallback() override;
 
@@ -136,6 +138,7 @@ private:
     silt::Engine engine;
     silt::Resonator resonator;   // after the grains
     silt::Filter filter;         // after the resonator
+    silt::Color color;           // after the filter
     int lastNote = -1;           // the last note played, for FOLLOW and KEY (audio thread)
     double currentSampleRate = 48000.0;
 

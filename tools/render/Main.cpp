@@ -10,9 +10,11 @@
 // release (ms), sustain (0–1), root (note), end (loop|hold|stop),
 // interp (linear|cubic); resonator: restune (note), resnotes (scale|harmonics|bell),
 // resrange (octaves), resdecay (s), resbright, reswidth, resmix (0–1); filter: filter
-// (12|24), cutoff (Hz), reso, drive, filtermix (0–1), morph (0–2), env (−1…1)
+// (12|24), cutoff (Hz), reso, drive, filtermix (0–1), morph (0–2), env (−1…1); color:
+// cdrive, ctone (−1…1), bits, crate (Hz), comp, noise, wow, cmix (0–1)
 
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <silt/Color.h>
 #include <silt/Engine.h>
 #include <silt/Filter.h>
 #include <silt/Resonator.h>
@@ -30,6 +32,7 @@ struct Options
     silt::GrainParams params;
     silt::ResonatorParams resonator;
     silt::FilterParams filter;
+    silt::ColorParams color;
 };
 
 [[noreturn]] void fail (const juce::String& message)
@@ -38,13 +41,21 @@ struct Options
     std::exit (1);
 }
 
-void applySetting (silt::GrainParams& p, silt::ResonatorParams& r, silt::FilterParams& f, const juce::String& setting)
+void applySetting (silt::GrainParams& p, silt::ResonatorParams& r, silt::FilterParams& f, silt::ColorParams& c, const juce::String& setting)
 {
     const auto key = setting.upToFirstOccurrenceOf ("=", false, false).trim();
     const auto value = setting.fromFirstOccurrenceOf ("=", false, false).trim();
     const double v = value.getDoubleValue();
 
-    if      (key == "filter")    f.slope = value == "24" ? silt::FilterSlope::db24 : silt::FilterSlope::db12;
+    if      (key == "cdrive")    c.drive = (float) v;
+    else if (key == "ctone")     c.tone = (float) v;
+    else if (key == "bits")      c.bits = (float) v;
+    else if (key == "crate")     c.rateHz = (float) v;
+    else if (key == "comp")      c.comp = (float) v;
+    else if (key == "noise")     c.noise = (float) v;
+    else if (key == "wow")       c.wow = (float) v;
+    else if (key == "cmix")      c.mix = (float) v;
+    else if (key == "filter")    f.slope = value == "24" ? silt::FilterSlope::db24 : silt::FilterSlope::db12;
     else if (key == "cutoff")    f.cutoffHz = (float) v;
     else if (key == "reso")      f.resonance = (float) v;
     else if (key == "morph")     f.morph = (float) v;
@@ -115,7 +126,7 @@ Options parse (const juce::StringArray& args)
         else if (a == "--tail")  o.tailSeconds = next().getDoubleValue();
         else if (a == "--seed")  o.seed = (std::uint64_t) next().getLargeIntValue();
         else if (a == "--rate")  o.sampleRate = next().getDoubleValue();
-        else if (a == "--set")   applySetting (o.params, o.resonator, o.filter, next());
+        else if (a == "--set")   applySetting (o.params, o.resonator, o.filter, o.color, next());
         else fail ("unknown option '" + a + "'");
     }
     if (o.input == juce::File() || o.output == juce::File())
@@ -194,6 +205,8 @@ int main (int argc, char* argv[])
     resonatorParams.key = o.params.key;
     silt::Filter filter;
     filter.prepare (o.sampleRate);
+    silt::Color color;
+    color.prepare (o.sampleRate);
 
     int total = 0;
     const auto notes = loadNotes (o, total);
@@ -219,6 +232,7 @@ int main (int argc, char* argv[])
                         blockEvents.data(), (int) blockEvents.size(), o.params);
         resonator.process (out.getWritePointer (0, start), out.getWritePointer (1, start), len, resonatorParams);
         filter.process (out.getWritePointer (0, start), out.getWritePointer (1, start), len, o.filter);
+        color.process (out.getWritePointer (0, start), out.getWritePointer (1, start), len, o.color);
         maxGrains = juce::jmax (maxGrains, engine.getActiveGrainCount());
     }
 

@@ -37,6 +37,7 @@ set(SILT_BUNDLE_PREFIX com.siltaudio)
 # The engine: plain C++ with no JUCE dependency, so the same code builds into
 # both plug-ins, the tests and the offline render tool (plan §3).
 add_library(silt_core STATIC
+    core/src/Color.cpp
     core/src/Engine.cpp
     core/src/Filter.cpp
     core/src/GrainVoice.cpp

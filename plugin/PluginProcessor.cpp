@@ -203,6 +203,29 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 percent ("filterKey", "Filter key tracking", 0.0f),
                 percent ("filterMix", "Filter mix", 100.0f));
 
+    // Color: after the filter.
+    layout.add (percent ("colorDrive", "Color drive", 0.0f),
+                withUnit ("colorTone", "Color tone", Range (-100.0f, 100.0f, 0.1f), 0.0f, [] (float v, int)
+                {
+                    const int n = juce::roundToInt (v);
+                    return n == 0 ? juce::String ("FLAT") : (n < 0 ? "DARK " : "BRIGHT ") + juce::String (std::abs (n)) + "%";
+                }),
+                withUnit ("colorBits", "Color bits", Range (2.0f, 16.0f, 0.01f), 16.0f, [] (float v, int)
+                {
+                    return v >= 15.995f ? juce::String ("OFF") : juce::String (v, 1) + " bits";
+                }),
+                withUnit ("colorRate", "Color rate", skewed (200.0f, silt::Color::rateOff, 4000.0f), silt::Color::rateOff, [] (float v, int)
+                {
+                    if (v >= silt::Color::rateOff - 1.0f)
+                        return juce::String ("OFF");
+                    return v >= 1000.0f ? juce::String (v / 1000.0f, v >= 10000.0f ? 1 : 2) + " kHz"
+                                        : juce::String (juce::roundToInt (v)) + " Hz";
+                }),
+                percent ("colorComp", "Color comp", 0.0f),
+                percent ("colorNoise", "Color noise", 0.0f),
+                percent ("colorWow", "Color wow", 0.0f),
+                percent ("colorMix", "Color mix", 100.0f));
+
     // Capture and output
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "captureBars", 1 }, "Capture length",
                                                               captureBarChoices, 1),
@@ -249,6 +272,8 @@ struct SiltProcessor::RawParams
         resBright = p ("resBright"); resWidth = p ("resWidth"); resFollow = p ("resFollow"); resMix = p ("resMix");
         filterMode = p ("filterMode"); filterCutoff = p ("filterCutoff"); filterReso = p ("filterReso"); filterMorph = p ("filterMorph");
         filterDrive = p ("filterDrive"); filterEnv = p ("filterEnv"); filterKey = p ("filterKey"); filterMix = p ("filterMix");
+        colorDrive = p ("colorDrive"); colorTone = p ("colorTone"); colorBits = p ("colorBits"); colorRate = p ("colorRate");
+        colorComp = p ("colorComp"); colorNoise = p ("colorNoise"); colorWow = p ("colorWow"); colorMix = p ("colorMix");
         monitor = p ("monitor"); mix = p ("mix");   // one of these is null, per build
     }
 
@@ -261,6 +286,7 @@ struct SiltProcessor::RawParams
     std::atomic<float>* randPitch, *scale, *key, *patternDepth, *patternSteps, *patternSeed, *heads, *headSpread;
     std::atomic<float>* resTune, *resNotes, *resRange, *resDecay, *resBright, *resWidth, *resFollow, *resMix;
     std::atomic<float>* filterMode, *filterCutoff, *filterReso, *filterMorph, *filterDrive, *filterEnv, *filterKey, *filterMix;
+    std::atomic<float>* colorDrive, *colorTone, *colorBits, *colorRate, *colorComp, *colorNoise, *colorWow, *colorMix;
 };
 
 juce::AudioProcessor::BusesProperties SiltProcessor::makeBuses()
@@ -313,6 +339,7 @@ void SiltProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamples
     engine.prepare (sampleRate, juce::jmax (1, maximumExpectedSamplesPerBlock));
     resonator.prepare (sampleRate);
     filter.prepare (sampleRate);
+    color.prepare (sampleRate);
     lastNote = -1;
     liveColumn = -1;
     liveColumnPeak = 0.0f;
@@ -461,6 +488,22 @@ silt::FilterParams SiltProcessor::readFilterParams() const noexcept
     return p;
 }
 
+// Audio thread.
+silt::ColorParams SiltProcessor::readColorParams() const noexcept
+{
+    const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
+    silt::ColorParams p;
+    p.drive = v (raw->colorDrive) * 0.01f;
+    p.tone = v (raw->colorTone) * 0.01f;
+    p.bits = v (raw->colorBits);
+    p.rateHz = v (raw->colorRate);
+    p.comp = v (raw->colorComp) * 0.01f;
+    p.noise = v (raw->colorNoise) * 0.01f;
+    p.wow = v (raw->colorWow) * 0.01f;
+    p.mix = v (raw->colorMix) * 0.01f;
+    return p;
+}
+
 // Audio thread. Armed: wait for the next bar line (or start now when the host
 // is stopped), then record until the target is full.
 void SiltProcessor::runCapture (const juce::AudioBuffer<float>& capture, const juce::AudioPlayHead::PositionInfo* pos)
@@ -574,6 +617,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     auto grainParams = readParams();
     const auto resonatorParams = readResonatorParams (grainParams);
     const auto filterParams = readFilterParams();
+    const auto colorParams = readColorParams();
 
     // Synced Rate locks grains to the beat grid while the host plays; stopped,
     // they free-run at the synced rate.
@@ -607,6 +651,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
             trackLivePeaks (liveWriteBefore, len);
         resonator.process (wet.getWritePointer (0), wet.getWritePointer (1), len, resonatorParams);
         filter.process (wet.getWritePointer (0), wet.getWritePointer (1), len, filterParams);
+        color.process (wet.getWritePointer (0), wet.getWritePointer (1), len, colorParams);
 
         // Sample by sample, reading the input before writing the output: the
         // two can share memory.
@@ -735,6 +780,11 @@ juce::String SiltProcessor::slotParameter (int page, int slot) const
         case 5:   // FILTER
         {
             const char* ids[] { "filterMode", "filterCutoff", "filterReso", "filterMorph", "filterDrive", "filterEnv", "filterKey", "filterMix" };
+            return ids[slot];
+        }
+        case 6:   // COLOR
+        {
+            const char* ids[] { "colorDrive", "colorTone", "colorBits", "colorRate", "colorComp", "colorNoise", "colorWow", "colorMix" };
             return ids[slot];
         }
         case 3:   // PLAY

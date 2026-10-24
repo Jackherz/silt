@@ -53,8 +53,15 @@ analogue filters), MORPH (low pass → band pass → high pass, blended), DRIVE 
 octaves), KEY (the cutoff follows the last note played), MIX. Everything glides, so
 sweeps and slope changes don't zipper or click.
 
+**COLOR page** (after the filter; every control's default leaves the sound untouched):
+DRIVE (up to +30 dB into a slightly uneven tape-style curve, so even harmonics too),
+TONE (±6 dB tilt around 800 Hz), BITS (16 down to 2), RATE (sample-and-hold, OFF down
+to 200 Hz), COMP (one knob: threshold down, ratio up, makeup to match), NOISE (hiss
+that rides the signal's level, so silence stays silent), WOW (slow wow and faster
+flutter; no added delay at zero), MIX.
+
 **8-knob controller:** a controller's 8 knobs move the 8 slots of the current page
-(GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER), following the modes; two buttons step pages; works with
+(GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER / COLOR), following the modes; two buttons step pages; works with
 the window closed. Defaults: knobs CC 70–77, pages CC 78/79. **LEARN**: turn knobs 1–8,
 then press previous and next page. A knob takes over only when it reaches the
 parameter's value (pickup), so changing page never makes values jump. The mapping and

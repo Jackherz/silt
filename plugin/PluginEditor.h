@@ -4,7 +4,7 @@
 
 // The panel, drawn natively in the plan §5 palette. A screen on top shows the
 // sample and every sounding grain; below it, one page of controls at a time
-// (GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER), at most 8 each so a page maps onto an 8-knob controller.
+// (GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER / COLOR), at most 8 each so a page maps onto an 8-knob controller.
 class SiltEditor final : public juce::AudioProcessorEditor,
                          public juce::FileDragAndDropTarget,
                          private juce::Timer
@@ -22,7 +22,7 @@ public:
     void filesDropped (const juce::StringArray& files, int, int) override;
 
 private:
-    enum class Page { grain, shape, pitch, play, resonator, filter };
+    enum class Page { grain, shape, pitch, play, resonator, filter, color };
 
     // One control in the page row: a knob or a menu, its label, and its slot.
     // A knob that moves ten times finer while Shift is held as the drag starts.
@@ -77,7 +77,7 @@ private:
     std::unique_ptr<GrainScreen> screen;
 
     std::vector<std::unique_ptr<Control>> controls;
-    std::array<juce::TextButton, 6> pageTabs;
+    std::array<juce::TextButton, 7> pageTabs;
     Page page = Page::grain;
 
     juce::TextButton armButton, loadButton { "LOAD" }, learnButton { "LEARN" }, sizeSyncButton { "SYNC" }, delaySyncButton { "SYNC" };

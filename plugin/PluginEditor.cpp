@@ -637,6 +637,17 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addKnob (Page::filter, 6, "filterKey", "KEY");
     addKnob (Page::filter, 7, "filterMix", "MIX");
 
+    // COLOR: after the filter. Wow, drive, tone, bits, rate, comp and noise, in
+    // that order; each is out of the way at its default.
+    addKnob (Page::color, 0, "colorDrive", "DRIVE");
+    addKnob (Page::color, 1, "colorTone", "TONE");
+    addKnob (Page::color, 2, "colorBits", "BITS");
+    addKnob (Page::color, 3, "colorRate", "RATE");
+    addKnob (Page::color, 4, "colorComp", "COMP");
+    addKnob (Page::color, 5, "colorNoise", "NOISE");
+    addKnob (Page::color, 6, "colorWow", "WOW");
+    addKnob (Page::color, 7, "colorMix", "MIX");
+
     // Rate mode and Size SYNC sit under their knobs on the GRAIN page.
     rateMode.addItemList ({ "FREE", "SYNC", "GRAINS" }, 1);
     addChildComponent (rateMode);
@@ -648,7 +659,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     sizeSyncButton.onStateChange = [this] { updateVisibility(); };
 
     // Page tabs.
-    const char* names[] { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER" };
+    const char* names[] { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER", "COLOR" };
     for (size_t i = 0; i < pageTabs.size(); ++i)
     {
         auto& tab = pageTabs[i];

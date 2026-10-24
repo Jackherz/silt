@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <silt/Color.h>
 #include <silt/Filter.h>
 #include <silt/Resonator.h>
 
@@ -525,5 +526,175 @@ TEST_CASE ("Filter: sweeping the cutoff and switching slope don't zipper or clic
         const double still = render (which, false), moved = render (which, true);
         INFO ((which == 0 ? "cutoff" : "slope") << ": moved " << moved << ", still " << still);
         CHECK (moved < still * 4.0);
+    }
+}
+
+// --- Color ------------------------------------------------------------------------
+
+namespace
+{
+void run (Color& c, Stereo& s, const ColorParams& p, int block = 512)
+{
+    for (int i = 0; i < (int) s.left.size(); i += block)
+        c.process (s.left.data() + i, s.right.data() + i, std::min (block, (int) s.left.size() - i), p);
+}
+
+Stereo colored (Stereo s, const ColorParams& p)
+{
+    Color c;
+    c.prepare (rate);
+    run (c, s, p);
+    return s;
+}
+
+// Level of one frequency (Goertzel), over the second half.
+double toneLevel (const std::vector<float>& x, double hz)
+{
+    const int from = (int) x.size() / 2, n = (int) x.size() - from;
+    const double w = 2.0 * 3.14159265358979 * hz / rate, c = 2.0 * std::cos (w);
+    double s1 = 0.0, s2 = 0.0;
+    for (int i = from; i < (int) x.size(); ++i)
+    {
+        const double s0 = x[(size_t) i] + c * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    return 2.0 * std::sqrt (std::max (0.0, s1 * s1 + s2 * s2 - c * s1 * s2)) / n;
+}
+} // namespace
+
+TEST_CASE ("Color: at its defaults the input passes through untouched")
+{
+    auto s = noise (20000, 0.5f);
+    const auto out = colored (s, ColorParams {});
+    CHECK (out.left == s.left);
+    CHECK (out.right == s.right);
+}
+
+TEST_CASE ("Color: drive adds harmonics, even ones included")
+{
+    ColorParams p;
+    p.drive = 0.7f;
+    const auto out = colored (sine ((int) rate, 200.0, 0.5f), p);
+    const double fundamental = toneLevel (out.left, 200.0);
+    const double second = db (toneLevel (out.left, 400.0) / fundamental), third = db (toneLevel (out.left, 600.0) / fundamental);
+    INFO ("2nd " << second << " dB, 3rd " << third << " dB under the fundamental");
+    CHECK (second > -40.0);
+    CHECK (third > -30.0);
+}
+
+TEST_CASE ("Color: tone tilts lows against highs")
+{
+    for (const float tone : { -1.0f, 1.0f })
+    {
+        ColorParams p;
+        p.tone = tone;
+        const double low = db (toneLevel (colored (sine ((int) rate, 40.0, 0.25f), p).left, 40.0) / 0.25);
+        const double high = db (toneLevel (colored (sine ((int) rate, 12000.0, 0.25f), p).left, 12000.0) / 0.25);
+        INFO ("tone " << tone << ": 40 Hz " << low << " dB, 12 kHz " << high << " dB");
+        CHECK (std::abs (low + 6.0 * tone) < 1.0);
+        CHECK (std::abs (high - 6.0 * tone) < 1.5);
+    }
+}
+
+TEST_CASE ("Color: bits round to fewer steps; rate holds samples")
+{
+    ColorParams p;
+    p.bits = 4.0f;
+    const auto crushed = colored (noise (48000, 0.5f), p);
+    for (size_t i = 24000; i < crushed.left.size(); ++i)
+        REQUIRE (std::abs (crushed.left[i] * 8.0f - std::round (crushed.left[i] * 8.0f)) < 1.0e-4f);
+
+    p = {};
+    p.rateHz = 1000.0f;
+    const auto held = colored (noise (48000, 0.5f), p);
+    int changes = 0;
+    for (size_t i = 24001; i < held.left.size(); ++i)
+        changes += held.left[i] != held.left[i - 1];
+    CHECK (std::abs (changes - 500) < 10);   // 1000 new values a second
+}
+
+TEST_CASE ("Color: comp narrows the gap between loud and quiet")
+{
+    ColorParams p;
+    p.comp = 1.0f;
+    const double loud = db (rms (colored (sine ((int) rate, 300.0, 0.9f), p).left, (int) rate / 2, (int) rate));
+    const double quiet = db (rms (colored (sine ((int) rate, 300.0, 0.03f), p).left, (int) rate / 2, (int) rate));
+    INFO ("29.5 dB apart in, " << loud - quiet << " dB apart out");
+    CHECK (loud - quiet < 12.0);
+}
+
+TEST_CASE ("Color: noise follows the signal, so silence stays silent")
+{
+    ColorParams p;
+    p.noise = 1.0f;
+    const auto silent = colored (Stereo (48000), p);
+    for (const float x : silent.left)
+        REQUIRE (x == 0.0f);
+
+    const auto out = colored (sine ((int) rate, 200.0, 0.5f), p);
+    const double hiss = db (toneLevel (out.left, 5000.0) + toneLevel (out.left, 9000.0));
+    CHECK (hiss > -90.0);
+}
+
+TEST_CASE ("Color: wow bends the pitch, and adds no delay at zero")
+{
+    ColorParams p;
+    p.wow = 1.0f;
+    const auto out = colored (sine ((int) rate * 3, 1000.0, 0.5f), p);
+    // Cycle lengths from zero crossings: steady in, wobbling out.
+    std::vector<double> periods;
+    int last = -1;
+    for (int i = 1; i < (int) out.left.size(); ++i)
+        if (out.left[(size_t) i - 1] < 0.0f && out.left[(size_t) i] >= 0.0f)
+        {
+            if (last >= 0)
+                periods.push_back (i - last);
+            last = i;
+        }
+    const auto [lo, hi] = std::minmax_element (periods.begin() + 10, periods.end());
+    CHECK (*hi - *lo >= 1.0);
+}
+
+TEST_CASE ("Color: stays finite and bounded with everything up")
+{
+    ColorParams p { 1.0f, 1.0f, 2.0f, 500.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+    const auto out = colored (noise ((int) rate, 1.0f), p);
+    for (size_t i = 0; i < out.left.size(); ++i)
+    {
+        REQUIRE (std::isfinite (out.left[i]));
+        REQUIRE (std::abs (out.left[i]) <= 2.0f);
+    }
+}
+
+TEST_CASE ("Color: sweeping drive, tone, comp and wow doesn't zipper")
+{
+    const auto render = [] (int which, bool sweep)
+    {
+        Color c;
+        c.prepare (rate);
+        auto s = sine ((int) rate * 2, 110.0, 0.25f);
+        ColorParams p;
+        for (int i = 0; i < (int) s.left.size(); i += 256)
+        {
+            const float t = sweep ? 0.5f + 0.5f * (float) std::sin (2.0 * 3.14159265358979 * 2.0 * i / rate) : 0.5f;
+            switch (which)
+            {
+                case 0: p.drive = t; break;
+                case 1: p.tone = 2.0f * t - 1.0f; break;
+                case 2: p.comp = t; break;
+                default: p.wow = t; break;
+            }
+            c.process (s.left.data() + i, s.right.data() + i, std::min (256, (int) s.left.size() - i), p);
+        }
+        const double level = rms (s.left, (int) rate / 2, (int) rate * 2);
+        return roughness (s.left, (int) rate / 2, (int) rate * 2) / (level * level + 1.0e-20);
+    };
+    const char* names[] { "drive", "tone", "comp", "wow" };
+    for (int which = 0; which < 4; ++which)
+    {
+        const double still = render (which, false), swept = render (which, true);
+        INFO (names[which] << ": swept " << swept << ", still " << still);
+        CHECK (swept < still * 4.0);
     }
 }
