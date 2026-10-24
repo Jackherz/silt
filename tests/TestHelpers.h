@@ -2,6 +2,7 @@
 
 #include <silt/Engine.h>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <vector>

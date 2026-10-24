@@ -77,13 +77,16 @@ juce::AudioBuffer<float> SiltProcessor::findCaptureBus (juce::AudioBuffer<float>
         return b != nullptr && b->isEnabled() && b->getNumberOfChannels() > 0;
     };
 
-    // The sidechain is the last input bus: bus 1 normally, the only bus on AU.
-    const int sidechainBus = getBusCount (true) - 1;
-
-    if (isInstrument && usable (sidechainBus))
+    if constexpr (isInstrument)
     {
-        source = CaptureSource::sidechain;
-        return getBusBuffer (buffer, true, sidechainBus);
+        // The sidechain is the last input bus: bus 1 normally, the only bus on AU.
+        const int sidechainBus = getBusCount (true) - 1;
+
+        if (usable (sidechainBus))
+        {
+            source = CaptureSource::sidechain;
+            return getBusBuffer (buffer, true, sidechainBus);
+        }
     }
 
     if (usable (0))
@@ -111,8 +114,8 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         }
     }
 
-    if (auto* playHead = getPlayHead())
-        if (const auto position = playHead->getPosition())
+    if (auto* hostPlayHead = getPlayHead())
+        if (const auto position = hostPlayHead->getPosition())
         {
             if (const auto bpm = position->getBpm())
                 hostBpm.store (*bpm, std::memory_order_relaxed);

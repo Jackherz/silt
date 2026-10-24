@@ -25,8 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # windows-2022 returns once the Windows build is fixed (its own branch).
-        os: [macos-14]
+        os: [macos-14, windows-2022]
     runs-on: ${{ matrix.os }}
 
     steps:
