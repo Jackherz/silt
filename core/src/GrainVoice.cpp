@@ -61,9 +61,24 @@ void GrainVoice::noteOn (int note, float vel, const SampleBuffer& buffer, const 
     noteRatio = semitonesToRatio (note - p.rootNote);
     playhead = p.scan < 0.0 ? region.end - 1.0 : region.begin;   // reverse scans start at the end
     samplesToNextGrain = 0.0;      // first grain on the note itself
+    firstGrainPending = true;
     spawning = true;
     envStage = EnvStage::attack;   // from the current level: retriggers don't click
-    outputGain = targetGain (p);
+    outputGain = targetGain (p, &buffer);
+}
+
+double GrainVoice::pitchRatio (const GrainParams& p, const SampleBuffer& buffer) const noexcept
+{
+    return noteRatio * semitonesToRatio (p.pitchSemitones) * (buffer.getSampleRate() / sampleRate);
+}
+
+// Grains only ever read the region, so one longer than the region is
+// shortened to fit it.
+int GrainVoice::grainLength (const GrainParams& p, const Region& region, double ratio) const noexcept
+{
+    const double usable = std::max (1.0, region.end - region.begin - 2.0 * edgeGuardFrames);
+    const int wanted = (int) (p.sizeMs * 0.001 * sampleRate);
+    return std::max (minGrainSamples, std::min (wanted, (int) (usable / ratio)));
 }
 
 void GrainVoice::noteOff() noexcept
@@ -87,16 +102,28 @@ int GrainVoice::countGrainsUsing (const SampleBuffer* buffer) const noexcept
 // envelopes sum to overlap × their mean. With no spray the grains are
 // near-identical and add in phase; with spray they add like noise
 // (rms ∝ √(overlap × mean square)). Hann: mean 0.5, mean square 0.375;
-// a flat envelope (fade 0): both 1.
-float GrainVoice::targetGain (const GrainParams& p) const noexcept
+// a flat envelope (fade 0): both 1. Spray only decorrelates grains if the
+// region leaves it room: a grain nearly as long as the region can't move.
+float GrainVoice::targetGain (const GrainParams& p, const SampleBuffer* buffer) const noexcept
 {
+    double sizeMs = p.sizeMs, room = 1.0;
+    if (buffer != nullptr)
+    {
+        const auto region = regionOf (p, *buffer);
+        const double ratio = pitchRatio (p, *buffer);
+        const int length = grainLength (p, region, ratio);
+        const double span = length * ratio;
+        sizeMs = length * 1000.0 / sampleRate;
+        room = std::clamp ((region.end - region.begin - span) / std::max (1.0, span), 0.0, 1.0);
+    }
+
     const double fade = std::clamp (p.fade, 0.0, 1.0);
     const double mean = 1.0 - 0.5 * fade;
     const double meanSquare = 1.0 - 0.625 * fade;
-    const double overlap = p.sizeMs * 0.001 * p.rateHz;
+    const double overlap = sizeMs * 0.001 * p.rateHz;
     const double coherent = 1.0 / std::max (1.0, overlap * mean);
     const double incoherent = 1.0 / std::max (1.0, std::sqrt (overlap * meanSquare));
-    const double spread = std::clamp (p.spray * 4.0, 0.0, 1.0);
+    const double spread = std::clamp (p.spray * 4.0, 0.0, 1.0) * room;
     return (float) (coherent + spread * (incoherent - coherent));
 }
 
@@ -166,24 +193,24 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
         return;
 
     const int frames = buffer.getNumFrames();
-    const double rateFactor = buffer.getSampleRate() / sampleRate;
-    const double ratio = noteRatio * semitonesToRatio (p.pitchSemitones) * rateFactor;
-    const int length = std::max (minGrainSamples, (int) (p.sizeMs * 0.001 * sampleRate));
+    const double ratio = pitchRatio (p, buffer);
+
+    // Grains only ever read the region: what's shaded on screen is all you hear.
+    // A grain longer than the region is shortened to fit it, and spray scatter
+    // wraps around inside it. Staying clear of the region's edges also keeps
+    // every read off the seam between the buffer's last and first frame.
+    const auto region = regionOf (p, buffer);
+    const int length = grainLength (p, region, ratio);
 
     const double scatter = random.nextBipolar() * p.spray * maxSpraySeconds * buffer.getSampleRate();
-    double start = playhead + scatter;
+    const double regionFrames = region.end - region.begin;
+    double start = region.begin + wrapFrames (playhead + scatter - region.begin, (int) std::max (1.0, regionFrames));
     const bool reversed = random.next01() < p.reverseChance;
-    auto span = grainReadSpan (start, length, ratio);
 
-    // Keep the whole read inside the buffer, so no grain crosses the seam
-    // between its last and first frame (that would click unless the sample
-    // happens to loop cleanly). Only a grain longer than the buffer wraps.
-    const double spanFrames = span.hi - span.lo;
-    if (spanFrames < frames - 2.0 * edgeGuardFrames)
-    {
-        start = std::clamp (start, edgeGuardFrames, frames - edgeGuardFrames - spanFrames);
-        span = grainReadSpan (start, length, ratio);
-    }
+    const double spanFrames = length * ratio;
+    const double lowest = region.begin + edgeGuardFrames;
+    start = std::clamp (start, lowest, std::max (lowest, region.end - edgeGuardFrames - spanFrames));
+    const auto span = grainReadSpan (start, length, ratio);
 
     // Stereo scatter as balance, so a centred grain keeps both channels at full level.
     const float pan = random.nextBipolar() * (float) std::clamp (p.spray, 0.0, 1.0);
@@ -201,6 +228,7 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     g.envelope.set (p.fade, p.slant, p.ease, length, p.declickMs * 0.001 * sampleRate);
     g.interpolation = p.interpolation;
     ++activeGrains;
+    ++grainsStarted;
 }
 
 void GrainVoice::render (float* left, float* right, int numSamples,
@@ -209,18 +237,58 @@ void GrainVoice::render (float* left, float* right, int numSamples,
     if (! isActive())
         return;
 
-    const float gainTarget = targetGain (p);
+    const float gainTarget = targetGain (p, buffer);
     const double interval = sampleRate / std::clamp (p.rateHz, 0.1, 1000.0);
+    const bool grid = p.gridSync && p.ppqPerSample > 0.0 && p.gridDivision > 0.0;
+
+    // Lock to the grid: on first use, a new division, or when the host position
+    // isn't where the last call ended (a locate or loop jump). Carrying the next
+    // grid line across calls means no line is missed at a block boundary.
+    if (grid)
+    {
+        const bool jumped = std::abs (p.gridPpq - expectedPpq) > 2.0 * p.ppqPerSample + 1.0e-9;
+        if (! gridLocked || jumped || p.gridDivision != lockedDivision)
+        {
+            nextGridPpq = std::ceil (p.gridPpq / p.gridDivision - 1.0e-9) * p.gridDivision;
+            lockedDivision = p.gridDivision;
+            gridLocked = true;
+        }
+        expectedPpq = p.gridPpq + numSamples * p.ppqPerSample;
+    }
+    else
+    {
+        gridLocked = false;
+    }
 
     for (int i = 0; i < numSamples; ++i)
     {
         if (spawning && buffer != nullptr)
         {
-            if (samplesToNextGrain <= 0.0)
+            if (grid)
+            {
+                const double ppq = p.gridPpq + i * p.ppqPerSample;
+                if (firstGrainPending)
+                {
+                    spawnGrain (p, *buffer);
+                    lastSpawnPpq = ppq;
+                }
+                else if (ppq >= nextGridPpq - 1.0e-9)
+                {
+                    // Skip a grid line that falls right after the note's own grain.
+                    if (ppq - lastSpawnPpq > 0.25 * p.gridDivision)
+                        spawnGrain (p, *buffer);
+                    lastSpawnPpq = ppq;
+                    while (nextGridPpq <= ppq + 1.0e-9)
+                        nextGridPpq += p.gridDivision;
+                }
+                samplesToNextGrain = 0.0;   // free-running resumes at once if the grid goes away
+            }
+            else if (samplesToNextGrain <= 0.0)
             {
                 spawnGrain (p, *buffer);
                 samplesToNextGrain += interval;
             }
+            firstGrainPending = false;
             samplesToNextGrain -= 1.0;
 
             if (! advancePlayhead (p, *buffer))

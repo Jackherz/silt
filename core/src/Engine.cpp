@@ -132,13 +132,15 @@ void Engine::process (float* left, float* right, int numSamples,
     std::fill (right, right + numSamples, 0.0f);
 
     // Render in segments between events so notes start sample-accurately.
+    auto segment = p;
     int pos = 0;
     for (int e = 0; e <= numEvents; ++e)
     {
         const int end = e < numEvents ? std::clamp (events[e].sampleOffset, pos, numSamples) : numSamples;
+        segment.gridPpq = p.gridPpq + pos * p.ppqPerSample;
         if (end > pos)
             for (auto& v : voices)
-                v.render (left + pos, right + pos, end - pos, p, current);
+                v.render (left + pos, right + pos, end - pos, segment, current);
         pos = end;
 
         if (e < numEvents)

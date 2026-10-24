@@ -124,6 +124,68 @@ TEST_CASE ("Chords use separate voices, and a 17th note steals one")
     CHECK_FALSE (firstStillHeld);
 }
 
+TEST_CASE ("Synced grains start on the beat grid, across block boundaries")
+{
+    // 120 BPM at 48 kHz: 24000 samples per quarter. 1/16 grid = 6000 samples.
+    TestEngine engine (makeSine());
+    GrainParams p;
+    p.gridSync = true;
+    p.ppqPerSample = 1.0 / 24000.0;
+    p.gridDivision = 0.25;
+    p.rateHz = 8.0;
+
+    // Note at ppq 0.1, two quarters long, in odd-sized blocks with the note mid-block.
+    const double startPpq = 0.1;
+    const int total = 48000, block = 97;
+    std::vector<float> l (block), r (block);
+    std::vector<int> onsets;
+    std::uint64_t seen = 0;
+
+    for (int done = 0; done < total; done += block)
+    {
+        const int len = std::min (block, total - done);
+        p.gridPpq = startPpq + done * p.ppqPerSample;
+        NoteEvent on { 0, 60, 1.0f, true };
+        engine.process (l.data(), r.data(), len, done == 0 ? &on : nullptr, done == 0 ? 1 : 0, p);
+
+        // At most one onset per 97-sample block at this spacing.
+        if (engine.getVoice (0).getGrainsStarted() != seen)
+        {
+            seen = engine.getVoice (0).getGrainsStarted();
+            onsets.push_back (done);
+        }
+    }
+
+    // The note's own grain, then every grid line from ppq 0.25 to 2.0: 1 + 8.
+    REQUIRE (onsets.size() == 9);
+    CHECK (onsets[0] == 0);
+    for (size_t i = 1; i < onsets.size(); ++i)
+    {
+        const int gridSample = (int) std::lround ((0.25 * (double) i - startPpq) * 24000.0);
+        CHECK (std::abs (onsets[i] - gridSample) < block);
+    }
+}
+
+TEST_CASE ("A transport jump re-locks the grid")
+{
+    TestEngine engine (makeSine());
+    GrainParams p;
+    p.gridSync = true;
+    p.ppqPerSample = 1.0 / 24000.0;
+    p.gridDivision = 1.0;
+
+    std::vector<float> l (128), r (128);
+    NoteEvent on { 0, 60, 1.0f, true };
+    p.gridPpq = 0.5;
+    engine.process (l.data(), r.data(), 128, &on, 1, p);
+    const auto before = engine.getVoice (0).getGrainsStarted();
+
+    // Jump to just before beat 8: the next grain comes at beat 8, not beat 1.
+    p.gridPpq = 8.0 - 64.0 / 24000.0;
+    engine.process (l.data(), r.data(), 128, nullptr, 0, p);
+    CHECK (engine.getVoice (0).getGrainsStarted() == before + 1);
+}
+
 TEST_CASE ("ADSR settles at the sustain level")
 {
     GrainParams p;
@@ -142,6 +204,53 @@ TEST_CASE ("ADSR settles at the sustain level")
     const float half = levelAt (0.5);
     CHECK (half / full > 0.45f);
     CHECK (half / full < 0.55f);
+}
+
+TEST_CASE ("Grains only read inside the region, whatever their size and spray")
+{
+    // Loud noise everywhere except a silent stretch around the region.
+    auto buffer = makeNoise (2.0);
+    const int frames = buffer->getNumFrames();
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = (int) (0.45 * frames); i < (int) (0.65 * frames); ++i)
+            buffer->getWritePointer (ch)[i] = 0.0f;
+
+    for (double size : { 20.0, 150.0, 1000.0 })
+        for (double spray : { 0.0, 0.5, 1.0 })
+            for (double pitch : { 0.0, 12.0 })
+                for (double reverse : { 0.0, 1.0 })
+                {
+                    auto copy = std::make_unique<SampleBuffer> (frames, sampleRate);
+                    for (int ch = 0; ch < 2; ++ch)
+                        std::copy (buffer->getReadPointer (ch), buffer->getReadPointer (ch) + frames, copy->getWritePointer (ch));
+
+                    TestEngine engine (std::move (copy));
+                    GrainParams p;
+                    p.start = 0.5;
+                    p.length = 0.1;
+                    p.sizeMs = size;
+                    p.spray = spray;
+                    p.pitchSemitones = pitch;
+                    p.reverseChance = reverse;
+                    const auto out = render (engine, p, 48000, { { 0, 60, true } });
+
+                    INFO ("size " << size << " spray " << spray << " pitch " << pitch << " reverse " << reverse);
+                    CHECK (peak (out.left) == 0.0f);
+                    CHECK (peak (out.right) == 0.0f);
+                }
+}
+
+TEST_CASE ("A shorter region changes the sound")
+{
+    GrainParams p;
+    p.sizeMs = 1000.0;
+    const auto renderWith = [&p] (double length)
+    {
+        TestEngine engine (makeNoise (2.0));
+        p.length = length;
+        return render (engine, p, 24000, { { 0, 60, true } });
+    };
+    CHECK (renderWith (1.0).left != renderWith (0.05).left);
 }
 
 TEST_CASE ("A looping playhead stays inside its region")

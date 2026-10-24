@@ -8,6 +8,19 @@ using Float = juce::AudioParameterFloat;
 using Range = juce::NormalisableRange<float>;
 
 constexpr int stateMagic = 0x544c4953;   // "SILT"
+
+// Synced Size and Rate: note values, in quarter notes (T = triplet, D = dotted).
+const juce::StringArray divisionNames { "1/64", "1/32", "1/16T", "1/16", "1/8T", "1/16D", "1/8", "1/4T",
+                                        "1/8D", "1/4", "1/2T", "1/4D", "1/2", "1/2D", "1 bar", "2 bars", "4 bars" };
+constexpr double divisionQuarters[] { 1.0 / 16, 1.0 / 8, 1.0 / 6, 1.0 / 4, 1.0 / 3, 3.0 / 8, 1.0 / 2, 2.0 / 3,
+                                      3.0 / 4, 1.0, 4.0 / 3, 3.0 / 2, 2.0, 3.0, 4.0, 8.0, 16.0 };
+constexpr int sixteenth = 3;
+constexpr double maxSyncedSizeMs = 4000.0;
+
+double quartersFor (const std::atomic<float>* choice) noexcept
+{
+    return divisionQuarters[juce::jlimit (0, (int) std::size (divisionQuarters) - 1, (int) choice->load (std::memory_order_relaxed))];
+}
 const juce::StringArray captureBarChoices { "1 bar", "2 bars", "4 bars", "8 bars" };
 constexpr int captureBars[] { 1, 2, 4, 8 };
 
@@ -44,6 +57,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 percent ("fade", "Fade", 100.0f),
                 percent ("slant", "Slant", 50.0f),
                 percent ("ease", "Ease", 50.0f));
+
+    // Tempo sync for Size and Rate
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "sizeSync", 1 }, "Size sync", false),
+                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "sizeDiv", 1 }, "Size (synced)",
+                                                              divisionNames, sixteenth),
+                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "rateSync", 1 }, "Rate sync", false),
+                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "rateDiv", 1 }, "Rate (synced)",
+                                                              divisionNames, sixteenth));
 
     // Region and playhead
     layout.add (percent ("start", "Start", 0.0f),
@@ -93,6 +114,7 @@ struct SiltProcessor::RawParams
         const auto p = [&s] (const char* id) { return s.getRawParameterValue (id); };
         pitch = p ("pitch"); size = p ("size"); rate = p ("rate"); spray = p ("spray");
         reverse = p ("reverse"); randAmp = p ("randAmp"); fade = p ("fade"); slant = p ("slant"); ease = p ("ease");
+        sizeSync = p ("sizeSync"); sizeDiv = p ("sizeDiv"); rateSync = p ("rateSync"); rateDiv = p ("rateDiv");
         start = p ("start"); length = p ("length"); scan = p ("scan"); endMode = p ("endMode");
         attack = p ("attack"); decay = p ("decay"); sustain = p ("sustain"); release = p ("release"); root = p ("root");
         captureBars = p ("captureBars"); gain = p ("gain");
@@ -100,6 +122,7 @@ struct SiltProcessor::RawParams
     }
 
     std::atomic<float>* pitch, *size, *rate, *spray, *reverse, *randAmp, *fade, *slant, *ease;
+    std::atomic<float>* sizeSync, *sizeDiv, *rateSync, *rateDiv;
     std::atomic<float>* start, *length, *scan, *endMode;
     std::atomic<float>* attack, *decay, *sustain, *release, *root;
     std::atomic<float>* captureBars, *gain, *monitor, *mix;
@@ -218,6 +241,16 @@ silt::GrainParams SiltProcessor::readParams() const noexcept
     p.sustain = v (raw->sustain) * 0.01;
     p.releaseMs = v (raw->release);
     p.rootNote = (int) v (raw->root);
+
+    // Synced values follow the host tempo (the last one seen while stopped).
+    const double msPerQuarter = 60000.0 / juce::jlimit (20.0, 400.0, hostBpm.load (std::memory_order_relaxed));
+    if (v (raw->sizeSync) > 0.5)
+        p.sizeMs = juce::jlimit (10.0, maxSyncedSizeMs, quartersFor (raw->sizeDiv) * msPerQuarter);
+    if (v (raw->rateSync) > 0.5)
+    {
+        p.gridDivision = quartersFor (raw->rateDiv);
+        p.rateHz = 1000.0 / (p.gridDivision * msPerQuarter);
+    }
     return p;
 }
 
@@ -325,11 +358,24 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     const float gain = juce::Decibels::decibelsToGain (raw->gain->load (std::memory_order_relaxed), -48.0f);
     const bool monitoring = isInstrument && raw->monitor->load (std::memory_order_relaxed) > 0.5f;
     const float mix = isInstrument ? 1.0f : raw->mix->load (std::memory_order_relaxed) * 0.01f;
-    const auto grainParams = readParams();
+    auto grainParams = readParams();
+
+    // Synced Rate locks grains to the beat grid while the host plays; stopped,
+    // they free-run at the synced rate.
+    double blockPpq = 0.0;
+    if (raw->rateSync->load (std::memory_order_relaxed) > 0.5f && position && position->getIsPlaying())
+        if (const auto ppq = position->getPpqPosition())
+            if (const auto bpm = position->getBpm(); bpm && *bpm > 0.0)
+            {
+                grainParams.gridSync = true;
+                grainParams.ppqPerSample = *bpm / 60.0 / currentSampleRate;
+                blockPpq = *ppq;
+            }
 
     for (int start = 0; start < numSamples; start += wet.getNumSamples())
     {
         const int len = juce::jmin (wet.getNumSamples(), numSamples - start);
+        grainParams.gridPpq = blockPpq + start * grainParams.ppqPerSample;
 
         // Events for this chunk, shifted to its start.
         const auto first = std::find_if (noteEvents.begin(), noteEvents.end(), [start] (const auto& e) { return e.sampleOffset >= start; });

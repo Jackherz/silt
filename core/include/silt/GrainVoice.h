@@ -28,6 +28,15 @@ struct GrainParams
     double ease = 0.5;
     double declickMs = 1.0;        // shortest fade allowed
 
+    // Beat grid. When set, grains start on multiples of gridDivision (in
+    // quarter notes) of the host position instead of every 1/rateHz seconds;
+    // a note's first grain still starts on the note. rateHz should match the
+    // division at the current tempo (it sets the overlap gain).
+    bool gridSync = false;
+    double gridPpq = 0.0;          // host position at this render call's first sample
+    double ppqPerSample = 0.0;
+    double gridDivision = 0.25;    // quarter notes between grains
+
     // Playhead and region
     double start = 0.0;            // 0…1: region start, where a note starts its playhead
     double length = 1.0;           // 0…1: region length as a share of the sample
@@ -62,6 +71,7 @@ public:
     bool isReleasing() const noexcept { return envStage == EnvStage::release || envStage == EnvStage::idle; }
     int getCurrentNote() const noexcept { return currentNote; }
     int getActiveGrainCount() const noexcept { return activeGrains; }
+    std::uint64_t getGrainsStarted() const noexcept { return grainsStarted; }
 
     // Playhead as a share of the buffer, for the UI.
     float getPlayheadPosition() const noexcept { return playheadPosition; }
@@ -96,7 +106,9 @@ private:
     void spawnGrain (const GrainParams&, const SampleBuffer&) noexcept;
     bool advancePlayhead (const GrainParams&, const SampleBuffer&) noexcept;
     float nextEnvelope (const GrainParams&) noexcept;
-    float targetGain (const GrainParams&) const noexcept;
+    float targetGain (const GrainParams&, const SampleBuffer*) const noexcept;
+    double pitchRatio (const GrainParams&, const SampleBuffer&) const noexcept;
+    int grainLength (const GrainParams&, const Region&, double ratio) const noexcept;
     static Region regionOf (const GrainParams&, const SampleBuffer&) noexcept;
 
     double sampleRate = 48000.0;
@@ -112,6 +124,13 @@ private:
     float playheadPosition = 0.0f;
     double samplesToNextGrain = 0.0;
     bool spawning = false;
+    std::uint64_t grainsStarted = 0;
+
+    // Beat-grid scheduling: the next grid line, and where the previous render
+    // call ended, to notice transport jumps.
+    bool firstGrainPending = false;
+    bool gridLocked = false;
+    double nextGridPpq = 0.0, expectedPpq = 0.0, lockedDivision = 0.0, lastSpawnPpq = -1.0e9;
 
     EnvStage envStage = EnvStage::idle;
     float envLevel = 0.0f;
