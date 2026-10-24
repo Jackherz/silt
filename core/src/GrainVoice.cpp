@@ -110,6 +110,7 @@ int GrainVoice::collectViews (GrainView* out, int max, std::uint8_t voiceIndex) 
         v.end = g.spanEnd;
         v.position = (float) (g.readPos / g.source->getNumFrames());
         v.level = g.lastEnvelope * voiceLevel;
+        v.pan = g.pan;
         v.voice = voiceIndex;
         v.slot = (std::uint8_t) i;
         v.reversed = g.increment < 0.0;
@@ -316,6 +317,7 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     g.phase = 0.0;
     g.phaseInc = 1.0 / length;
     g.remaining = length;
+    g.pan = pan;
     g.gainL = amp * std::min (1.0f, 1.0f - pan);
     g.gainR = amp * std::min (1.0f, 1.0f + pan);
     g.envelope.set (p.fade, p.slant, p.ease, length, p.declickMs * 0.001 * sampleRate);

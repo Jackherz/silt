@@ -68,6 +68,7 @@ struct GrainView
     float start = 0.0f, end = 0.0f;   // the audio the grain covers
     float position = 0.0f;            // where it's reading now
     float level = 0.0f;               // envelope × voice level, 0…1
+    float pan = 0.0f;                 // −1 left … +1 right
     std::uint8_t voice = 0, slot = 0;
     bool reversed = false;
 };
@@ -126,7 +127,7 @@ private:
         // fadeLength frames before loopEnd it crossfades into that audio.
         bool loops = false;
         int backwardWraps = 0;
-        float spanStart = 0.0f, spanEnd = 0.0f, lastEnvelope = 0.0f;   // for the UI      // reversed grains: loop points still to cross
+        float spanStart = 0.0f, spanEnd = 0.0f, lastEnvelope = 0.0f, pan = 0.0f;   // for the UI      // reversed grains: loop points still to cross
         double loopBegin = 0.0, loopEnd = 0.0, loopLength = 0.0, fadeStart = 0.0, fadeLength = 1.0;
     };
 

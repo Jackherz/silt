@@ -112,8 +112,10 @@ public:
 
 // The screen: the sample (cached, redrawn only when it or the size changes),
 // the region, a playhead per voice, and every sounding grain twice: as a line
-// on the waveform where it's reading, and as a bar in the grain roll below,
-// spanning the audio it covers with a bright head moving along it.
+// on the waveform where it's reading, and as a bar in the grain roll below.
+// The roll's two axes keep Spray and Random pan apart: left to right is where
+// in the sample a grain plays (spray scatters it sideways), top to bottom is
+// where it sits in the stereo field (random pan spreads it up and down).
 class SiltEditor::GrainScreen final : public juce::Component
 {
 public:
@@ -238,6 +240,17 @@ private:
         const float mid = (float) wave.getCentreY(), half = (float) wave.getHeight() * 0.5f;
         constexpr int lanes = 16;
         const float laneH = (float) roll.getHeight() / lanes;
+        const float rollTop = (float) roll.getY() + laneH * 1.5f, rollBottom = (float) roll.getBottom() - laneH * 1.5f;
+        const auto panToY = [=] (float pan) { return juce::jmap (pan, -1.0f, 1.0f, rollTop, rollBottom); };
+
+        // Stereo guides: L at the top, centre, R at the bottom.
+        g.setFont (monoFont (10.0f));
+        g.setColour (screenLight.withAlpha (0.45f));
+        g.drawHorizontalLine ((int) panToY (0.0f), (float) roll.getX() + 12.0f, (float) roll.getRight());
+        g.setColour (screenPale.withAlpha (0.8f));
+        g.drawText ("L", juce::Rectangle<float> ((float) roll.getX(), panToY (-1.0f) - 6.0f, 10.0f, 12.0f), juce::Justification::centredLeft);
+        g.drawText ("C", juce::Rectangle<float> ((float) roll.getX(), panToY (0.0f) - 6.0f, 10.0f, 12.0f), juce::Justification::centredLeft);
+        g.drawText ("R", juce::Rectangle<float> ((float) roll.getX(), panToY (1.0f) - 6.0f, 10.0f, 12.0f), juce::Justification::centredLeft);
 
         for (int i = 0; i < numViews; ++i)
         {
@@ -250,9 +263,10 @@ private:
             g.setColour ((v.reversed ? screenLime : juce::Colours::white).withAlpha (alpha * 0.8f));
             g.fillRect (x, mid - half * level, 1.5f, juce::jmax (1.0f, 2.0f * half * level));
 
-            // In the roll: the span it covers, and its head.
-            const int lane = (v.voice * 5 + v.slot) % lanes;
-            const float y = (float) roll.getY() + (float) lane * laneH;
+            // In the roll: the span it covers and its head, at its stereo
+            // position. A small offset per grain keeps centred grains apart.
+            const float stagger = ((float) ((v.voice * 5 + v.slot) % 5) - 2.0f) * laneH * 0.5f;
+            const float y = panToY (juce::jlimit (-1.0f, 1.0f, v.pan)) + stagger - laneH * 0.5f;
             const float sx = (float) wave.getX() + v.start * w;
             const float ex = juce::jmax (sx + 1.0f, (float) wave.getX() + v.end * w);
             g.setColour ((v.reversed ? screenLime : screenPale).withAlpha (0.25f + 0.35f * level));
