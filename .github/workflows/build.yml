@@ -1,0 +1,60 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSILT_COPY_AFTER_BUILD=OFF
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Fetch pluginval (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+          unzip -q pluginval.zip
+
+      - name: Fetch pluginval (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath .
+
+      - name: Validate VST3 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          for p in "build/Silt_artefacts/Release/VST3/Silt.vst3" "build/SiltFX_artefacts/Release/VST3/Silt FX.vst3"; do
+            pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --skip-gui-tests --timeout-ms 120000 --validate "$p"
+          done
+
+      - name: Validate VST3 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($p in @("build/Silt_artefacts/Release/VST3/Silt.vst3", "build/SiltFX_artefacts/Release/VST3/Silt FX.vst3")) {
+            .\pluginval.exe --strictness-level 10 --skip-gui-tests --timeout-ms 120000 --validate "$p"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: silt-${{ runner.os }}
+          path: |
+            build/Silt_artefacts/Release/VST3
+            build/Silt_artefacts/Release/CLAP
+            build/SiltFX_artefacts/Release/VST3
+            build/SiltFX_artefacts/Release/CLAP
