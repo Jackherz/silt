@@ -124,7 +124,9 @@ private:
     void timerCallback() override;
 
     // Gives the engine a new sample and keeps a message-side copy for the UI and state.
-    void installSample (const juce::AudioBuffer<float>& audio, double sampleRate, const juce::String& name);
+    static std::unique_ptr<silt::SampleBuffer> makeBuffer (const juce::AudioBuffer<float>& audio, double sampleRate);
+    void analyseThenInstall (std::unique_ptr<silt::SampleBuffer>, const juce::String& name);
+    void installBuffer (std::unique_ptr<silt::SampleBuffer> analysed, const juce::String& name);
     std::unique_ptr<juce::AudioBuffer<float>> decode (juce::AudioFormatReader&) const;
 
     silt::Engine engine;

@@ -40,6 +40,7 @@ add_library(silt_core STATIC
     core/src/Engine.cpp
     core/src/GrainVoice.cpp
     core/src/LevelMeter.cpp
+    core/src/Onsets.cpp
     core/src/SampleBuffer.cpp
     core/src/Snap.cpp)
 target_include_directories(silt_core PUBLIC core/include)

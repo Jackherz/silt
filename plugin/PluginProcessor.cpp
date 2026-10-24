@@ -726,14 +726,7 @@ void SiltProcessor::timerCallback()
     if (state == CaptureState::done)
     {
         captureTarget.store (nullptr, std::memory_order_release);
-        auto captured = std::move (captureOwned);
-
-        juce::AudioBuffer<float> audio (2, captured->getNumFrames());
-        for (int ch = 0; ch < 2; ++ch)
-            audio.copyFrom (ch, 0, captured->getReadPointer (ch), captured->getNumFrames());
-
-        installSample (audio, captured->getSampleRate(),
-                       "CAPTURE " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"));
+        analyseThenInstall (std::move (captureOwned), "CAPTURE " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"));
         captureState.store (CaptureState::idle, std::memory_order_release);
     }
     else if (state == CaptureState::cancelled)
@@ -798,28 +791,53 @@ void SiltProcessor::loadFile (const juce::File& file)
             return;
         }
 
-        std::shared_ptr<juce::AudioBuffer<float>> audio (decode (*reader));
-        const double rate = reader->sampleRate;
+        // Passed on by moving the buffer out of a shared holder: no copy.
+        auto buffer = std::make_shared<std::unique_ptr<silt::SampleBuffer>> (makeBuffer (*decode (*reader), reader->sampleRate));
+        (*buffer)->analyse();
 
-        juce::MessageManager::callAsync ([weak, audio, rate, file]
+        juce::MessageManager::callAsync ([weak, buffer, file]
         {
             if (weak != nullptr)
             {
                 weak->lastLoadError.clear();
-                weak->installSample (*audio, rate, file.getFileNameWithoutExtension());
+                weak->installBuffer (std::move (*buffer), file.getFileNameWithoutExtension());
             }
         });
     });
 }
 
-void SiltProcessor::installSample (const juce::AudioBuffer<float>& audio, double rate, const juce::String& name)
+std::unique_ptr<silt::SampleBuffer> SiltProcessor::makeBuffer (const juce::AudioBuffer<float>& audio, double rate)
 {
     const int frames = audio.getNumSamples();
     auto buffer = std::make_unique<silt::SampleBuffer> (frames, rate);
     for (int ch = 0; ch < 2; ++ch)
         juce::FloatVectorOperations::copy (buffer->getWritePointer (ch),
                                            audio.getReadPointer (juce::jmin (ch, audio.getNumChannels() - 1)), frames);
-    buffer->analyse();   // zero crossings and transients, for SNAP
+    return buffer;
+}
+
+// Analysis (zero crossings and transients, for SNAP) takes a moment on long
+// samples, so it runs on the loader thread; the sample is installed after.
+void SiltProcessor::analyseThenInstall (std::unique_ptr<silt::SampleBuffer> buffer, const juce::String& name)
+{
+    juce::WeakReference<SiltProcessor> weak (this);
+    auto holder = std::make_shared<std::unique_ptr<silt::SampleBuffer>> (std::move (buffer));   // moved on, not copied
+    loader.addJob ([weak, holder, name]
+    {
+        (*holder)->analyse();
+        juce::MessageManager::callAsync ([weak, holder, name]
+        {
+            if (weak != nullptr)
+                weak->installBuffer (std::move (*holder), name);
+        });
+    });
+}
+
+// Message thread. The buffer is already analysed.
+void SiltProcessor::installBuffer (std::unique_ptr<silt::SampleBuffer> buffer, const juce::String& name)
+{
+    const int frames = buffer->getNumFrames();
+    const double rate = buffer->getSampleRate();
     {
         const juce::ScopedLock sl (sampleLock);
         sampleZeroCrossings = buffer->getZeroCrossings();
@@ -1024,7 +1042,9 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
         return;
 
     const auto audio = decode (*reader);
-    installSample (*audio, reader->sampleRate, name);
+    auto buffer = makeBuffer (*audio, reader->sampleRate);
+    buffer->analyse();   // on the host's thread: hosts restore state off the audio thread
+    installBuffer (std::move (buffer), name);
 
     const juce::ScopedLock sl (sampleLock);
     encodedSample = flac;

@@ -879,3 +879,40 @@ TEST_CASE ("A snapped region is what plays")
     render (engine, p, 64, { { 0, 60, true } });
     CHECK (std::abs (engine.getVoice (0).getLastGrainStart() - expectedStart) < 4.0);
 }
+
+TEST_CASE ("Analysis finds the notes of a melodic line, not just loud hits")
+{
+    // Keys-like notes every 0.4 s, each a few harmonics with a soft 8 ms attack
+    // and a long decay, so they overlap and the overall level barely changes
+    // from note to note. Every note must be found.
+    const double noteEvery = 0.4;
+    const double notes[] { 60, 64, 67, 72, 65, 69, 62, 71, 64, 60 };
+    auto buffer = std::make_unique<SampleBuffer> ((int) ((std::size (notes) * noteEvery + 1.0) * sampleRate), sampleRate);
+    for (size_t n = 0; n < std::size (notes); ++n)
+    {
+        const double freq = 440.0 * std::pow (2.0, (notes[n] - 69.0) / 12.0);
+        const int from = (int) (n * noteEvery * sampleRate);
+        for (int i = 0; from + i < buffer->getNumFrames(); ++i)
+        {
+            const double t = i / sampleRate;
+            const double env = std::min (1.0, t / 0.008) * std::exp (-t / 1.2);
+            double v = 0.0;
+            for (int h = 1; h <= 4; ++h)
+                v += std::sin (6.283185307179586 * freq * h * t) / h;
+            for (int ch = 0; ch < 2; ++ch)
+                buffer->getWritePointer (ch)[from + i] += (float) (0.12 * env * v);
+        }
+    }
+    buffer->analyse();
+
+    const auto& t = buffer->getTransients();
+    for (size_t n = 1; n < std::size (notes); ++n)   // note 0 is at the sample's start
+    {
+        const double expected = n * noteEvery * sampleRate;
+        const auto found = std::find_if (t.begin(), t.end(), [expected] (int f) { return std::abs (f - expected) < 0.015 * sampleRate; });
+        INFO ("note " << n << " at " << n * noteEvery << " s");
+        CHECK (found != t.end());
+    }
+    // And no flood of false ones: at most a couple of extras.
+    CHECK (t.size() <= std::size (notes) + 2);
+}
