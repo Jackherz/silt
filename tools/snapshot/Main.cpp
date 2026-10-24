@@ -1,0 +1,109 @@
+// silt-snapshot: renders the Silt panel to PNGs without a host or a window, so
+// UI changes can be checked from the command line.
+//
+//   silt_snapshot sample.wav out-folder [param=value ...]
+//
+// Loads the sample, holds a note so grains are sounding, then writes one PNG
+// per page (grain.png, shape.png, play.png). Parameter values are in the
+// parameter's own units (ms, %, st...).
+
+#include "../../plugin/PluginEditor.h"
+
+#include <iostream>
+
+namespace
+{
+void runMessageLoop (int ms)
+{
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (ms);
+}
+
+void play (SiltProcessor& silt, double seconds, bool startNote)
+{
+    juce::AudioBuffer<float> buffer (juce::jmax (silt.getTotalNumInputChannels(), silt.getTotalNumOutputChannels()), 512);
+    for (int done = 0; done < (int) (seconds * 48000.0); done += 512)
+    {
+        buffer.clear();
+        juce::MidiBuffer midi;
+        if (startNote && done == 0)
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        silt.processBlock (buffer, midi);
+    }
+}
+} // namespace
+
+int main (int argc, char* argv[])
+{
+    if (argc < 3)
+    {
+        std::cerr << "usage: silt_snapshot sample.wav out-folder [param=value ...]\n";
+        return 2;
+    }
+
+    juce::ScopedJuceInitialiser_GUI juce;
+    const auto cwd = juce::File::getCurrentWorkingDirectory();
+    const auto sample = cwd.getChildFile (argv[1]);
+    const auto outDir = cwd.getChildFile (argv[2]);
+    outDir.createDirectory();
+
+    SiltProcessor silt;
+    silt.enableAllBuses();
+    silt.setRateAndBufferSizeDetails (48000.0, 512);
+    silt.prepareToPlay (48000.0, 512);
+
+    for (int i = 3; i < argc; ++i)
+    {
+        const juce::String setting (argv[i]);
+        const auto id = setting.upToFirstOccurrenceOf ("=", false, false);
+        if (auto* p = dynamic_cast<juce::RangedAudioParameter*> (silt.params.getParameter (id)))
+            p->setValueNotifyingHost (p->convertTo0to1 (setting.fromFirstOccurrenceOf ("=", false, false).getFloatValue()));
+        else
+            std::cerr << "unknown parameter " << id << "\n";
+    }
+
+    silt.loadFile (sample);
+    for (int i = 0; i < 50 && silt.getSampleGeneration() == 0; ++i)
+        runMessageLoop (20);
+    if (silt.getSampleGeneration() == 0)
+    {
+        std::cerr << "couldn't load " << sample.getFullPathName() << "\n";
+        return 1;
+    }
+
+    play (silt, 0.6, true);
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (silt.createEditor());
+    editor->setVisible (true);
+    runMessageLoop (100);
+
+    for (const auto* name : { "GRAIN", "SHAPE", "PLAY" })
+    {
+        for (auto* child : editor->getChildren())
+            if (auto* tab = dynamic_cast<juce::TextButton*> (child); tab != nullptr && tab->getButtonText() == name)
+                tab->triggerClick();
+
+        play (silt, 0.05, false);
+        runMessageLoop (120);
+
+        const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
+        const auto file = outDir.getChildFile (juce::String (name).toLowerCase() + ".png");
+        file.deleteFile();
+        juce::FileOutputStream stream (file);
+        juce::PNGImageFormat().writeImageToStream (image, stream);
+        std::cout << file.getFullPathName() << "\n";
+    }
+
+    // Drawing cost: the whole panel, repeatedly, at 1x (the plug-in itself
+    // repaints only the screen, 30 times a second, while grains are sounding).
+    constexpr int frames = 120;
+    const auto started = juce::Time::getMillisecondCounterHiRes();
+    for (int i = 0; i < frames; ++i)
+        editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
+    const double msPerFrame = (juce::Time::getMillisecondCounterHiRes() - started) / frames;
+    std::cout << "full-panel draw: " << juce::String (msPerFrame, 2) << " ms per frame, "
+              << juce::String (msPerFrame * 30.0 / 10.0, 1) << "% of one core at 30 fps\n";
+
+    editor = nullptr;
+    silt.releaseResources();
+    return 0;
+}

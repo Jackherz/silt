@@ -2,9 +2,9 @@
 
 #include "PluginProcessor.h"
 
-// M2 working panel, drawn natively in the plan §5 palette: sample view, capture
-// and load, and every parameter as a knob. The finished UI (plan §5) moves to
-// a WebView once Spike B proves it out.
+// The panel, drawn natively in the plan §5 palette. A screen on top shows the
+// sample and every sounding grain; below it, one page of controls at a time
+// (GRAIN / SHAPE / PLAY), at most 8 each so a page maps onto an 8-knob controller.
 class SiltEditor final : public juce::AudioProcessorEditor,
                          public juce::FileDragAndDropTarget,
                          private juce::Timer
@@ -22,47 +22,55 @@ public:
     void filesDropped (const juce::StringArray& files, int, int) override;
 
 private:
-    struct Knob
+    enum class Page { grain, shape, play };
+
+    // One control in the page row: a knob or a menu, its label, and its slot.
+    struct Control
     {
         juce::Slider slider { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
+        juce::ComboBox* menu = nullptr;    // set for menu slots instead of the slider
         juce::String label;
+        Page page = Page::grain;
+        int slot = 0;
+        std::function<bool()> shown;       // alternatives sharing a slot
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
+
+        juce::Component& component() { return menu != nullptr ? static_cast<juce::Component&> (*menu) : slider; }
     };
 
     class PanelLook;
-    class SampleView;
+    class GrainScreen;
 
     void timerCallback() override;
-    void addKnob (std::vector<std::unique_ptr<Knob>>& row, const char* paramId, const juce::String& label);
-    void layoutRow (std::vector<std::unique_ptr<Knob>>& row, juce::Rectangle<int> area);
+    Control& addKnob (Page, int slot, const char* paramId, const juce::String& label);
+    Control& addMenu (Page, int slot, juce::ComboBox&, const juce::String& label);
+    void showPage (Page);
+    void updateVisibility();
+    juce::Rectangle<int> slotBounds (int slot) const;
     juce::String statusText() const;
+    void paintPreview (juce::Graphics&);
+    float param (const char* id) const { return silt.params.getRawParameterValue (id)->load(); }
 
     SiltProcessor& silt;
     std::unique_ptr<PanelLook> look;
-    std::unique_ptr<SampleView> sampleView;
+    std::unique_ptr<GrainScreen> screen;
 
-    std::vector<std::unique_ptr<Knob>> grainKnobs, regionKnobs, voiceKnobs, outKnobs;
+    std::vector<std::unique_ptr<Control>> controls;
+    std::array<juce::TextButton, 3> pageTabs;
+    Page page = Page::grain;
 
-    // Alternatives shown in place of the Size and Rate knobs: Size and Rate in note
-    // values (SYNC, Rate mode SYNC), Rate as a grain count and Size on its short
-    // Grains-mode range (Rate mode GRAINS).
-    std::vector<std::unique_ptr<Knob>> syncedKnobs;
-    juce::TextButton sizeSyncButton { "SYNC" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> sizeSyncAttachment;
-    juce::ComboBox rateMode;   // FREE (Hz), SYNC (note value) or GRAINS (count)
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> rateModeAttachment;
-
-    juce::TextButton armButton { "ARM" }, loadButton { "LOAD" };
-    juce::ComboBox captureBars, endMode;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureBarsAttachment, endModeAttachment;
+    juce::TextButton armButton, loadButton { "LOAD" }, sizeSyncButton { "SYNC" };
     juce::ToggleButton monitorButton { "MONITOR" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> monitorAttachment;
+    juce::ComboBox captureBars, endMode, rateMode;
+    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>> menuAttachments;
+    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
     std::unique_ptr<juce::FileChooser> chooser;
 
-    juce::Rectangle<int> header, captureRow, grainSection, regionSection, voiceSection, outSection;
+    juce::Rectangle<int> header, strip, pagePanel, controlRow;
     int seenGeneration = -1;
     bool dragHover = false;
     float levelDb = -100.0f;
+    std::array<float, 7> previewSeen {};   // the values the SHAPE preview was last drawn with
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SiltEditor)
 };

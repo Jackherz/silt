@@ -445,6 +445,17 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     }
 
     activeGrains.store (engine.getActiveGrainCount(), std::memory_order_relaxed);
+
+    samplesSinceGrainViews += numSamples;
+    if (samplesSinceGrainViews >= (int) (currentSampleRate / 60.0))
+    {
+        samplesSinceGrainViews = 0;
+        grainViewSequence.fetch_add (1, std::memory_order_acq_rel);
+        std::atomic_thread_fence (std::memory_order_release);
+        grainViewCount.store (engine.collectGrainViews (grainViews.data(), maxGrainViews), std::memory_order_relaxed);
+        std::atomic_thread_fence (std::memory_order_release);
+        grainViewSequence.fetch_add (1, std::memory_order_release);
+    }
     for (int v = 0; v < silt::Engine::numVoices; ++v)
     {
         const auto& voice = engine.getVoice (v);
@@ -573,6 +584,22 @@ void SiltProcessor::installSample (const juce::AudioBuffer<float>& audio, double
 
     engine.setBuffer (std::move (buffer));
     ++sampleGeneration;
+}
+
+int SiltProcessor::readGrainViews (std::array<silt::GrainView, maxGrainViews>& out) const
+{
+    for (int attempt = 0; attempt < 4; ++attempt)
+    {
+        const auto before = grainViewSequence.load (std::memory_order_acquire);
+        if ((before & 1u) != 0)
+            continue;
+        const int n = juce::jlimit (0, maxGrainViews, grainViewCount.load (std::memory_order_relaxed));
+        std::copy (grainViews.begin(), grainViews.begin() + n, out.begin());
+        std::atomic_thread_fence (std::memory_order_acquire);
+        if (grainViewSequence.load (std::memory_order_relaxed) == before)
+            return n;
+    }
+    return 0;   // the audio thread kept updating; the next frame will catch it
 }
 
 SiltProcessor::Overview SiltProcessor::getOverview() const

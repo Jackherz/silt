@@ -70,6 +70,17 @@ target_link_libraries(silt_hostcheck
     PRIVATE juce::juce_audio_processors juce::juce_audio_formats
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
+# Panel snapshots: builds the Silt instrument's processor and editor into a
+# console app that writes a PNG per page, for checking UI changes headlessly.
+juce_add_console_app(silt_snapshot PRODUCT_NAME "silt-snapshot")
+target_sources(silt_snapshot PRIVATE tools/snapshot/Main.cpp plugin/PluginProcessor.cpp plugin/PluginEditor.cpp)
+target_compile_definitions(silt_snapshot PRIVATE
+    JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1
+    JucePlugin_Name="Silt" JucePlugin_IsSynth=1 JucePlugin_VersionString="${PROJECT_VERSION}")
+target_link_libraries(silt_snapshot
+    PRIVATE silt_core juce::juce_audio_utils
+    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+
 # Offline renderer: audio file + notes + settings in, WAV out.
 juce_add_console_app(silt_render PRODUCT_NAME "silt-render")
 target_sources(silt_render PRIVATE tools/render/Main.cpp)

@@ -5,6 +5,7 @@ namespace
 // Palette tokens from plan §5.
 const juce::Colour chassis { 0xffd8ccb2 };
 const juce::Colour ink { 0xff2a2420 };
+const juce::Colour inkSoft { 0xff6b6157 };
 const juce::Colour bone { 0xffefe6cf };
 const juce::Colour boneLip { 0xffa99e85 };
 const juce::Colour rust { 0xffa64826 };
@@ -14,36 +15,25 @@ const juce::Colour lcdGreen { 0xffb6c46b };
 const juce::Colour lcdText { 0xff26301a };
 const juce::Colour screenBlue { 0xff283070 };
 const juce::Colour screenLight { 0xff6a78c8 };
+const juce::Colour screenPale { 0xffa7b0ec };
 const juce::Colour screenLime { 0xffc9cf6a };
+const juce::Colour playheadCyan { 0xff70e0f0 };
 const juce::Colour knobCap { 0xff1d1a17 };
 const juce::Colour knobSkirt { 0xff3a332d };
 
-constexpr int editorWidth = 1040, editorHeight = 660;
+constexpr int editorWidth = 1040, editorHeight = 600;
+constexpr int slotsPerRow = 8;
 
 juce::Font panelFont (float size) { return juce::Font (juce::FontOptions (size, juce::Font::bold)); }
-juce::Font lcdFont (float size) { return juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), size, juce::Font::bold)); }
-
-void drawSection (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title)
-{
-    g.setColour (ink);
-    g.drawRect (area, 2);
-    auto strip = area.removeFromTop (18);
-    g.fillRect (strip);
-    g.setColour (bone);
-    g.setFont (panelFont (10.0f));
-    g.drawText (title, strip.reduced (8, 0), juce::Justification::centredLeft);
-}
+juce::Font monoFont (float size) { return juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), size, juce::Font::bold)); }
 } // namespace
 
-// Knobs with a printed scale and keys with a lip, per plan §5 "Parts".
+// Knobs with a printed scale, keys with a lip, LCD value boxes (plan §5 "Parts").
 class SiltEditor::PanelLook final : public juce::LookAndFeel_V4
 {
 public:
     PanelLook()
     {
-        setColour (juce::Slider::textBoxTextColourId, lcdText);
-        setColour (juce::Slider::textBoxBackgroundColourId, lcdGreen);
-        setColour (juce::Slider::textBoxOutlineColourId, ink);
         setColour (juce::ComboBox::backgroundColourId, lcdGreen);
         setColour (juce::ComboBox::textColourId, lcdText);
         setColour (juce::ComboBox::outlineColourId, ink);
@@ -66,189 +56,308 @@ public:
         const auto centre = bounds.getCentre();
         const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f - 2.0f;
 
-        g.setColour (ink);
+        g.setColour (inkSoft);
         for (int i = 0; i <= 10; ++i)
         {
             const float a = startAngle + (endAngle - startAngle) * (float) i / 10.0f;
-            const float outer = i % 5 == 0 ? radius : radius - 2.5f;
-            g.drawLine (juce::Line<float> (centre.getPointOnCircumference (radius - 6.0f, a),
-                                           centre.getPointOnCircumference (outer, a)), 1.5f);
+            const float inner = i % 5 == 0 ? radius - 5.0f : radius - 3.0f;
+            g.drawLine (juce::Line<float> (centre.getPointOnCircumference (inner, a),
+                                           centre.getPointOnCircumference (radius, a)), 1.0f);
         }
 
-        const float skirt = radius - 8.0f;
+        // The travelled arc, thin, so the value reads at a glance.
+        const float arcRadius = radius - 7.0f;
+        juce::Path arc;
+        arc.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f, startAngle, startAngle + pos * (endAngle - startAngle), true);
+        g.setColour (rust);
+        g.strokePath (arc, juce::PathStrokeType (2.0f));
+
+        const float skirt = radius - 10.0f;
         g.setColour (knobSkirt);
         g.fillEllipse (juce::Rectangle<float> (skirt * 2.0f, skirt * 2.0f).withCentre (centre));
         g.setColour (knobCap);
-        g.fillEllipse (juce::Rectangle<float> (skirt * 1.55f, skirt * 1.55f).withCentre (centre));
+        g.fillEllipse (juce::Rectangle<float> (skirt * 1.6f, skirt * 1.6f).withCentre (centre));
 
         const float angle = startAngle + pos * (endAngle - startAngle);
         g.setColour (bone);
-        g.drawLine (juce::Line<float> (centre.getPointOnCircumference (skirt * 0.25f, angle),
-                                       centre.getPointOnCircumference (skirt * 0.72f, angle)), 3.0f);
+        g.drawLine (juce::Line<float> (centre.getPointOnCircumference (skirt * 0.2f, angle),
+                                       centre.getPointOnCircumference (skirt * 0.75f, angle)), 2.5f);
     }
 
     void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool hover, bool down) override
     {
         auto r = b.getLocalBounds().toFloat();
+        const bool red = b.getProperties().getWithDefault ("red", false);
         const bool on = b.getToggleState();
-        const auto cap = b.getProperties().getWithDefault ("red", false) ? signalRed : (on ? rust : bone);
-        const auto lip = b.getProperties().getWithDefault ("red", false) ? rustLip : (on ? rustLip : boneLip);
+        const auto cap = red ? signalRed : (on ? ink : bone);
+        const auto lip = red ? rustLip : (on ? knobCap : boneLip);
 
         g.setColour (lip);
         g.fillRoundedRectangle (r, 2.0f);
-        g.setColour (hover ? cap.brighter (0.06f) : cap);
-        g.fillRoundedRectangle (r.withTrimmedBottom (down ? 1.0f : 4.0f), 2.0f);
+        g.setColour (hover && ! on ? cap.brighter (0.06f) : cap);
+        g.fillRoundedRectangle (r.withTrimmedBottom (down ? 1.0f : 3.0f), 2.0f);
     }
 
-    juce::Font getTextButtonFont (juce::TextButton&, int) override { return panelFont (12.0f); }
-    juce::Font getComboBoxFont (juce::ComboBox&) override { return lcdFont (13.0f); }
-    juce::Font getPopupMenuFont() override { return lcdFont (13.0f); }
+    juce::Font getTextButtonFont (juce::TextButton&, int h) override { return panelFont (juce::jmin (12.0f, (float) h * 0.55f)); }
+    juce::Font getComboBoxFont (juce::ComboBox&) override { return monoFont (12.0f); }
+    juce::Font getPopupMenuFont() override { return monoFont (13.0f); }
     juce::Label* createSliderTextBox (juce::Slider& s) override
     {
         auto* l = LookAndFeel_V4::createSliderTextBox (s);
-        l->setFont (lcdFont (13.0f));
+        l->setFont (monoFont (12.0f));
         l->setJustificationType (juce::Justification::centred);
-        l->setColour (juce::Label::backgroundColourId, lcdGreen);
-        l->setColour (juce::Label::textColourId, lcdText);
-        l->setColour (juce::Label::outlineColourId, ink);
-        l->setColour (juce::Label::backgroundWhenEditingColourId, bone);
-        l->setColour (juce::Label::textWhenEditingColourId, ink);
-        l->setColour (juce::Label::outlineWhenEditingColourId, ink);
-        l->setColour (juce::TextEditor::highlightColourId, rust.withAlpha (0.4f));
         return l;
     }
 };
 
-// The sample: min/max columns, the region, and a playhead per sounding voice.
-class SiltEditor::SampleView final : public juce::Component
+// The screen: the sample (cached, redrawn only when it or the size changes),
+// the region, a playhead per voice, and every sounding grain twice: as a line
+// on the waveform where it's reading, and as a bar in the grain roll below,
+// spanning the audio it covers with a bright head moving along it.
+class SiltEditor::GrainScreen final : public juce::Component
 {
 public:
-    void setOverview (SiltProcessor::Overview o) { overview = std::move (o); repaint(); }
-    void setRegion (float s, float len) { start = s; length = len; }
-    void setPlayheads (const std::array<float, silt::Engine::numVoices>& p) { playheads = p; repaint(); }
+    void setOverview (SiltProcessor::Overview o)
+    {
+        overview = std::move (o);
+        waveCache = {};
+        repaint();
+    }
+
+    void setRegion (float s, float len)
+    {
+        if (! juce::approximatelyEqual (s, start) || ! juce::approximatelyEqual (len, length))
+        {
+            start = s;
+            length = len;
+            repaint();
+        }
+    }
+
+    // Returns true if anything moved, so the caller only repaints then.
+    bool setActivity (const std::array<silt::GrainView, SiltProcessor::maxGrainViews>& v, int n,
+                      const std::array<float, silt::Engine::numVoices>& h, const juce::String& info)
+    {
+        const bool changed = n > 0 || numViews > 0 || h != heads || info != hud;
+        if (n > 0)
+            std::copy (v.begin(), v.begin() + n, views.begin());
+        numViews = n;
+        heads = h;
+        hud = info;
+        return changed;
+    }
+
+    void resized() override { waveCache = {}; }
 
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds();
         g.setColour (ink);
         g.fillRoundedRectangle (r.toFloat(), 8.0f);
-        r.reduce (10, 10);
+        r.reduce (8, 8);
         g.setColour (screenLight);
-        g.fillRoundedRectangle (r.toFloat(), 10.0f);
-        r.reduce (14, 10);
+        g.fillRoundedRectangle (r.toFloat(), 8.0f);
+        r.reduce (12, 8);
         g.setColour (screenBlue);
         g.fillRect (r);
 
-        auto text = r.reduced (8, 4);
-        g.setFont (lcdFont (12.0f));
+        auto inner = r.reduced (10, 6);
+        auto top = inner.removeFromTop (16);
+        auto bottom = inner.removeFromBottom (16);
+        inner.removeFromBottom (4);
+        const auto rollArea = inner.removeFromBottom (juce::roundToInt ((float) inner.getHeight() * 0.36f));
+        inner.removeFromBottom (6);
+        const auto waveArea = inner;
+
+        g.setFont (monoFont (12.0f));
         g.setColour (juce::Colours::white);
 
         if (overview.minimum.empty())
         {
-            g.drawText ("**** NO SAMPLE ****", text, juce::Justification::centredTop);
-            g.setColour (screenLight.brighter (0.4f));
-            g.drawText ("DROP AN AUDIO FILE HERE, PRESS LOAD, OR ARM AND RECORD", text, juce::Justification::centred);
+            g.drawText ("**** NO SAMPLE ****", top, juce::Justification::centred);
+            g.setColour (screenPale);
+            g.drawText ("DROP AN AUDIO FILE HERE, PRESS LOAD, OR ARM AND RECORD", waveArea, juce::Justification::centred);
             g.setColour (juce::Colours::white);
-            g.drawText ("READY.", text, juce::Justification::bottomLeft);
+            g.drawText ("READY.", bottom, juce::Justification::centredLeft);
             return;
         }
 
-        g.drawText (overview.name.toUpperCase(), text, juce::Justification::topLeft);
-        g.drawText (juce::String (overview.seconds, 2) + "S", text, juce::Justification::topRight);
+        g.drawText (overview.name.toUpperCase(), top, juce::Justification::centredLeft);
+        g.drawText (juce::String (overview.seconds, 2) + " S", top, juce::Justification::centredRight);
 
-        auto wave = r.reduced (8, 24).toFloat();
-        const float mid = wave.getCentreY(), half = wave.getHeight() * 0.5f;
-        const float regionStart = wave.getX() + start * wave.getWidth();
-        const float regionEnd = juce::jmin (wave.getRight(), regionStart + length * wave.getWidth());
-
-        const int cols = (int) overview.minimum.size();
-        const float colW = wave.getWidth() / (float) cols;
-        for (int c = 0; c < cols; ++c)
-        {
-            const float x = wave.getX() + c * colW;
-            const bool inRegion = x >= regionStart && x <= regionEnd;
-            g.setColour (inRegion ? juce::Colours::white : screenLight);
-            const float top = mid - overview.maximum[(size_t) c] * half;
-            const float bottom = mid - overview.minimum[(size_t) c] * half;
-            g.fillRect (x, top, juce::jmax (1.0f, colW), juce::jmax (1.0f, bottom - top));
-        }
-
-        g.setColour (screenLime);
-        g.drawVerticalLine ((int) regionStart, wave.getY() - 6.0f, wave.getBottom() + 6.0f);
-        g.drawText (juce::CharPointer_UTF8 ("\xe2\x96\xb6START"), juce::Rectangle<float> (regionStart + 3.0f, wave.getY() - 14.0f, 80.0f, 12.0f),
-                    juce::Justification::centredLeft);
-
-        g.setColour (juce::Colour (0xff70e0f0));
-        int number = 1;
-        for (float p : playheads)
-        {
-            if (p < 0.0f)
-                continue;
-            const float x = wave.getX() + p * wave.getWidth();
-            g.drawVerticalLine ((int) x, wave.getY(), wave.getBottom());
-            g.drawText (juce::String (number++), juce::Rectangle<float> (x - 8.0f, wave.getBottom() + 2.0f, 16.0f, 12.0f),
-                        juce::Justification::centred);
-        }
+        drawWave (g, waveArea);
+        drawRegion (g, waveArea, rollArea);
+        drawGrains (g, waveArea, rollArea);
 
         g.setColour (juce::Colours::white);
-        g.drawText ("READY.", text, juce::Justification::bottomLeft);
+        g.drawText (numViews > 0 ? hud : juce::String ("READY."), bottom, juce::Justification::centredLeft);
     }
 
 private:
+    void drawWave (juce::Graphics& g, juce::Rectangle<int> area)
+    {
+        if (! waveCache.isValid() || waveCache.getWidth() != area.getWidth() || waveCache.getHeight() != area.getHeight())
+        {
+            waveCache = juce::Image (juce::Image::ARGB, area.getWidth(), area.getHeight(), true);
+            juce::Graphics c (waveCache);
+            const float mid = (float) area.getHeight() * 0.5f, half = (float) area.getHeight() * 0.48f;
+            const int cols = (int) overview.minimum.size();
+            c.setColour (screenPale);
+            for (int x = 0; x < area.getWidth(); ++x)
+            {
+                const auto i = (size_t) juce::jlimit (0, cols - 1, x * cols / juce::jmax (1, area.getWidth()));
+                const float top = mid - overview.maximum[i] * half;
+                const float bottom = mid - overview.minimum[i] * half;
+                c.fillRect ((float) x, top, 1.0f, juce::jmax (1.0f, bottom - top));
+            }
+        }
+        g.drawImageAt (waveCache, area.getX(), area.getY());
+    }
+
+    void drawRegion (juce::Graphics& g, juce::Rectangle<int> wave, juce::Rectangle<int> roll)
+    {
+        // Dim what's outside the region, on both the waveform and the roll.
+        const auto x0 = (float) wave.getX() + start * (float) wave.getWidth();
+        const auto x1 = juce::jmin ((float) wave.getRight(), x0 + length * (float) wave.getWidth());
+        const auto full = wave.getUnion (roll).toFloat();
+        g.setColour (screenBlue.withAlpha (0.72f));
+        g.fillRect (full.withRight (x0));
+        g.fillRect (full.withLeft (x1));
+
+        g.setColour (screenLime);
+        g.drawVerticalLine ((int) x0, full.getY(), full.getBottom());
+        g.drawVerticalLine ((int) x1 - 1, full.getY(), full.getBottom());
+
+        g.setColour (screenLight.withAlpha (0.5f));
+        g.drawHorizontalLine (roll.getY() - 3, full.getX(), full.getRight());
+    }
+
+    void drawGrains (juce::Graphics& g, juce::Rectangle<int> wave, juce::Rectangle<int> roll)
+    {
+        const float w = (float) wave.getWidth();
+        const float mid = (float) wave.getCentreY(), half = (float) wave.getHeight() * 0.5f;
+        constexpr int lanes = 16;
+        const float laneH = (float) roll.getHeight() / lanes;
+
+        for (int i = 0; i < numViews; ++i)
+        {
+            const auto& v = views[(size_t) i];
+            const float level = juce::jlimit (0.0f, 1.0f, v.level);
+            const float alpha = 0.25f + 0.75f * level;
+            const float x = (float) wave.getX() + v.position * w;
+
+            // On the waveform: a line at the read position, as tall as the grain is loud.
+            g.setColour ((v.reversed ? screenLime : juce::Colours::white).withAlpha (alpha * 0.8f));
+            g.fillRect (x, mid - half * level, 1.5f, juce::jmax (1.0f, 2.0f * half * level));
+
+            // In the roll: the span it covers, and its head.
+            const int lane = (v.voice * 5 + v.slot) % lanes;
+            const float y = (float) roll.getY() + (float) lane * laneH;
+            const float sx = (float) wave.getX() + v.start * w;
+            const float ex = juce::jmax (sx + 1.0f, (float) wave.getX() + v.end * w);
+            g.setColour ((v.reversed ? screenLime : screenPale).withAlpha (0.25f + 0.35f * level));
+            g.fillRect (sx, y + laneH * 0.3f, ex - sx, juce::jmax (1.0f, laneH * 0.4f));
+            g.setColour ((v.reversed ? screenLime : juce::Colours::white).withAlpha (alpha));
+            g.fillRect (x - 1.5f, y, 3.0f, juce::jmax (2.0f, laneH - 1.0f));
+        }
+
+        // Voice playheads: a marker over the waveform.
+        g.setColour (playheadCyan);
+        for (float p : heads)
+        {
+            if (p < 0.0f)
+                continue;
+            const float x = (float) wave.getX() + p * w;
+            juce::Path marker;
+            marker.addTriangle (x - 4.0f, (float) wave.getY() - 1.0f, x + 4.0f, (float) wave.getY() - 1.0f, x, (float) wave.getY() + 6.0f);
+            g.fillPath (marker);
+            g.fillRect (x - 0.5f, (float) wave.getY(), 1.0f, (float) wave.getHeight());
+        }
+    }
+
     SiltProcessor::Overview overview;
+    juce::Image waveCache;
     float start = 0.0f, length = 1.0f;
-    std::array<float, silt::Engine::numVoices> playheads {};
+    std::array<silt::GrainView, SiltProcessor::maxGrainViews> views {};
+    int numViews = 0;
+    std::array<float, silt::Engine::numVoices> heads {};
+    juce::String hud;
 };
+
+// --- editor -----------------------------------------------------------------------
 
 SiltEditor::SiltEditor (SiltProcessor& p)
     : AudioProcessorEditor (p), silt (p),
-      look (std::make_unique<PanelLook>()), sampleView (std::make_unique<SampleView>())
+      look (std::make_unique<PanelLook>()), screen (std::make_unique<GrainScreen>())
 {
     setLookAndFeel (look.get());
-    addAndMakeVisible (*sampleView);
+    addAndMakeVisible (*screen);
 
-    addKnob (grainKnobs, "pitch", "PITCH");
-    addKnob (grainKnobs, "size", "SIZE");
-    addKnob (grainKnobs, "rate", "RATE");
-    addKnob (grainKnobs, "spray", "SPRAY");
-    addKnob (grainKnobs, "jitter", "JITTER");
-    addKnob (grainKnobs, "reverse", "REVERSE");
-    addKnob (grainKnobs, "randAmp", "RND AMP");
-    addKnob (grainKnobs, "fade", "FADE");
-    addKnob (grainKnobs, "slant", "SLANT");
-    addKnob (grainKnobs, "ease", "EASE");
+    const auto rateModeIs = [this] (int m) { return std::function<bool()> ([this, m] { return rateMode.getSelectedItemIndex() == m; }); };
+    const auto sizeSynced = std::function<bool()> ([this] { return sizeSyncButton.getToggleState(); });
+    const auto grainsMode = rateModeIs (2);
 
-    addKnob (syncedKnobs, "sizeDiv", "SIZE");
-    addKnob (syncedKnobs, "rateDiv", "RATE");
-    addKnob (syncedKnobs, "grains", "GRAINS");
-    addKnob (syncedKnobs, "grainSize", "SIZE");
-    sizeSyncButton.setClickingTogglesState (true);
-    addAndMakeVisible (sizeSyncButton);
-    sizeSyncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "sizeSync", sizeSyncButton);
-    rateMode.addItemList ({ "FREE", "SYNC", "GRAINS" }, 1);
-    addAndMakeVisible (rateMode);
-    rateModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "rateMode", rateMode);
+    // GRAIN: what the grains are.
+    addKnob (Page::grain, 0, "pitch", "PITCH");
+    addKnob (Page::grain, 1, "size", "SIZE").shown = [=] { return ! sizeSynced() && ! grainsMode(); };
+    addKnob (Page::grain, 1, "sizeDiv", "SIZE").shown = sizeSynced;
+    addKnob (Page::grain, 1, "grainSize", "SIZE").shown = [=] { return ! sizeSynced() && grainsMode(); };
+    addKnob (Page::grain, 2, "rate", "RATE").shown = rateModeIs (0);
+    addKnob (Page::grain, 2, "rateDiv", "RATE").shown = rateModeIs (1);
+    addKnob (Page::grain, 2, "grains", "GRAINS").shown = grainsMode;
+    addKnob (Page::grain, 3, "spray", "SPRAY");
+    addKnob (Page::grain, 4, "jitter", "JITTER");
+    addKnob (Page::grain, 5, "reverse", "REVERSE");
+    addKnob (Page::grain, 6, "randAmp", "RND AMP");
 
-    addKnob (regionKnobs, "start", "START");
-    addKnob (regionKnobs, "length", "LENGTH");
-    addKnob (regionKnobs, "scan", "SCAN");
+    // SHAPE: the grain's envelope, then the note's (both previewed in slot 7).
+    addKnob (Page::shape, 0, "fade", "FADE");
+    addKnob (Page::shape, 1, "slant", "SLANT");
+    addKnob (Page::shape, 2, "ease", "EASE");
+    addKnob (Page::shape, 3, "attack", "ATTACK");
+    addKnob (Page::shape, 4, "decay", "DECAY");
+    addKnob (Page::shape, 5, "sustain", "SUSTAIN");
+    addKnob (Page::shape, 6, "release", "RELEASE");
 
-    addKnob (voiceKnobs, "attack", "ATTACK");
-    addKnob (voiceKnobs, "decay", "DECAY");
-    addKnob (voiceKnobs, "sustain", "SUSTAIN");
-    addKnob (voiceKnobs, "release", "RELEASE");
-    addKnob (voiceKnobs, "root", "ROOT");
-
-    addKnob (outKnobs, "gain", "OUTPUT");
-    if constexpr (! SiltProcessor::isInstrument)
-        addKnob (outKnobs, "mix", "MIX");
-
-    for (auto* box : { &captureBars, &endMode })
-        addAndMakeVisible (*box);
-    captureBars.addItemList ({ "1 BAR", "2 BARS", "4 BARS", "8 BARS" }, 1);
+    // PLAY: which audio, how the playhead moves through it, and the output.
+    addKnob (Page::play, 0, "start", "START");
+    addKnob (Page::play, 1, "length", "LENGTH");
+    addKnob (Page::play, 2, "scan", "SCAN");
     endMode.addItemList ({ "LOOP", "HOLD", "STOP" }, 1);
-    captureBarsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "captureBars", captureBars);
-    endModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "endMode", endMode);
+    addMenu (Page::play, 3, endMode, "AT THE END");
+    addKnob (Page::play, 4, "root", "ROOT");
+    addKnob (Page::play, 5, "gain", "OUTPUT");
+    if constexpr (! SiltProcessor::isInstrument)
+        addKnob (Page::play, 6, "mix", "MIX");
+
+    menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "endMode", endMode));
+
+    // Rate mode and Size SYNC sit under their knobs on the GRAIN page.
+    rateMode.addItemList ({ "FREE", "SYNC", "GRAINS" }, 1);
+    addChildComponent (rateMode);
+    menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "rateMode", rateMode));
+    rateMode.onChange = [this] { updateVisibility(); };
+    sizeSyncButton.setClickingTogglesState (true);
+    addChildComponent (sizeSyncButton);
+    buttonAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "sizeSync", sizeSyncButton));
+    sizeSyncButton.onStateChange = [this] { updateVisibility(); };
+
+    // Page tabs.
+    const char* names[] { "GRAIN", "SHAPE", "PLAY" };
+    for (size_t i = 0; i < pageTabs.size(); ++i)
+    {
+        auto& tab = pageTabs[i];
+        tab.setButtonText (names[i]);
+        tab.setRadioGroupId (1);
+        tab.setClickingTogglesState (true);
+        tab.onClick = [this, i] { if (pageTabs[i].getToggleState()) showPage ((Page) i); };
+        addAndMakeVisible (tab);
+    }
+
+    // Capture and loading.
+    captureBars.addItemList ({ "1 BAR", "2 BARS", "4 BARS", "8 BARS" }, 1);
+    addAndMakeVisible (captureBars);
+    menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "captureBars", captureBars));
 
     armButton.getProperties().set ("red", true);
     armButton.setColour (juce::TextButton::textColourOffId, bone);
@@ -276,10 +385,12 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     if constexpr (SiltProcessor::isInstrument)
     {
         addAndMakeVisible (monitorButton);
-        monitorAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "monitor", monitorButton);
+        buttonAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "monitor", monitorButton));
     }
 
     setSize (editorWidth, editorHeight);
+    pageTabs[0].setToggleState (true, juce::dontSendNotification);
+    showPage (Page::grain);
     startTimerHz (30);
 }
 
@@ -288,20 +399,57 @@ SiltEditor::~SiltEditor()
     setLookAndFeel (nullptr);
 }
 
-void SiltEditor::addKnob (std::vector<std::unique_ptr<Knob>>& row, const char* paramId, const juce::String& label)
+SiltEditor::Control& SiltEditor::addKnob (Page p, int slot, const char* paramId, const juce::String& label)
 {
-    auto knob = std::make_unique<Knob>();
-    knob->label = label;
-    knob->slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 74, 18);
+    auto c = std::make_unique<Control>();
+    c->label = label;
+    c->page = p;
+    c->slot = slot;
+    c->slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 76, 16);
     // Set on the slider itself: its text box is made before it joins the
     // editor, so it never sees the panel look's colours.
-    knob->slider.setColour (juce::Slider::textBoxTextColourId, lcdText);
-    knob->slider.setColour (juce::Slider::textBoxBackgroundColourId, lcdGreen);
-    knob->slider.setColour (juce::Slider::textBoxOutlineColourId, ink);
-    knob->slider.setColour (juce::Slider::textBoxHighlightColourId, rust.withAlpha (0.4f));
-    addAndMakeVisible (knob->slider);
-    knob->attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (silt.params, paramId, knob->slider);
-    row.push_back (std::move (knob));
+    c->slider.setColour (juce::Slider::textBoxTextColourId, lcdText);
+    c->slider.setColour (juce::Slider::textBoxBackgroundColourId, lcdGreen);
+    c->slider.setColour (juce::Slider::textBoxOutlineColourId, ink);
+    c->slider.setColour (juce::Slider::textBoxHighlightColourId, rust.withAlpha (0.4f));
+    addChildComponent (c->slider);
+    c->attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (silt.params, paramId, c->slider);
+    controls.push_back (std::move (c));
+    return *controls.back();
+}
+
+SiltEditor::Control& SiltEditor::addMenu (Page p, int slot, juce::ComboBox& box, const juce::String& label)
+{
+    auto c = std::make_unique<Control>();
+    c->menu = &box;
+    c->label = label;
+    c->page = p;
+    c->slot = slot;
+    addChildComponent (box);
+    controls.push_back (std::move (c));
+    return *controls.back();
+}
+
+void SiltEditor::showPage (Page p)
+{
+    page = p;
+    updateVisibility();
+}
+
+void SiltEditor::updateVisibility()
+{
+    for (auto& c : controls)
+        c->component().setVisible (c->page == page && (c->shown == nullptr || c->shown()));
+
+    rateMode.setVisible (page == Page::grain);
+    sizeSyncButton.setVisible (page == Page::grain);
+    repaint (pagePanel);
+}
+
+juce::Rectangle<int> SiltEditor::slotBounds (int slot) const
+{
+    const int w = controlRow.getWidth() / slotsPerRow;
+    return { controlRow.getX() + slot * w, controlRow.getY(), w, controlRow.getHeight() };
 }
 
 bool SiltEditor::isInterestedInFileDrag (const juce::StringArray& files)
@@ -336,111 +484,166 @@ juce::String SiltEditor::statusText() const
     juce::String source;
     switch (silt.captureSource.load())
     {
-        case SiltProcessor::CaptureSource::sidechain: source = "SIDECHAIN"; break;
-        case SiltProcessor::CaptureSource::mainInput: source = "INPUT"; break;
+        case SiltProcessor::CaptureSource::sidechain: source = "SC"; break;
+        case SiltProcessor::CaptureSource::mainInput: source = "IN"; break;
         case SiltProcessor::CaptureSource::none: source = "NO INPUT"; break;
     }
-    const auto level = levelDb <= -60.0f ? juce::String ("-INF") : juce::String (levelDb, 0);
-    return source + " " + level + "DB  " + juce::String (silt.hostBpm.load(), 1) + " BPM  "
-         + juce::String (silt.activeGrains.load()) + " GRAINS";
+    const auto level = levelDb <= -60.0f ? juce::String ("-INF") : juce::String (juce::roundToInt (levelDb));
+    return source + " " + level + " DB   " + juce::String (silt.hostBpm.load(), 1) + " BPM";
 }
 
 void SiltEditor::timerCallback()
 {
+    const auto oldStatus = statusText();
     const float db = juce::Decibels::gainToDecibels (silt.captureMeter.takePeak(), -100.0f);
     levelDb = db > levelDb ? db : juce::jmax (db, levelDb - 1.5f);
 
     if (const int generation = silt.getSampleGeneration(); generation != seenGeneration)
     {
         seenGeneration = generation;
-        sampleView->setOverview (silt.getOverview());
+        screen->setOverview (silt.getOverview());
+    }
+    screen->setRegion (param ("start") * 0.01f, param ("length") * 0.01f);
+
+    // The grains: the screen only repaints while something is moving.
+    static std::array<silt::GrainView, SiltProcessor::maxGrainViews> views;
+    const int n = silt.readGrainViews (views);
+    std::array<float, silt::Engine::numVoices> heads {};
+    int voices = 0;
+    for (size_t i = 0; i < heads.size(); ++i)
+    {
+        heads[i] = silt.voicePlayheads[i].load();
+        voices += heads[i] >= 0.0f ? 1 : 0;
     }
 
-    sampleView->setRegion (silt.params.getRawParameterValue ("start")->load() * 0.01f,
-                           silt.params.getRawParameterValue ("length")->load() * 0.01f);
-
-    std::array<float, silt::Engine::numVoices> heads {};
-    for (size_t i = 0; i < heads.size(); ++i)
-        heads[i] = silt.voicePlayheads[i].load();
-    sampleView->setPlayheads (heads);
-
-    const bool sizeSynced = sizeSyncButton.getToggleState();
-    const int mode = rateMode.getSelectedItemIndex();   // 0 free, 1 sync, 2 grains
-    grainKnobs[1]->slider.setVisible (! sizeSynced && mode != 2);
-    syncedKnobs[0]->slider.setVisible (sizeSynced);
-    syncedKnobs[3]->slider.setVisible (! sizeSynced && mode == 2);
-    grainKnobs[2]->slider.setVisible (mode == 0);
-    syncedKnobs[1]->slider.setVisible (mode == 1);
-    syncedKnobs[2]->slider.setVisible (mode == 2);
+    juce::String hud;
+    if (n > 0)
+        hud = juce::String (n) + (n == 1 ? " GRAIN   " : " GRAINS   ") + juce::String (voices) + (voices == 1 ? " VOICE" : " VOICES");
+    if (screen->setActivity (views, n, heads, hud))
+        screen->repaint();
 
     const bool capturing = silt.captureState.load() != SiltProcessor::CaptureState::idle;
     armButton.setButtonText (capturing ? "CANCEL" : juce::String (juce::CharPointer_UTF8 ("\xe2\x97\x8f ARM")));
-    repaint (header);
-    repaint (captureRow);
-}
 
-void SiltEditor::layoutRow (std::vector<std::unique_ptr<Knob>>& row, juce::Rectangle<int> area)
-{
-    if (row.empty())
-        return;
-    const int w = area.getWidth() / (int) row.size();
-    for (auto& k : row)
-        k->slider.setBounds (area.removeFromLeft (w).withTrimmedTop (16).reduced (4, 0));
+    if (statusText() != oldStatus)
+        repaint (header);
+
+    // Redraw the SHAPE preview only when its values change.
+    if (page == Page::shape)
+    {
+        const std::array<float, 7> now { param ("fade"), param ("slant"), param ("ease"), param ("attack"),
+                                         param ("decay"), param ("sustain"), param ("release") };
+        if (now != previewSeen)
+        {
+            previewSeen = now;
+            repaint (pagePanel);
+        }
+    }
 }
 
 void SiltEditor::resized()
 {
     auto r = getLocalBounds().reduced (14);
-    header = r.removeFromTop (52);
+    header = r.removeFromTop (44);
     r.removeFromTop (10);
-    sampleView->setBounds (r.removeFromTop (210));
+    screen->setBounds (r.removeFromTop (272));
     r.removeFromTop (10);
 
-    captureRow = r.removeFromTop (40);
-    auto row = captureRow;
-    armButton.setBounds (row.removeFromLeft (110).reduced (0, 2));
+    strip = r.removeFromTop (34);
+    auto row = strip;
+    armButton.setBounds (row.removeFromLeft (110));
     row.removeFromLeft (8);
-    captureBars.setBounds (row.removeFromLeft (110).reduced (0, 6));
+    captureBars.setBounds (row.removeFromLeft (104).reduced (0, 4));
     row.removeFromLeft (8);
-    loadButton.setBounds (row.removeFromLeft (90).reduced (0, 2));
-    row.removeFromLeft (8);
+    loadButton.setBounds (row.removeFromLeft (90));
     if constexpr (SiltProcessor::isInstrument)
-        monitorButton.setBounds (row.removeFromRight (110).reduced (0, 6));
+        monitorButton.setBounds (row.removeFromRight (104).reduced (0, 4));
     r.removeFromTop (10);
 
-    grainSection = r.removeFromTop (150);
-    auto grainArea = grainSection.withTrimmedTop (22).reduced (6, 4);
-    const auto syncRow = grainArea.removeFromBottom (18);
-    layoutRow (grainKnobs, grainArea);
+    pagePanel = r;
+    auto panel = r.reduced (2);
+    auto tabs = panel.removeFromTop (28);
+    for (auto& tab : pageTabs)
+        tab.setBounds (tabs.removeFromLeft (110).reduced (3, 3));
+    controlRow = panel.withTrimmedTop (2);
 
-    // The alternative knobs sit exactly over Size and Rate: SYNC under Size,
-    // the Rate mode under Rate.
-    const auto underneath = [&syncRow] (const juce::Component& c, int width)
+    for (auto& c : controls)
     {
-        return c.getBounds().withY (syncRow.getY()).withHeight (syncRow.getHeight()).withSizeKeepingCentre (width, 18);
+        auto cell = slotBounds (c->slot).withTrimmedTop (18).withTrimmedBottom (22).reduced (10, 0);
+        if (c->menu != nullptr)
+            c->menu->setBounds (cell.withSizeKeepingCentre (cell.getWidth(), 24));
+        else
+            c->slider.setBounds (cell);
+    }
+
+    const auto under = [this] (int slot, int width)
+    {
+        return slotBounds (slot).removeFromBottom (20).withSizeKeepingCentre (width, 18);
     };
-    const auto& sizeKnob = grainKnobs[1]->slider;
-    const auto& rateKnob = grainKnobs[2]->slider;
-    syncedKnobs[0]->slider.setBounds (sizeKnob.getBounds());
-    syncedKnobs[3]->slider.setBounds (sizeKnob.getBounds());
-    syncedKnobs[1]->slider.setBounds (rateKnob.getBounds());
-    syncedKnobs[2]->slider.setBounds (rateKnob.getBounds());
-    sizeSyncButton.setBounds (underneath (sizeKnob, 56));
-    rateMode.setBounds (underneath (rateKnob, 92));
-    r.removeFromTop (10);
+    sizeSyncButton.setBounds (under (1, 60));
+    rateMode.setBounds (under (2, 92));
+}
 
-    auto lower = r;
-    regionSection = lower.removeFromLeft (370);
-    lower.removeFromLeft (10);
-    outSection = lower.removeFromRight (SiltProcessor::isInstrument ? 110 : 200);
-    lower.removeFromRight (10);
-    voiceSection = lower;
+void SiltEditor::paintPreview (juce::Graphics& g)
+{
+    // A rule between the grain's envelope (slots 0–2) and the note's (3–6).
+    g.setColour (ink);
+    g.fillRect (slotBounds (3).getX() - 1, controlRow.getY() + 6, 2, controlRow.getHeight() - 12);
 
-    auto regionArea = regionSection.withTrimmedTop (22).reduced (6, 4);
-    endMode.setBounds (regionArea.removeFromRight (84).withSizeKeepingCentre (80, 24));
-    layoutRow (regionKnobs, regionArea);
-    layoutRow (voiceKnobs, voiceSection.withTrimmedTop (22).reduced (6, 4));
-    layoutRow (outKnobs, outSection.withTrimmedTop (22).reduced (6, 4));
+    // Slot 7: one grain's envelope above, one note's ADSR below.
+    auto cell = slotBounds (slotsPerRow - 1).reduced (10, 8).toFloat();
+    const auto drawCurve = [&g] (juce::Rectangle<float> box, const juce::Path& curve, const char* caption)
+    {
+        g.setColour (ink);
+        g.fillRect (box);
+        g.setColour (lcdGreen);
+        g.strokePath (curve, juce::PathStrokeType (1.5f));
+        g.setFont (monoFont (9.0f));
+        g.drawText (caption, box.reduced (4, 2), juce::Justification::topLeft);
+    };
+    const auto plot = [] (juce::Rectangle<float> box) { return box.reduced (5.0f, 6.0f).withTrimmedTop (8.0f); };
+
+    const auto grainBox = cell.removeFromTop (cell.getHeight() * 0.5f - 3.0f);
+    cell.removeFromTop (6.0f);
+    const auto noteBox = cell;
+
+    juce::Path grainCurve;
+    {
+        const auto area = plot (grainBox);
+        silt::HannWindow hann;
+        silt::GrainEnvelope env;
+        env.set (param ("fade") * 0.01, param ("slant") * 0.01, param ("ease") * 0.01, 1000, 0.0);
+        for (int i = 0; i <= 100; ++i)
+        {
+            const float t = (float) i / 100.0f;
+            const juce::Point<float> pt (area.getX() + t * area.getWidth(), area.getBottom() - env (hann, t) * area.getHeight());
+            if (i == 0)
+                grainCurve.startNewSubPath (pt);
+            else
+                grainCurve.lineTo (pt);
+        }
+    }
+
+    juce::Path noteCurve;
+    {
+        // Attack, decay and release on a shared time scale, with a fixed sustain hold.
+        const auto area = plot (noteBox);
+        const float a = param ("attack"), d = param ("decay"), s = param ("sustain") * 0.01f, rel = param ("release");
+        const float hold = 0.25f * (a + d + rel) + 1.0f;
+        const float total = a + d + hold + rel;
+        const auto at = [&] (float ms, float level)
+        {
+            return juce::Point<float> (area.getX() + ms / total * area.getWidth(), area.getBottom() - level * area.getHeight());
+        };
+        noteCurve.startNewSubPath (at (0.0f, 0.0f));
+        noteCurve.lineTo (at (a, 1.0f));
+        noteCurve.lineTo (at (a + d, s));
+        noteCurve.lineTo (at (a + d + hold, s));
+        noteCurve.lineTo (at (total, 0.0f));
+    }
+
+    drawCurve (grainBox, grainCurve, "GRAIN");
+    drawCurve (noteBox, noteCurve, "NOTE");
 }
 
 void SiltEditor::paint (juce::Graphics& g)
@@ -454,7 +657,7 @@ void SiltEditor::paint (juce::Graphics& g)
     g.setFont (panelFont (20.0f));
     g.drawText (juce::String (JucePlugin_Name).toUpperCase(), header.withTrimmedLeft (16), juce::Justification::centredLeft);
 
-    auto stripes = header.withTrimmedLeft (150).withWidth (220).withSizeKeepingCentre (220, 19);
+    auto stripes = header.withTrimmedLeft (130).withWidth (180).withSizeKeepingCentre (180, 19);
     for (auto c : { rust, juce::Colour (0xffd9a03a), juce::Colour (0xff8fa27a), bone })
     {
         g.setColour (c);
@@ -462,26 +665,31 @@ void SiltEditor::paint (juce::Graphics& g)
         stripes.removeFromTop (1);
     }
 
-    auto lcd = header.withTrimmedLeft (400).reduced (10, 9);
+    auto lcd = header.withTrimmedLeft (header.getWidth() - 420).reduced (8, 7);
     g.setColour (juce::Colour (0xff14110f));
     g.fillRect (lcd);
     g.setColour (lcdGreen);
     g.fillRect (lcd.reduced (3));
     g.setColour (lcdText);
-    g.setFont (lcdFont (15.0f));
+    g.setFont (monoFont (14.0f));
     g.drawText (statusText(), lcd.reduced (12, 0), juce::Justification::centredLeft);
 
-    drawSection (g, grainSection, "GRAIN");
-    drawSection (g, regionSection, "REGION");
-    drawSection (g, voiceSection, "VOICE");
-    drawSection (g, outSection, "OUT");
+    // Page panel: a ruled grid of cells (UI inspiration: data sheets, diagnostics).
+    g.setColour (ink);
+    g.drawRect (pagePanel, 2);
+    g.drawHorizontalLine (pagePanel.getY() + 30, (float) pagePanel.getX(), (float) pagePanel.getRight());
+    g.setColour (ink.withAlpha (0.25f));
+    for (int s = 1; s < slotsPerRow; ++s)
+        g.drawVerticalLine (slotBounds (s).getX(), (float) controlRow.getY() + 6.0f, (float) controlRow.getBottom() - 6.0f);
 
     g.setColour (ink);
-    g.setFont (panelFont (10.0f));
-    for (auto* row : { &grainKnobs, &regionKnobs, &voiceKnobs, &outKnobs })
-        for (auto& k : *row)
-            g.drawText (k->label, k->slider.getBounds().withY (k->slider.getY() - 15).withHeight (14),
-                        juce::Justification::centred);
+    g.setFont (panelFont (10.5f));
+    for (auto& c : controls)
+        if (c->component().isVisible())
+            g.drawText (c->label, slotBounds (c->slot).withHeight (18).translated (0, 2), juce::Justification::centred);
+
+    if (page == Page::shape)
+        paintPreview (g);
 
     if (dragHover)
     {

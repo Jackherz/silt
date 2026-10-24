@@ -47,6 +47,15 @@ public:
     int getActiveGrainCount() const noexcept;
     const GrainVoice& getVoice (int index) const noexcept { return voices[(size_t) index]; }
 
+    // Every sounding grain, for the UI. Returns how many were written.
+    int collectGrainViews (GrainView* out, int max) const noexcept
+    {
+        int n = 0;
+        for (size_t v = 0; v < voices.size() && n < max; ++v)
+            n += voices[v].collectViews (out + n, max - n, (std::uint8_t) v);
+        return n;
+    }
+
 private:
     void swapInPendingBuffer() noexcept;
     void handleEvent (const NoteEvent&, const GrainParams&) noexcept;

@@ -65,6 +65,12 @@ public:
         juce::String name;
     };
     Overview getOverview() const;
+
+    // Sounding grains for the screen. The audio thread publishes a snapshot
+    // about 60 times a second; readGrainViews copies the latest (lock-free,
+    // retrying if it lands mid-update) and returns how many.
+    static constexpr int maxGrainViews = 1024;
+    int readGrainViews (std::array<silt::GrainView, maxGrainViews>& out) const;
     int getSampleGeneration() const noexcept { return sampleGeneration.load(); }
 
     juce::AudioProcessorValueTreeState params;
@@ -113,6 +119,11 @@ private:
     std::unique_ptr<silt::SampleBuffer> captureOwned;            // message thread only
     std::atomic<silt::SampleBuffer*> captureTarget { nullptr };  // shared view for the audio thread
     int captureWritePos = 0;                                     // audio thread only
+
+    std::array<silt::GrainView, maxGrainViews> grainViews {};
+    std::atomic<int> grainViewCount { 0 };
+    std::atomic<std::uint32_t> grainViewSequence { 0 };   // odd while being written
+    int samplesSinceGrainViews = 0;
 
     std::vector<silt::NoteEvent> noteEvents;   // preallocated in prepareToPlay
     juce::AudioBuffer<float> wet;              // engine output, preallocated

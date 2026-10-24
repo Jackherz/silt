@@ -96,6 +96,27 @@ void GrainVoice::noteOff() noexcept
     releaseStep = 0.0f;            // set from the level on the next sample
 }
 
+int GrainVoice::collectViews (GrainView* out, int max, std::uint8_t voiceIndex) const noexcept
+{
+    int n = 0;
+    const float voiceLevel = envLevel * velocity;
+    for (size_t i = 0; i < grains.size() && n < max; ++i)
+    {
+        const auto& g = grains[i];
+        if (g.remaining <= 0 || g.source == nullptr)
+            continue;
+        auto& v = out[n++];
+        v.start = g.spanStart;
+        v.end = g.spanEnd;
+        v.position = (float) (g.readPos / g.source->getNumFrames());
+        v.level = g.lastEnvelope * voiceLevel;
+        v.voice = voiceIndex;
+        v.slot = (std::uint8_t) i;
+        v.reversed = g.increment < 0.0;
+    }
+    return n;
+}
+
 int GrainVoice::countGrainsUsing (const SampleBuffer* buffer) const noexcept
 {
     int count = 0;
@@ -302,6 +323,12 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     ++activeGrains;
     ++grainsStarted;
     lastGrainStart = span.lo;
+
+    // What the UI draws: the span inside the region (loops show up to the loop end).
+    const double shown = std::min (span.hi, looping ? region.end : (double) frames);
+    g.spanStart = (float) (span.lo / frames);
+    g.spanEnd = (float) (shown / frames);
+    g.lastEnvelope = 0.0f;
 }
 
 // One channel of a grain's current frame. In the loop's fade zone the audio
@@ -412,6 +439,7 @@ void GrainVoice::render (float* left, float* right, int numSamples,
                     continue;
 
                 const float env = g.envelope (window, g.phase);
+                g.lastEnvelope = env;
                 const float sL = g.gainL * readGrain (g, 0);
                 const float sR = g.gainR * readGrain (g, 1);
                 accL += env * sL;
