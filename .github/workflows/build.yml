@@ -78,14 +78,15 @@ jobs:
             pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --skip-gui-tests --timeout-ms 120000 --validate "$p"
           done
 
+      # bash, not pwsh: pluginval.exe is a GUI-subsystem program, which
+      # PowerShell doesn't wait for, so its exit code would be lost.
       - name: Validate VST3 (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: bash
         run: |
-          foreach ($p in @("build/Silt_artefacts/Release/VST3/Silt.vst3", "build/SiltFX_artefacts/Release/VST3/Silt FX.vst3")) {
-            .\pluginval.exe --strictness-level 10 --skip-gui-tests --timeout-ms 120000 --validate "$p"
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
+          for p in "build/Silt_artefacts/Release/VST3/Silt.vst3" "build/SiltFX_artefacts/Release/VST3/Silt FX.vst3"; do
+            ./pluginval.exe --strictness-level 10 --skip-gui-tests --timeout-ms 120000 --validate "$p"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
