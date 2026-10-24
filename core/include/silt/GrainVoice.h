@@ -106,6 +106,13 @@ private:
         float gainL = 0.0f, gainR = 0.0f;
         GrainEnvelope envelope;
         Interpolation interpolation = Interpolation::cubic;
+
+        // Loop reads (LOOP mode, grains that reach the loop point): past
+        // loopEnd the read continues loopLength earlier, and over the last
+        // fadeLength frames before loopEnd it crossfades into that audio.
+        bool loops = false;
+        int backwardWraps = 0;      // reversed grains: loop points still to cross
+        double loopBegin = 0.0, loopEnd = 0.0, loopLength = 0.0, fadeStart = 0.0, fadeLength = 1.0;
     };
 
     enum class EnvStage { idle, attack, decay, sustain, release };
@@ -118,6 +125,7 @@ private:
     float targetGain (const GrainParams&, const SampleBuffer*) const noexcept;
     double pitchRatio (const GrainParams&, const SampleBuffer&) const noexcept;
     int grainLength (const GrainParams&, const Region&, double ratio) const noexcept;
+    float readGrain (const Grain&, int channel) const noexcept;
     double grainStartFor (const Region&, double spanFrames) const noexcept;
     double scatterWithin (const Region&, double spanFrames, double scatter) const noexcept;
     static Region regionOf (const GrainParams&, const SampleBuffer&) noexcept;

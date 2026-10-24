@@ -12,6 +12,7 @@ constexpr double gainSmoothingSeconds = 0.03;
 constexpr double maxSpraySeconds = 1.0;
 constexpr int minGrainSamples = 64;     // shorter grains are click trains (02 §8)
 constexpr double edgeGuardFrames = 2.0; // keeps cubic reads' neighbours inside the buffer
+constexpr double maxLoopFadeSeconds = 0.01;
 
 double wrapFrames (double pos, int numFrames) noexcept
 {
@@ -72,12 +73,15 @@ double GrainVoice::pitchRatio (const GrainParams& p, const SampleBuffer& buffer)
     return noteRatio * semitonesToRatio (p.pitchSemitones) * (buffer.getSampleRate() / sampleRate);
 }
 
-// Grains only ever read the region, so one longer than the region is
+// Grains only ever read the region. In LOOP mode they read through the loop
+// point, so any length works; otherwise a grain longer than the region is
 // shortened to fit it.
 int GrainVoice::grainLength (const GrainParams& p, const Region& region, double ratio) const noexcept
 {
+    const int wanted = std::max (minGrainSamples, (int) (p.sizeMs * 0.001 * sampleRate));
+    if (p.endMode == EndMode::loop)
+        return wanted;
     const double usable = std::max (1.0, region.end - region.begin - 2.0 * edgeGuardFrames);
-    const int wanted = (int) (p.sizeMs * 0.001 * sampleRate);
     return std::max (minGrainSamples, std::min (wanted, (int) (usable / ratio)));
 }
 
@@ -114,7 +118,8 @@ float GrainVoice::targetGain (const GrainParams& p, const SampleBuffer* buffer) 
         const int length = grainLength (p, region, ratio);
         const double span = length * ratio;
         sizeMs = length * 1000.0 / sampleRate;
-        room = std::clamp ((region.end - region.begin - span) / std::max (1.0, span), 0.0, 1.0);
+        room = p.endMode == EndMode::loop ? 1.0
+                                          : std::clamp ((region.end - region.begin - span) / std::max (1.0, span), 0.0, 1.0);
     }
 
     const double fade = std::clamp (p.fade, 0.0, 1.0);
@@ -231,7 +236,14 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     const int length = grainLength (p, region, ratio);
 
     const double scatter = random.nextBipolar() * p.spray * maxSpraySeconds * buffer.getSampleRate();
-    const double start = grainStartFor (region, length * ratio) + scatterWithin (region, length * ratio, scatter);
+    const bool looping = p.endMode == EndMode::loop;
+    const double regionFrames = std::max (1.0, region.end - region.begin);
+
+    // LOOP: grains start at the playhead (spray wraps around the loop), so Scan 1
+    // plays the region at its own speed. HOLD / STOP: grains must fit before the
+    // region end (grainStartFor).
+    const double start = looping ? region.begin + wrapFrames (playhead + scatter - region.begin, (int) regionFrames)
+                                 : grainStartFor (region, length * ratio) + scatterWithin (region, length * ratio, scatter);
     const bool reversed = random.next01() < p.reverseChance;
     const auto span = grainReadSpan (start, length, ratio);
 
@@ -241,7 +253,32 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
 
     Grain& g = *free;
     g.source = &buffer;
+    g.loops = false;
+    g.backwardWraps = 0;
     g.readPos = wrapFrames (reversed ? span.hi : span.lo, frames);
+
+    if (looping)
+    {
+        const double fade = std::min (maxLoopFadeSeconds * buffer.getSampleRate(), 0.25 * regionFrames);
+        g.loopBegin = region.begin;
+        g.loopEnd = region.end;
+        g.fadeLength = std::max (1.0, fade);
+        g.loopLength = std::max (1.0, regionFrames - fade);
+        g.fadeStart = region.end - fade;
+        g.loops = span.hi > g.fadeStart;
+
+        if (g.loops && reversed)
+        {
+            // Start where the forward read would have ended, after its wraps.
+            double hi = span.hi;
+            while (hi >= g.loopEnd)
+            {
+                hi -= g.loopLength;
+                ++g.backwardWraps;
+            }
+            g.readPos = hi;
+        }
+    }
     g.increment = reversed ? -ratio : ratio;
     g.phase = 0.0;
     g.phaseInc = 1.0 / length;
@@ -253,6 +290,23 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     ++activeGrains;
     ++grainsStarted;
     lastGrainStart = span.lo;
+}
+
+// One channel of a grain's current frame. In the loop's fade zone the audio
+// crossfades into the frames loopLength earlier, which is where the read
+// continues after the loop point, so the seam never clicks.
+float GrainVoice::readGrain (const Grain& g, int channel) const noexcept
+{
+    const float* data = g.source->getReadPointer (channel);
+    const int frames = g.source->getNumFrames();
+    const float here = readFrame (data, frames, g.readPos, g.interpolation);
+
+    if (! g.loops || g.readPos < g.fadeStart)
+        return here;
+
+    const float a = (float) std::clamp ((g.readPos - g.fadeStart) / g.fadeLength, 0.0, 1.0);
+    const float there = readFrame (data, frames, g.readPos - g.loopLength, g.interpolation);
+    return here + a * (there - here);
 }
 
 void GrainVoice::render (float* left, float* right, int numSamples,
@@ -339,12 +393,20 @@ void GrainVoice::render (float* left, float* right, int numSamples,
                 if (g.remaining <= 0)
                     continue;
 
-                const int frames = g.source->getNumFrames();
                 const float env = g.envelope (window, g.phase);
-                accL += env * g.gainL * readFrame (g.source->getReadPointer (0), frames, g.readPos, g.interpolation);
-                accR += env * g.gainR * readFrame (g.source->getReadPointer (1), frames, g.readPos, g.interpolation);
+                accL += env * g.gainL * readGrain (g, 0);
+                accR += env * g.gainR * readGrain (g, 1);
 
-                g.readPos = wrapFrames (g.readPos + g.increment, frames);
+                g.readPos += g.increment;
+                if (! g.loops)
+                    g.readPos = wrapFrames (g.readPos, g.source->getNumFrames());
+                else if (g.increment > 0.0 && g.readPos >= g.loopEnd)
+                    g.readPos -= g.loopLength;
+                else if (g.increment < 0.0 && g.backwardWraps > 0 && g.readPos < g.loopBegin + g.fadeLength)
+                {
+                    g.readPos += g.loopLength;
+                    --g.backwardWraps;
+                }
                 g.phase += g.phaseInc;
                 if (--g.remaining == 0)
                     --activeGrains;
@@ -365,13 +427,14 @@ void GrainVoice::render (float* left, float* right, int numSamples,
         }
     }
 
-    // The UI shows where grains start, which is the playhead scaled onto the
-    // range a whole grain fits in (grainStartFor).
+    // The UI shows where grains start: the playhead in LOOP mode, otherwise the
+    // playhead scaled onto the range a whole grain fits in (grainStartFor).
     if (buffer != nullptr)
     {
         const auto region = regionOf (p, *buffer);
         const double ratio = pitchRatio (p, *buffer);
-        playheadPosition = (float) (grainStartFor (region, grainLength (p, region, ratio) * ratio) / buffer->getNumFrames());
+        const double at = p.endMode == EndMode::loop ? playhead : grainStartFor (region, grainLength (p, region, ratio) * ratio);
+        playheadPosition = (float) (at / buffer->getNumFrames());
     }
 }
 

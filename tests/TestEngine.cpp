@@ -331,6 +331,43 @@ TEST_CASE ("Grain starts keep moving through the whole region (no freeze at its 
         CHECK (starts[i] > starts[i - 1]);
 }
 
+TEST_CASE ("A looping region plays at Scan speed and reaches its end before it repeats")
+{
+    // Silent buffer with loud noise in the last fifth of a 1 s region.
+    // At Scan 1 the loud part must sound 0.8–1.0 s into each pass, and the
+    // start of the next pass must be quiet again.
+    auto buffer = std::make_unique<SampleBuffer> (96000, sampleRate);
+    Random random (5);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 38400; i < 48000; ++i)
+            buffer->getWritePointer (ch)[i] = 0.5f * random.nextBipolar();
+
+    TestEngine engine (std::move (buffer));
+    GrainParams p;
+    p.length = 0.5;          // region: the first second
+    p.scan = 1.0;
+    p.sizeMs = 300.0;
+    p.rateHz = 12.0;
+    p.fade = 0.5;
+    p.slant = 0.0;
+    p.ease = 0.0;
+    const auto out = render (engine, p, 96000, { { 0, 60, true } });
+
+    const auto rms = [&out] (double from, double to)
+    {
+        double sum = 0.0;
+        const int a = (int) (from * sampleRate), b = (int) (to * sampleRate);
+        for (int i = a; i < b; ++i)
+            sum += (double) out.left[(size_t) i] * out.left[(size_t) i];
+        return std::sqrt (sum / (b - a));
+    };
+
+    INFO ("quiet " << rms (0.2, 0.6) << ", loud " << rms (0.85, 0.95) << ", next pass " << rms (1.1, 1.5));
+    CHECK (rms (0.85, 0.95) > 0.1);
+    CHECK (rms (0.2, 0.6) < 0.01);
+    CHECK (rms (1.1, 1.5) < 0.01);
+}
+
 TEST_CASE ("A shorter region changes the sound")
 {
     GrainParams p;
