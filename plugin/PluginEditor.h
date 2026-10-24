@@ -69,9 +69,9 @@ private:
     Page page = Page::grain;
 
     juce::TextButton armButton, loadButton { "LOAD" }, sizeSyncButton { "SYNC" }, delaySyncButton { "SYNC" };
-    juce::TextButton freezeButton { "FREEZE" }, runButton { "RUN" };
+    juce::TextButton freezeButton { "FREEZE" };
     juce::ToggleButton monitorButton { "MONITOR" };
-    juce::ComboBox captureBars, endMode, rateMode, keyMode;
+    juce::ComboBox captureBars, endMode, rateMode, keyMode, liveTrigger;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>> menuAttachments;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
     std::unique_ptr<juce::FileChooser> chooser;

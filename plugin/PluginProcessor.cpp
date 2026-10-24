@@ -124,7 +124,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                                                               divisionNames, eighth),
                 percent ("feedback", "Feedback", 0.0f),
                 std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "freeze", 1 }, "Freeze", false),
-                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "liveRun", 1 }, "Run without notes", true));
+                // With no keys held: nothing, a constant voice, or the input playing the envelope.
+                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "liveRun", 1 }, "No notes",
+                                                              juce::StringArray { "Off", "Always", "Follow" },
+                                                              SiltProcessor::isInstrument ? 1 : 2));
 
     // Capture and output
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "captureBars", 1 }, "Capture length",
@@ -300,7 +303,7 @@ silt::GrainParams SiltProcessor::readParams() const noexcept
     p.live = (int) v (raw->keyMode) == 1;
     p.feedback = v (raw->feedback) * 0.01;
     p.freeze = v (raw->freeze) > 0.5;
-    p.liveRun = v (raw->liveRun) > 0.5;
+    p.liveTrigger = (silt::LiveTrigger) juce::jlimit (0, 2, (int) v (raw->liveRun));
 
     // Synced values follow the host tempo (the last one seen while stopped).
     const double msPerQuarter = 60000.0 / juce::jlimit (20.0, 400.0, hostBpm.load (std::memory_order_relaxed));

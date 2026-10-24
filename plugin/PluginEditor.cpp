@@ -389,7 +389,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
 
     // PLAY: the mode, then what it plays from. PITCH: a region of the sample and
     // how the playhead moves through it. LIVE: how far behind the input the
-    // grains read, feedback, freeze, and whether they run without notes.
+    // grains read, feedback, freeze, and what plays grains without notes
+    // (FOLLOW: the input's level plays the SHAPE page's note envelope).
     keyMode.addItemList ({ "PITCH", "LIVE" }, 1);
     addMenu (Page::play, 0, keyMode, "MODE");
     const auto pitchMode = std::function<bool()> ([this] { return keyMode.getSelectedItemIndex() == 0; });
@@ -406,7 +407,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addKnob (Page::play, 1, "delayDiv", "DELAY").shown = [=] { return liveMode() && delaySynced(); };
     addKnob (Page::play, 2, "feedback", "FEEDBACK").shown = liveMode;
     addButton (Page::play, 3, freezeButton, "freeze", "FREEZE").shown = liveMode;
-    addButton (Page::play, 4, runButton, "liveRun", "NO NOTES").shown = liveMode;
+    liveTrigger.addItemList ({ "OFF", "ALWAYS", "FOLLOW" }, 1);
+    addMenu (Page::play, 4, liveTrigger, "NO NOTES").shown = liveMode;
 
     addKnob (Page::play, 5, "root", "ROOT");
     addKnob (Page::play, 6, "gain", "OUTPUT");
@@ -415,6 +417,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
 
     menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "endMode", endMode));
     menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "keyMode", keyMode));
+    menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "liveRun", liveTrigger));
     keyMode.onChange = [this] { updateVisibility(); };
     delaySyncButton.setClickingTogglesState (true);
     addChildComponent (delaySyncButton);

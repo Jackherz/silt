@@ -11,6 +11,11 @@ namespace silt
 // What a playhead does when it reaches either end of its region.
 enum class EndMode { loop, hold, stop };
 
+// Live mode with no keys held: nothing plays (off), a voice at the root note
+// plays constantly (always), or the input plays that voice's envelope (follow):
+// getting louder opens it, going quiet releases it, a sudden jump retriggers.
+enum class LiveTrigger { off, always, follow };
+
 // The Grain and Voice page controls (spec §3, plan §5), in engine units.
 // Grain controls are latched into each grain at its onset, so changes never
 // alter a grain in flight.
@@ -45,7 +50,7 @@ struct GrainParams
     double liveDelayMs = 250.0;
     double feedback = 0.0;         // 0…1: grain output written back into the ring
     bool freeze = false;           // stop writing: grains play the frozen ring
-    bool liveRun = true;           // a voice at the root note plays while no keys are held
+    LiveTrigger liveTrigger = LiveTrigger::always;   // what plays grains while no keys are held
     double liveNow = 0.0, liveMargin = 0.0;
 
     // Beat grid. When set, grains start on multiples of gridDivision (in
@@ -96,6 +101,7 @@ public:
 
     void noteOn (int note, float velocity, const SampleBuffer& buffer, const GrainParams&) noexcept;
     void noteOff() noexcept;
+    double getSampleRate() const noexcept { return sampleRate; }
     void reset() noexcept;
 
     bool isActive() const noexcept { return envStage != EnvStage::idle || activeGrains > 0; }

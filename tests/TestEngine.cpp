@@ -629,12 +629,49 @@ TEST_CASE ("Freeze holds the sound after the input stops")
     CHECK (lastSecond (false) < 0.01f);
 }
 
-TEST_CASE ("Without RUN, live mode waits for notes")
+TEST_CASE ("With no-notes playing off, live mode waits for notes")
 {
     LiveEngine engine;
     GrainParams p;
     p.live = true;
-    p.liveRun = false;
+    p.liveTrigger = LiveTrigger::off;
     const auto out = renderLive (engine, p, 48000, [] (int i) { return 0.5f * (float) std::sin (0.03 * i); });
     CHECK (peak (out.left) == 0.0f);
+}
+
+TEST_CASE ("Follow: the input's level plays the envelope")
+{
+    // Bursts: 0.3 s of sine, then 0.7 s of silence, three times. With a short
+    // release the grains sound during each burst (after the delay) and stop
+    // in the gaps; always-on would keep playing the ring through them.
+    const auto run = [] (LiveTrigger trigger)
+    {
+        LiveEngine engine;
+        GrainParams p;
+        p.live = true;
+        p.liveTrigger = trigger;
+        p.liveDelayMs = 50.0;
+        p.attackMs = 5.0;
+        p.releaseMs = 50.0;
+        return renderLive (engine, p, 3 * 48000, [] (int i)
+        {
+            const bool on = (i % 48000) < 14400;
+            return on ? 0.5f * (float) std::sin (6.283185307179586 * 240.0 * i / sampleRate) : 0.0f;
+        });
+    };
+
+    const auto rms = [] (const Rendered& out, double from, double to)
+    {
+        double sum = 0.0;
+        for (int i = (int) (from * sampleRate); i < (int) (to * sampleRate); ++i)
+            sum += (double) out.left[(size_t) i] * out.left[(size_t) i];
+        return std::sqrt (sum / ((to - from) * sampleRate));
+    };
+
+    const auto follow = run (LiveTrigger::follow);
+    CHECK (rms (follow, 1.1, 1.3) > 0.05);     // during the second burst
+    CHECK (rms (follow, 1.6, 1.95) < 0.005);   // in the gap after it
+
+    const auto always = run (LiveTrigger::always);
+    CHECK (rms (always, 1.1, 1.3) > 0.05);
 }

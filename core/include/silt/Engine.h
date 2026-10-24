@@ -74,7 +74,8 @@ private:
     void swapInPendingBuffer() noexcept;
     void handleEvent (const NoteEvent&, const GrainParams&, const SampleBuffer*) noexcept;
     void writeLive (const float* inLeft, const float* inRight, int numSamples, const GrainParams&) noexcept;
-    void updateDrone (const GrainParams&, const SampleBuffer*) noexcept;
+    void updateDrone (const GrainParams&, const SampleBuffer*, const float* inLeft, const float* inRight, int numSamples) noexcept;
+    void startDrone (const GrainParams&, const SampleBuffer&, float velocity) noexcept;
     GrainVoice& voiceForNoteOn (int note) noexcept;
 
     std::array<GrainVoice, numVoices> voices;
@@ -93,7 +94,14 @@ private:
     int lastOutCount = 0;
     std::array<float, 2> dcIn {}, dcOut {}, lowpass {};
     int heldNotes = 0;
-    int droneVoice = -1;                             // the voice playing for RUN, if any
+    int droneVoice = -1;                             // the voice playing with no keys held, if any
+
+    // Input follower (LiveTrigger::follow): fast and slow level envelopes, the
+    // gate they open, and the time since the last trigger.
+    float fastLevel = 0.0f, slowLevel = 0.0f;
+    bool gateOpen = false;
+    int samplesSinceTrigger = 0;
+    std::array<float, 4> followerCoefficients {};    // fast attack/release, slow attack/release
 };
 
 } // namespace silt

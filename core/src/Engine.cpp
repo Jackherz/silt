@@ -29,6 +29,12 @@ void Engine::prepare (double sampleRate, int maxBlockSize)
     dcIn = dcOut = lowpass = {};
     heldNotes = 0;
     droneVoice = -1;
+
+    const auto coefficient = [sampleRate] (double ms) { return (float) (1.0 - std::exp (-1.0 / (ms * 0.001 * sampleRate))); };
+    followerCoefficients = { coefficient (1.0), coefficient (40.0), coefficient (60.0), coefficient (300.0) };
+    fastLevel = slowLevel = 0.0f;
+    gateOpen = false;
+    samplesSinceTrigger = 0;
 }
 
 void Engine::setSeed (std::uint64_t seed) noexcept
@@ -134,24 +140,74 @@ void Engine::handleEvent (const NoteEvent& e, const GrainParams& p, const Sample
             voices[i].noteOff();
 }
 
-// RUN: in Live mode with no keys held, a voice at the root note keeps grains
-// playing, so Silt works as a plain effect. Released when a key is played or
-// RUN / Live mode is switched off.
-void Engine::updateDrone (const GrainParams& p, const SampleBuffer* source) noexcept
+void Engine::startDrone (const GrainParams& p, const SampleBuffer& source, float velocity) noexcept
 {
-    const bool wanted = p.live && p.liveRun && heldNotes == 0 && source != nullptr;
+    auto& voice = droneVoice >= 0 ? voices[(size_t) droneVoice] : voiceForNoteOn (p.rootNote);
+    voice.noteOn (p.rootNote, velocity, source, p);   // from its current level: retriggers don't click
+    droneVoice = (int) (&voice - voices.data());
+}
 
-    if (! wanted && droneVoice >= 0)
+// Live mode with no keys held: a voice at the root note plays grains, so Silt
+// works as a plain effect (LiveTrigger). Released when a key is played or the
+// mode changes. In follow mode the input is the player: its level opens and
+// releases the voice's ADSR, a jump of 6 dB over its recent level retriggers
+// it, and the level at the trigger sets the velocity.
+void Engine::updateDrone (const GrainParams& p, const SampleBuffer* source,
+                          const float* inLeft, const float* inRight, int numSamples) noexcept
+{
+    const bool wanted = p.live && p.liveTrigger != LiveTrigger::off && heldNotes == 0 && source != nullptr;
+
+    if (! wanted)
     {
-        voices[(size_t) droneVoice].noteOff();
+        if (droneVoice >= 0)
+            voices[(size_t) droneVoice].noteOff();
         droneVoice = -1;
+        gateOpen = false;
+        return;
     }
-    else if (wanted && droneVoice < 0)
+
+    if (p.liveTrigger == LiveTrigger::always)
     {
-        auto& voice = voiceForNoteOn (p.rootNote);
-        voice.noteOn (p.rootNote, 1.0f, *source, p);
-        droneVoice = (int) (&voice - voices.data());
+        if (droneVoice < 0 || voices[(size_t) droneVoice].isReleasing())
+            startDrone (p, *source, 1.0f);
+        return;
     }
+
+    constexpr float openAt = 0.01f, closeAt = 0.005f;   // −40 dB, −46 dB
+    const int minRetrigger = (int) (0.05 * voices[0].getSampleRate());
+    bool trigger = false, release = false;
+    float triggerLevel = 0.0f;
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float l = inLeft != nullptr ? std::abs (inLeft[i]) : 0.0f;
+        const float r = inRight != nullptr ? std::abs (inRight[i]) : l;
+        const float x = std::max (l, r);
+        fastLevel += (x > fastLevel ? followerCoefficients[0] : followerCoefficients[1]) * (x - fastLevel);
+        slowLevel += (x > slowLevel ? followerCoefficients[2] : followerCoefficients[3]) * (x - slowLevel);
+        ++samplesSinceTrigger;
+
+        const bool onset = fastLevel > openAt && fastLevel > 2.0f * slowLevel && samplesSinceTrigger > minRetrigger;
+        if ((! gateOpen && fastLevel > openAt) || (gateOpen && onset))
+        {
+            gateOpen = true;
+            trigger = true;
+            release = false;
+            samplesSinceTrigger = 0;
+        }
+        else if (gateOpen && fastLevel < closeAt)
+        {
+            gateOpen = false;
+            release = true;
+            trigger = false;
+        }
+        triggerLevel = std::max (triggerLevel, fastLevel);
+    }
+
+    if (trigger)
+        startDrone (p, *source, std::clamp (0.4f + 2.0f * triggerLevel, 0.4f, 1.0f));
+    else if (release && droneVoice >= 0)
+        voices[(size_t) droneVoice].noteOff();
 }
 
 namespace
@@ -223,7 +279,7 @@ void Engine::process (float* left, float* right, int numSamples,
     if (p.live && ! p.freeze && live != nullptr)
         writeLive (inLeft, inRight, std::min (numSamples, maxBlock), p);
     const SampleBuffer* source = p.live ? live.get() : current;
-    updateDrone (p, source);
+    updateDrone (p, source, inLeft, inRight, numSamples);
 
     // Render in segments between events so notes start sample-accurately.
     auto segment = p;
