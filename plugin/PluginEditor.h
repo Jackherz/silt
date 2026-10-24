@@ -69,7 +69,7 @@ private:
     std::array<juce::TextButton, 4> pageTabs;
     Page page = Page::grain;
 
-    juce::TextButton armButton, loadButton { "LOAD" }, sizeSyncButton { "SYNC" }, delaySyncButton { "SYNC" };
+    juce::TextButton armButton, loadButton { "LOAD" }, learnButton { "LEARN" }, sizeSyncButton { "SYNC" }, delaySyncButton { "SYNC" };
     juce::TextButton freezeButton { "FREEZE" }, newPatternButton { "NEW" };
     juce::ToggleButton monitorButton { "MONITOR" };
     juce::ComboBox captureBars, endMode, rateMode, keyMode, liveTrigger, scaleMenu, keyMenu;
@@ -80,6 +80,7 @@ private:
     juce::Rectangle<int> header, strip, pagePanel, controlRow;
     int seenGeneration = -1;
     bool dragHover = false, screenWasLive = false;
+    int learnSeen = -1;
     float levelDb = -100.0f;
     std::array<float, 7> previewSeen {};   // the values the SHAPE preview was last drawn with
 

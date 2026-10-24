@@ -37,7 +37,14 @@ first, then snapped once), PATTERN (a repeating pitch pattern, stepping each gra
 STEPS and NEW (a new pattern, saved with the set), and HEADS (1–8 playheads per note,
 evenly around the region at full SPREAD; in Live mode, further back in time).
 
-Not yet (M3): Slice mode, MIDI CC paging.
+**8-knob controller:** a controller's 8 knobs move the 8 slots of the current page
+(GRAIN / SHAPE / PITCH / PLAY), following the modes; two buttons step pages; works with
+the window closed. Defaults: knobs CC 70–77, pages CC 78/79. **LEARN**: turn knobs 1–8,
+then press previous and next page. A knob takes over only when it reaches the
+parameter's value (pickup), so changing page never makes values jump. The mapping and
+page are saved with the set. Moves are applied off the audio thread as normal automation.
+
+Not yet (M3): Slice mode.
 
 ## Engine (core/)
 

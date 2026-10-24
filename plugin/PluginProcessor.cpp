@@ -234,6 +234,9 @@ SiltProcessor::SiltProcessor()
     formats.registerBasicFormats();
     for (auto& v : voicePlayheads)
         v.store (-1.0f);
+    for (size_t i = 0; i < knobCCs.size(); ++i)
+        knobCCs[i].store (70 + (int) i);   // a common default for 8-knob controllers
+    lastKnobValue.fill (-1);
     startTimerHz (30);
 }
 
@@ -447,6 +450,8 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
             noteEvents.push_back ({ event.samplePosition, m.getNoteNumber(), m.getFloatVelocity(), m.isNoteOn() });
         else if (m.isAllNotesOff() || m.isAllSoundOff())
             allOff = true;
+        else if (m.isController())
+            handleController (m.getControllerNumber(), m.getControllerValue());
     }
     if (allOff)
         engine.allNotesOff();
@@ -541,9 +546,170 @@ juce::AudioProcessorEditor* SiltProcessor::createEditor()
 
 // --- message thread -----------------------------------------------------------
 
+// Audio thread: learn, page buttons, or queue a knob move.
+void SiltProcessor::handleController (int number, int value) noexcept
+{
+    if (const int step = learnStep.load(); step >= 0)
+    {
+        // A knob sends many messages and a button sends press and release: only a
+        // number not yet taken in this learn moves it on.
+        for (int i = 0; i < juce::jmin (step, slotsPerPage); ++i)
+            if (learnedThisRun[(size_t) i] == number)
+                return;
+        if (step == 9 && number == previousPageCC.load())
+            return;
+
+        if (step < slotsPerPage)
+        {
+            knobCCs[(size_t) step].store (number);
+            learnedThisRun[(size_t) step] = number;
+        }
+        else if (step == 8)
+            previousPageCC.store (number);
+        else
+            nextPageCC.store (number);
+        learnStep.store (step < 9 ? step + 1 : -1);
+        return;
+    }
+
+    if (number == previousPageCC.load() || number == nextPageCC.load())
+    {
+        const int which = number == nextPageCC.load() ? 1 : 0;
+        if (value > 63 && pageButtonLast[(size_t) which] <= 63)
+            currentPage.store ((currentPage.load() + (which == 1 ? 1 : numPages - 1)) % numPages);
+        pageButtonLast[(size_t) which] = value;
+        return;
+    }
+
+    for (int slot = 0; slot < slotsPerPage; ++slot)
+        if (knobCCs[(size_t) slot].load() == number)
+        {
+            int start1, size1, start2, size2;
+            controllerFifo.prepareToWrite (1, start1, size1, start2, size2);
+            if (size1 > 0)
+                controllerMoves[(size_t) start1] = { slot, value };
+            controllerFifo.finishedWrite (size1);
+            return;
+        }
+}
+
+// Which parameter a page slot moves right now, matching the editor's layout.
+juce::String SiltProcessor::slotParameter (int page, int slot) const
+{
+    const auto v = [this] (const char* id) { return params.getRawParameterValue (id)->load(); };
+
+    switch (page)
+    {
+        case 0:   // GRAIN
+        {
+            const int rateMode = (int) v ("rateMode");
+            const char* ids[] { "pitch", nullptr, nullptr, "spray", "jitter", "reverse", "randAmp", "randPan" };
+            if (slot == 1)
+                return v ("sizeSync") > 0.5f ? "sizeDiv" : rateMode == 2 ? "grainSize" : "size";
+            if (slot == 2)
+                return rateMode == 1 ? "rateDiv" : rateMode == 2 ? "grains" : "rate";
+            return ids[slot];
+        }
+        case 1:   // SHAPE
+        {
+            const char* ids[] { "fade", "slant", "ease", "attack", "decay", "sustain", "release", "" };
+            return ids[slot];
+        }
+        case 2:   // PITCH
+        {
+            const char* ids[] { "randPitch", "scale", "key", "patternDepth", "patternSteps", "!newPattern", "heads", "headSpread" };
+            return ids[slot];
+        }
+        case 3:   // PLAY
+        {
+            const bool live = (int) v ("keyMode") == 1;
+            const char* pitchIds[] { "keyMode", "start", "length", "scan", "endMode", "root", "gain", "mix" };
+            const char* liveIds[] { "keyMode", nullptr, "feedback", "freeze", "liveRun", "root", "gain", "mix" };
+            if (slot == 7 && isInstrument)
+                return {};
+            if (live && slot == 1)
+                return v ("delaySync") > 0.5f ? "delayDiv" : "liveDelay";
+            return live ? liveIds[slot] : pitchIds[slot];
+        }
+        default: break;
+    }
+    return {};
+}
+
+void SiltProcessor::newPattern()
+{
+    if (auto* seed = dynamic_cast<juce::RangedAudioParameter*> (params.getParameter ("patternSeed")))
+        seed->setValueNotifyingHost (seed->convertTo0to1 ((float) juce::Random::getSystemRandom().nextInt ({ 1, 10000 })));
+}
+
+// Message thread: applies queued knob moves with pickup.
+void SiltProcessor::applyControllerMoves()
+{
+    const int page = currentPage.load();
+    if (page != pickupPage)
+    {
+        pickupPage = page;
+        pickedUp.fill (false);
+        lastKnobValue.fill (-1);
+    }
+
+    int start1, size1, start2, size2;
+    controllerFifo.prepareToRead (controllerFifo.getNumReady(), start1, size1, start2, size2);
+
+    const auto apply = [this, page] (std::pair<int, int> move)
+    {
+        const auto [slot, value] = move;
+        const auto id = slotParameter (page, slot);
+        auto& last = lastKnobValue[(size_t) slot];
+        if (id != slotTarget[(size_t) slot])
+        {
+            slotTarget[(size_t) slot] = id;   // a mode switched what this slot moves
+            pickedUp[(size_t) slot] = false;
+            last = -1;
+        }
+        if (id.isEmpty())
+            return;
+
+        if (id == "!newPattern")   // a button: new pattern on each press
+        {
+            if (value > 63 && last <= 63)
+                newPattern();
+            last = value;
+            return;
+        }
+
+        auto* parameter = params.getParameter (id);
+        if (parameter == nullptr)
+            return;
+
+        const float target = (float) value / 127.0f;
+        if (! pickedUp[(size_t) slot])
+        {
+            // Take over once the knob reaches the value: close to it, or moved across it.
+            const float current = parameter->getValue();
+            const float previous = last >= 0 ? (float) last / 127.0f : target;
+            pickedUp[(size_t) slot] = std::abs (target - current) < 0.04f || (previous - current) * (target - current) <= 0.0f;
+            last = value;
+            if (! pickedUp[(size_t) slot])
+                return;
+        }
+        last = value;
+        parameter->beginChangeGesture();
+        parameter->setValueNotifyingHost (target);
+        parameter->endChangeGesture();
+    };
+
+    for (int i = 0; i < size1; ++i)
+        apply (controllerMoves[(size_t) (start1 + i)]);
+    for (int i = 0; i < size2; ++i)
+        apply (controllerMoves[(size_t) (start2 + i)]);
+    controllerFifo.finishedRead (size1 + size2);
+}
+
 void SiltProcessor::timerCallback()
 {
     engine.collectGarbage();
+    applyControllerMoves();
 
     const auto state = captureState.load (std::memory_order_acquire);
 
@@ -741,6 +907,12 @@ void SiltProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = params.copyState();
     state.setProperty ("stateVersion", stateVersion, nullptr);
+    juce::StringArray ccs;
+    for (const auto& cc : knobCCs)
+        ccs.add (juce::String (cc.load()));
+    state.setProperty ("knobCCs", ccs.joinIntoString (","), nullptr);
+    state.setProperty ("pageCCs", juce::String (previousPageCC.load()) + "," + juce::String (nextPageCC.load()), nullptr);
+    state.setProperty ("page", currentPage.load(), nullptr);
 
     juce::MemoryBlock flac;
     {
@@ -799,6 +971,16 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
     auto tree = juce::ValueTree::fromXml (*xml);
     const auto name = tree.getProperty ("sampleName").toString();
     params.replaceState (tree);
+
+    if (const auto ccs = juce::StringArray::fromTokens (tree.getProperty ("knobCCs").toString(), ",", ""); ccs.size() == slotsPerPage)
+        for (int i = 0; i < slotsPerPage; ++i)
+            knobCCs[(size_t) i].store (juce::jlimit (0, 127, ccs[i].getIntValue()));
+    if (const auto pages = juce::StringArray::fromTokens (tree.getProperty ("pageCCs").toString(), ",", ""); pages.size() == 2)
+    {
+        previousPageCC.store (juce::jlimit (0, 127, pages[0].getIntValue()));
+        nextPageCC.store (juce::jlimit (0, 127, pages[1].getIntValue()));
+    }
+    currentPage.store (juce::jlimit (0, numPages - 1, (int) tree.getProperty ("page", 0)));
 
     if (flac.isEmpty())
         return;

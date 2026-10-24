@@ -397,11 +397,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addKnob (Page::pitch, 3, "patternDepth", "PATTERN");
     addKnob (Page::pitch, 4, "patternSteps", "STEPS");
     addAction (Page::pitch, 5, newPatternButton, "NEW PATTERN");
-    newPatternButton.onClick = [this]
-    {
-        if (auto* seed = dynamic_cast<juce::RangedAudioParameter*> (silt.params.getParameter ("patternSeed")))
-            seed->setValueNotifyingHost (seed->convertTo0to1 ((float) juce::Random::getSystemRandom().nextInt ({ 1, 10000 })));
-    };
+    newPatternButton.onClick = [this] { silt.newPattern(); };
     addKnob (Page::pitch, 6, "heads", "HEADS");
     addKnob (Page::pitch, 7, "headSpread", "SPREAD");
     menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "scale", scaleMenu));
@@ -462,7 +458,14 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         tab.setButtonText (names[i]);
         tab.setRadioGroupId (1);
         tab.setClickingTogglesState (true);
-        tab.onClick = [this, i] { if (pageTabs[i].getToggleState()) showPage ((Page) i); };
+        tab.onClick = [this, i]
+        {
+            if (pageTabs[i].getToggleState())
+            {
+                silt.currentPage.store ((int) i);   // the controller's knobs follow the page
+                showPage ((Page) i);
+            }
+        };
         addAndMakeVisible (tab);
     }
 
@@ -494,6 +497,17 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     };
     addAndMakeVisible (loadButton);
 
+    // LEARN: turn the controller's knobs 1–8, then press its previous- and
+    // next-page buttons. Pressing LEARN again cancels.
+    learnButton.onClick = [this]
+    {
+        if (silt.learnStep.load() >= 0)
+            silt.cancelLearn();
+        else
+            silt.startLearn();
+    };
+    addAndMakeVisible (learnButton);
+
     if constexpr (SiltProcessor::isInstrument)
     {
         addAndMakeVisible (monitorButton);
@@ -501,8 +515,9 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     }
 
     setSize (editorWidth, editorHeight);
-    pageTabs[0].setToggleState (true, juce::dontSendNotification);
-    showPage (Page::grain);
+    const int startPage = juce::jlimit (0, (int) pageTabs.size() - 1, silt.currentPage.load());
+    pageTabs[(size_t) startPage].setToggleState (true, juce::dontSendNotification);
+    showPage ((Page) startPage);
     startTimerHz (30);
 }
 
@@ -607,6 +622,10 @@ void SiltEditor::filesDropped (const juce::StringArray& files, int, int)
 
 juce::String SiltEditor::statusText() const
 {
+    if (const int step = silt.learnStep.load(); step >= 0)
+        return step < SiltProcessor::slotsPerPage ? "LEARN: TURN KNOB " + juce::String (step + 1)
+             : step == 8 ? juce::String ("LEARN: PRESS PREVIOUS PAGE") : juce::String ("LEARN: PRESS NEXT PAGE");
+
     using S = SiltProcessor::CaptureState;
     switch (silt.captureState.load())
     {
@@ -670,6 +689,20 @@ void SiltEditor::timerCallback()
         screen->repaint();
     screenWasLive = live;
 
+    // The controller can change page; learning shows its progress.
+    if (const int controllerPage = silt.currentPage.load(); controllerPage != (int) page)
+    {
+        pageTabs[(size_t) controllerPage].setToggleState (true, juce::dontSendNotification);
+        showPage ((Page) controllerPage);
+    }
+    if (const int step = silt.learnStep.load(); step != learnSeen)
+    {
+        learnSeen = step;
+        learnButton.setToggleState (step >= 0, juce::dontSendNotification);
+        repaint (header);
+        repaint (pagePanel);
+    }
+
     const bool capturing = silt.captureState.load() != SiltProcessor::CaptureState::idle;
     armButton.setButtonText (capturing ? "CANCEL" : juce::String (juce::CharPointer_UTF8 ("\xe2\x97\x8f ARM")));
 
@@ -704,6 +737,8 @@ void SiltEditor::resized()
     captureBars.setBounds (row.removeFromLeft (104).reduced (0, 4));
     row.removeFromLeft (8);
     loadButton.setBounds (row.removeFromLeft (90));
+    row.removeFromLeft (8);
+    learnButton.setBounds (row.removeFromLeft (90));
     if constexpr (SiltProcessor::isInstrument)
         monitorButton.setBounds (row.removeFromRight (104).reduced (0, 4));
     r.removeFromTop (10);
@@ -841,6 +876,13 @@ void SiltEditor::paint (juce::Graphics& g)
 
     if (page == Page::shape)
         paintPreview (g);
+
+    // While learning, outline the slot whose knob to turn.
+    if (const int step = silt.learnStep.load(); step >= 0 && step < SiltProcessor::slotsPerPage)
+    {
+        g.setColour (rust);
+        g.drawRect (slotBounds (step).reduced (2), 3);
+    }
 
     if (dragHover)
     {

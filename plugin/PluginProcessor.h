@@ -50,6 +50,23 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    // 8-knob controller: the controller's 8 knobs (MIDI CCs) always move the 8
+    // slots of the current page; two buttons step pages. Page layouts match the
+    // editor's (GRAIN / SHAPE / PITCH / PLAY), alternatives following the modes.
+    // A knob takes over a parameter only once it reaches the parameter's value
+    // (pickup), so switching pages never makes values jump.
+    static constexpr int numPages = 4, slotsPerPage = 8;
+    std::atomic<int> currentPage { 0 };
+    std::array<std::atomic<int>, slotsPerPage> knobCCs {};
+    std::atomic<int> previousPageCC { 78 }, nextPageCC { 79 };
+    // Learn: −1 idle; 0–7 waiting for knob n; 8 the previous-page button; 9 next.
+    std::atomic<int> learnStep { -1 };
+    void startLearn() noexcept { learnStep.store (0); }
+    void cancelLearn() noexcept { learnStep.store (-1); }
+    juce::String slotParameter (int page, int slot) const;   // "" for an empty slot
+    void applyControllerMoves();                             // message thread (also the timer)
+    void newPattern();
+
     // Message thread.
     void loadFile (const juce::File&);
     void armCapture();
@@ -136,6 +153,18 @@ private:
     std::array<std::atomic<float>, liveColumns> livePeaks {};
     int liveColumn = -1;            // audio thread only
     float liveColumnPeak = 0.0f;
+
+    // Controller: the audio thread queues (slot, value) moves for the message thread.
+    void handleController (int number, int value) noexcept;
+    juce::AbstractFifo controllerFifo { 512 };
+    std::array<std::pair<int, int>, 512> controllerMoves {};
+    std::array<int, 2> pageButtonLast {};      // audio thread: last value of prev / next
+    std::array<int, slotsPerPage> learnedThisRun {};  // audio thread: CCs taken during a learn
+    // Pickup, message thread only.
+    std::array<bool, slotsPerPage> pickedUp {};
+    std::array<int, slotsPerPage> lastKnobValue {};
+    std::array<juce::String, slotsPerPage> slotTarget;
+    int pickupPage = -1;
 
     std::vector<silt::NoteEvent> noteEvents;   // preallocated in prepareToPlay
     juce::AudioBuffer<float> wet;              // engine output, preallocated

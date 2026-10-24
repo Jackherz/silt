@@ -81,6 +81,19 @@ target_link_libraries(silt_snapshot
     PRIVATE silt_core juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
+# Plug-in level tests: the instrument's processor built into a Catch2 runner.
+if(SILT_BUILD_TESTS)
+    juce_add_console_app(silt_plugin_tests PRODUCT_NAME "silt-plugin-tests")
+    target_sources(silt_plugin_tests PRIVATE tests/TestController.cpp plugin/PluginProcessor.cpp plugin/PluginEditor.cpp)
+    target_compile_definitions(silt_plugin_tests PRIVATE
+        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+        JucePlugin_Name="Silt" JucePlugin_IsSynth=1 JucePlugin_VersionString="${PROJECT_VERSION}")
+    target_link_libraries(silt_plugin_tests
+        PRIVATE silt_core juce::juce_audio_utils Catch2::Catch2WithMain
+        PUBLIC juce::juce_recommended_config_flags)
+    catch_discover_tests(silt_plugin_tests)
+endif()
+
 # Offline renderer: audio file + notes + settings in, WAV out.
 juce_add_console_app(silt_render PRODUCT_NAME "silt-render")
 target_sources(silt_render PRIVATE tools/render/Main.cpp)
