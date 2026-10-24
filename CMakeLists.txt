@@ -41,6 +41,7 @@ add_library(silt_core STATIC
     core/src/GrainVoice.cpp
     core/src/LevelMeter.cpp
     core/src/Onsets.cpp
+    core/src/Resonator.cpp
     core/src/SampleBuffer.cpp
     core/src/Snap.cpp)
 target_include_directories(silt_core PUBLIC core/include)
@@ -55,7 +56,7 @@ if(SILT_BUILD_TESTS)
         GIT_SHALLOW TRUE)
     FetchContent_MakeAvailable(Catch2)
 
-    add_executable(silt_tests tests/TestDsp.cpp tests/TestEngine.cpp)
+    add_executable(silt_tests tests/TestDsp.cpp tests/TestEffects.cpp tests/TestEngine.cpp)
     target_link_libraries(silt_tests PRIVATE silt_core Catch2::Catch2WithMain)
 
     enable_testing()

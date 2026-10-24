@@ -157,6 +157,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                                                               juce::StringArray { "Off", "Always", "Follow" },
                                                               SiltProcessor::isInstrument ? 1 : 2));
 
+    // Resonator: a bank of ringing bands after the grains.
+    layout.add (withUnit ("resTune", "Resonator tune", Range (24.0f, 96.0f, 0.01f), 48.0f, [] (float v, int)
+                {
+                    const int note = juce::roundToInt (v);
+                    const int cents = juce::roundToInt ((v - (float) note) * 100.0f);
+                    return juce::MidiMessage::getMidiNoteName (note, true, true, 3)
+                         + (cents == 0 ? juce::String() : (cents > 0 ? " +" : " ") + juce::String (cents) + "c");
+                }),
+                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "resNotes", 1 }, "Resonator notes",
+                                                              juce::StringArray { "Scale", "Harmonics", "Bell" }, 0),
+                withUnit ("resRange", "Resonator range", Range (1.0f, 4.0f, 0.01f), 2.0f,
+                          [] (float v, int) { return juce::String (v, 1) + " oct"; }),
+                withUnit ("resDecay", "Resonator decay", skewed (0.05f, 20.0f, 1.5f), 1.5f,
+                          [] (float v, int) { return formatMs (v * 1000.0f, 0); }),
+                percent ("resBright", "Resonator bright", 50.0f),
+                percent ("resWidth", "Resonator width", 50.0f),
+                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "resFollow", 1 }, "Resonator follows notes", false),
+                percent ("resMix", "Resonator mix", 0.0f));
+
     // Capture and output
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "captureBars", 1 }, "Capture length",
                                                               captureBarChoices, 1),
@@ -199,6 +218,8 @@ struct SiltProcessor::RawParams
         feedback = p ("feedback"); freeze = p ("freeze"); liveRun = p ("liveRun");
         randPitch = p ("randPitch"); scale = p ("scale"); key = p ("key"); patternDepth = p ("patternDepth");
         patternSteps = p ("patternSteps"); patternSeed = p ("patternSeed"); heads = p ("heads"); headSpread = p ("headSpread");
+        resTune = p ("resTune"); resNotes = p ("resNotes"); resRange = p ("resRange"); resDecay = p ("resDecay");
+        resBright = p ("resBright"); resWidth = p ("resWidth"); resFollow = p ("resFollow"); resMix = p ("resMix");
         monitor = p ("monitor"); mix = p ("mix");   // one of these is null, per build
     }
 
@@ -209,6 +230,7 @@ struct SiltProcessor::RawParams
     std::atomic<float>* captureBars, *gain, *monitor, *mix;
     std::atomic<float>* keyMode, *liveDelay, *delaySync, *delayDiv, *feedback, *freeze, *liveRun;
     std::atomic<float>* randPitch, *scale, *key, *patternDepth, *patternSteps, *patternSeed, *heads, *headSpread;
+    std::atomic<float>* resTune, *resNotes, *resRange, *resDecay, *resBright, *resWidth, *resFollow, *resMix;
 };
 
 juce::AudioProcessor::BusesProperties SiltProcessor::makeBuses()
@@ -259,6 +281,8 @@ void SiltProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamples
 {
     currentSampleRate = sampleRate;
     engine.prepare (sampleRate, juce::jmax (1, maximumExpectedSamplesPerBlock));
+    resonator.prepare (sampleRate);
+    resonatorNote = -1;
     liveColumn = -1;
     liveColumnPeak = 0.0f;
     for (auto& c : livePeaks)
@@ -372,6 +396,24 @@ silt::GrainParams SiltProcessor::readParams() const noexcept
     return p;
 }
 
+// Audio thread. The bands use the PITCH page's scale and key; FOLLOW tunes the
+// lowest band to the last note played (until one is, TUNE).
+silt::ResonatorParams SiltProcessor::readResonatorParams (const silt::GrainParams& grain) const noexcept
+{
+    const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
+    silt::ResonatorParams p;
+    p.rootNote = v (raw->resFollow) > 0.5f && resonatorNote >= 0 ? (float) resonatorNote : v (raw->resTune);
+    p.notes = (silt::ResonatorNotes) juce::jlimit (0, 2, (int) v (raw->resNotes));
+    p.scale = grain.scale;
+    p.key = grain.key;
+    p.rangeOctaves = v (raw->resRange);
+    p.decaySeconds = v (raw->resDecay);
+    p.bright = v (raw->resBright) * 0.01f;
+    p.width = v (raw->resWidth) * 0.01f;
+    p.mix = v (raw->resMix) * 0.01f;
+    return p;
+}
+
 // Audio thread. Armed: wait for the next bar line (or start now when the host
 // is stopped), then record until the target is full.
 void SiltProcessor::runCapture (const juce::AudioBuffer<float>& capture, const juce::AudioPlayHead::PositionInfo* pos)
@@ -457,7 +499,11 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     {
         const auto m = event.getMessage();
         if ((m.isNoteOnOrOff()) && noteEvents.size() < noteEvents.capacity())
+        {
             noteEvents.push_back ({ event.samplePosition, m.getNoteNumber(), m.getFloatVelocity(), m.isNoteOn() });
+            if (m.isNoteOn())
+                resonatorNote = m.getNoteNumber();
+        }
         else if (m.isAllNotesOff() || m.isAllSoundOff())
             allOff = true;
         else if (m.isController())
@@ -479,6 +525,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     const bool monitoring = isInstrument && raw->monitor->load (std::memory_order_relaxed) > 0.5f;
     const float mix = isInstrument ? 1.0f : raw->mix->load (std::memory_order_relaxed) * 0.01f;
     auto grainParams = readParams();
+    const auto resonatorParams = readResonatorParams (grainParams);
 
     // Synced Rate locks grains to the beat grid while the host plays; stopped,
     // they free-run at the synced rate.
@@ -510,6 +557,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
                         noteEvents.data() + (first - noteEvents.begin()), (int) (last - first), grainParams);
         if (grainParams.live && ! grainParams.freeze)
             trackLivePeaks (liveWriteBefore, len);
+        resonator.process (wet.getWritePointer (0), wet.getWritePointer (1), len, resonatorParams);
 
         // Sample by sample, reading the input before writing the output: the
         // two can share memory.
@@ -628,6 +676,11 @@ juce::String SiltProcessor::slotParameter (int page, int slot) const
         case 2:   // PITCH
         {
             const char* ids[] { "randPitch", "scale", "key", "patternDepth", "patternSteps", "!newPattern", "heads", "headSpread" };
+            return ids[slot];
+        }
+        case 4:   // RESONATOR
+        {
+            const char* ids[] { "resTune", "resNotes", "resRange", "resDecay", "resBright", "resWidth", "resFollow", "resMix" };
             return ids[slot];
         }
         case 3:   // PLAY

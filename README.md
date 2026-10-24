@@ -37,8 +37,15 @@ first, then snapped once), PATTERN (a repeating pitch pattern, stepping each gra
 STEPS and NEW (a new pattern, saved with the set), and HEADS (1–8 playheads per note,
 evenly around the region at full SPREAD; in Live mode, further back in time).
 
+**RESONATOR page:** a bank of up to 12 ringing band-pass filters after the grains.
+TUNE (the lowest band), NOTES (SCALE: the PITCH page's scale and key, or the root and
+fifths with no scale; HARMONICS; BELL partials), RANGE (1–4 octaves the bands reach),
+DECAY (ring time, 50 ms–20 s), BRIGHT (how much quieter and shorter the high bands
+are), WIDTH (bands alternate left and right), FOLLOW (tune to the last note played),
+MIX (0 is an exact bypass). Dense rings saturate softly rather than clip.
+
 **8-knob controller:** a controller's 8 knobs move the 8 slots of the current page
-(GRAIN / SHAPE / PITCH / PLAY), following the modes; two buttons step pages; works with
+(GRAIN / SHAPE / PITCH / PLAY / RESONATOR), following the modes; two buttons step pages; works with
 the window closed. Defaults: knobs CC 70–77, pages CC 78/79. **LEARN**: turn knobs 1–8,
 then press previous and next page. A knob takes over only when it reaches the
 parameter's value (pickup), so changing page never makes values jump. The mapping and

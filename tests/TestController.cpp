@@ -83,7 +83,7 @@ TEST_CASE ("Page buttons step pages on each press, wrapping")
     rig.cc (78, 127);
     rig.cc (78, 0);
     rig.cc (78, 127);
-    CHECK (rig.silt.currentPage.load() == 3);   // wrapped from GRAIN back to PLAY
+    CHECK (rig.silt.currentPage.load() == SiltProcessor::numPages - 1);   // wrapped from GRAIN back to the last page
 }
 
 TEST_CASE ("Slots follow the modes: a knob moves whichever control is shown")

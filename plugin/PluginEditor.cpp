@@ -611,6 +611,19 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     buttonAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "delaySync", delaySyncButton));
     delaySyncButton.onStateChange = [this] { updateVisibility(); };
 
+    // RESONATOR: a bank of ringing bands on the grains. SCALE notes come from the
+    // PITCH page's scale and key; FOLLOW tunes the bank to the note played.
+    addKnob (Page::resonator, 0, "resTune", "TUNE");
+    resNotes.addItemList ({ "SCALE", "HARMONICS", "BELL" }, 1);
+    addMenu (Page::resonator, 1, resNotes, "NOTES");
+    menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "resNotes", resNotes));
+    addKnob (Page::resonator, 2, "resRange", "RANGE");
+    addKnob (Page::resonator, 3, "resDecay", "DECAY");
+    addKnob (Page::resonator, 4, "resBright", "BRIGHT");
+    addKnob (Page::resonator, 5, "resWidth", "WIDTH");
+    addButton (Page::resonator, 6, followButton, "resFollow", "FOLLOW");
+    addKnob (Page::resonator, 7, "resMix", "MIX");
+
     // Rate mode and Size SYNC sit under their knobs on the GRAIN page.
     rateMode.addItemList ({ "FREE", "SYNC", "GRAINS" }, 1);
     addChildComponent (rateMode);
@@ -622,7 +635,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     sizeSyncButton.onStateChange = [this] { updateVisibility(); };
 
     // Page tabs.
-    const char* names[] { "GRAIN", "SHAPE", "PITCH", "PLAY" };
+    const char* names[] { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR" };
     for (size_t i = 0; i < pageTabs.size(); ++i)
     {
         auto& tab = pageTabs[i];

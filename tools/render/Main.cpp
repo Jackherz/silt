@@ -8,10 +8,12 @@
 // key (0-11), pattern (st), steps, heads, headspread,
 // fade, slant, ease, start, length (all 0–1), scan (×), attack, decay,
 // release (ms), sustain (0–1), root (note), end (loop|hold|stop),
-// interp (linear|cubic)
+// interp (linear|cubic); resonator: restune (note), resnotes (scale|harmonics|bell),
+// resrange (octaves), resdecay (s), resbright, reswidth, resmix (0–1)
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <silt/Engine.h>
+#include <silt/Resonator.h>
 
 #include <iostream>
 
@@ -24,6 +26,7 @@ struct Options
     double holdSeconds = 4.0, tailSeconds = 1.0, sampleRate = 48000.0;
     std::uint64_t seed = 1;
     silt::GrainParams params;
+    silt::ResonatorParams resonator;
 };
 
 [[noreturn]] void fail (const juce::String& message)
@@ -32,13 +35,21 @@ struct Options
     std::exit (1);
 }
 
-void applySetting (silt::GrainParams& p, const juce::String& setting)
+void applySetting (silt::GrainParams& p, silt::ResonatorParams& r, const juce::String& setting)
 {
     const auto key = setting.upToFirstOccurrenceOf ("=", false, false).trim();
     const auto value = setting.fromFirstOccurrenceOf ("=", false, false).trim();
     const double v = value.getDoubleValue();
 
-    if      (key == "pitch")   p.pitchSemitones = v;
+    if      (key == "restune")   r.rootNote = (float) v;
+    else if (key == "resnotes")  r.notes = value == "harmonics" ? silt::ResonatorNotes::harmonics
+                                         : value == "bell" ? silt::ResonatorNotes::bell : silt::ResonatorNotes::scale;
+    else if (key == "resrange")  r.rangeOctaves = (float) v;
+    else if (key == "resdecay")  r.decaySeconds = (float) v;
+    else if (key == "resbright") r.bright = (float) v;
+    else if (key == "reswidth")  r.width = (float) v;
+    else if (key == "resmix")    r.mix = (float) v;
+    else if (key == "pitch")   p.pitchSemitones = v;
     else if (key == "size")    p.sizeMs = v;
     else if (key == "rate")    p.rateHz = v;
     else if (key == "spray")   p.spray = v;
@@ -94,7 +105,7 @@ Options parse (const juce::StringArray& args)
         else if (a == "--tail")  o.tailSeconds = next().getDoubleValue();
         else if (a == "--seed")  o.seed = (std::uint64_t) next().getLargeIntValue();
         else if (a == "--rate")  o.sampleRate = next().getDoubleValue();
-        else if (a == "--set")   applySetting (o.params, next());
+        else if (a == "--set")   applySetting (o.params, o.resonator, next());
         else fail ("unknown option '" + a + "'");
     }
     if (o.input == juce::File() || o.output == juce::File())
@@ -166,6 +177,11 @@ int main (int argc, char* argv[])
     engine.prepare (o.sampleRate);
     engine.setSeed (o.seed);
     engine.setBuffer (load (formats, o.input));
+    silt::Resonator resonator;
+    resonator.prepare (o.sampleRate);
+    auto resonatorParams = o.resonator;
+    resonatorParams.scale = o.params.scale;   // as in the plug-in: the PITCH page's scale and key
+    resonatorParams.key = o.params.key;
 
     int total = 0;
     const auto notes = loadNotes (o, total);
@@ -189,6 +205,7 @@ int main (int argc, char* argv[])
 
         engine.process (out.getWritePointer (0, start), out.getWritePointer (1, start), len,
                         blockEvents.data(), (int) blockEvents.size(), o.params);
+        resonator.process (out.getWritePointer (0, start), out.getWritePointer (1, start), len, resonatorParams);
         maxGrains = juce::jmax (maxGrains, engine.getActiveGrainCount());
     }
 
