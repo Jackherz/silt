@@ -3,8 +3,10 @@
 //   silt-render --in drums.wav --out out.wav [--midi notes.mid | --note 60 --hold 4]
 //               [--tail 1] [--seed 1] [--rate 48000] [--set key=value ...]
 //
-// --set keys: pitch (st), size (ms), rate (Hz), spray (0–1), start (0–1),
-// scan (×), reverse (0–1), root (note), end (loop|hold|stop), interp (linear|cubic)
+// --set keys: pitch (st), size (ms), rate (Hz), spray, reverse, randamp,
+// fade, slant, ease, start, length (all 0–1), scan (×), attack, decay,
+// release (ms), sustain (0–1), root (note), end (loop|hold|stop),
+// interp (linear|cubic)
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <silt/Engine.h>
@@ -41,6 +43,15 @@ void applySetting (silt::GrainParams& p, const juce::String& setting)
     else if (key == "start")   p.start = v;
     else if (key == "scan")    p.scan = v;
     else if (key == "reverse") p.reverseChance = v;
+    else if (key == "randamp") p.randomAmp = v;
+    else if (key == "fade")    p.fade = v;
+    else if (key == "slant")   p.slant = v;
+    else if (key == "ease")    p.ease = v;
+    else if (key == "length")  p.length = v;
+    else if (key == "attack")  p.attackMs = v;
+    else if (key == "decay")   p.decayMs = v;
+    else if (key == "sustain") p.sustain = v;
+    else if (key == "release") p.releaseMs = v;
     else if (key == "root")    p.rootNote = value.getIntValue();
     else if (key == "end")     p.endMode = value == "stop" ? silt::EndMode::stop
                                          : value == "hold" ? silt::EndMode::hold : silt::EndMode::loop;

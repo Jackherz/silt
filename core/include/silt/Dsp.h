@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -35,6 +36,57 @@ public:
 
 private:
     std::array<float, size + 1> table {};
+};
+
+// Grain envelope after GRM Play's Fade / Slant / Ease (research 04, GRM Atelier).
+//   fade  share of the grain spent fading in and out, 0…1 (1 = all of it)
+//   slant attack's share of that fade, 0…1 (0.5 = symmetric)
+//   ease  curve: 0 linear, 0.5 raised cosine, 1 abrupt
+// Defaults (1, 0.5, 0.5) give exactly the Hann window.
+class GrainEnvelope
+{
+public:
+    // lengthSamples: the grain; minFadeSamples: the Declick floor on each fade.
+    void set (double fade, double slant, double ease, int lengthSamples, double minFadeSamples) noexcept
+    {
+        const double len = std::max (1, lengthSamples);
+        double attack = std::max (minFadeSamples, fade * slant * len);
+        double release = std::max (minFadeSamples, fade * (1.0 - slant) * len);
+        if (attack + release > len)
+        {
+            const double scale = len / (attack + release);
+            attack *= scale;
+            release *= scale;
+        }
+        attackEnd = attack / len;
+        releaseStart = 1.0 - release / len;
+        easeAmount = (float) std::clamp (ease, 0.0, 1.0);
+    }
+
+    float operator() (const HannWindow& hann, double phase01) const noexcept
+    {
+        if (phase01 < attackEnd)
+            return curve (hann, phase01 / attackEnd);
+        if (phase01 > releaseStart)
+            return curve (hann, (1.0 - phase01) / (1.0 - releaseStart));
+        return 1.0f;
+    }
+
+private:
+    // Rises 0 → 1 over t in [0, 1].
+    float curve (const HannWindow& hann, double t) const noexcept
+    {
+        const float lin = (float) t;
+        const float smooth = hann (t * 0.5);   // first half of Hann = raised cosine
+        if (easeAmount <= 0.5f)
+            return lin + easeAmount * 2.0f * (smooth - lin);
+        const float u = 1.0f - lin;
+        const float abrupt = 1.0f - u * u * u * u;
+        return smooth + (easeAmount - 0.5f) * 2.0f * (abrupt - smooth);
+    }
+
+    double attackEnd = 0.5, releaseStart = 0.5;
+    float easeAmount = 0.5f;
 };
 
 enum class Interpolation { linear, cubic };

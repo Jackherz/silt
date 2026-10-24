@@ -8,27 +8,44 @@
 namespace silt
 {
 
-// What a playhead does when it reaches either end of the sample.
+// What a playhead does when it reaches either end of its region.
 enum class EndMode { loop, hold, stop };
 
-// The grain controls of the Grain page (spec §3), in engine units.
-// Latched into each grain at its onset, so changes never alter a grain in flight.
+// The Grain and Voice page controls (spec §3, plan §5), in engine units.
+// Grain controls are latched into each grain at its onset, so changes never
+// alter a grain in flight.
 struct GrainParams
 {
+    // Grain
     double pitchSemitones = 0.0;   // −24…+24, added to the key's transposition
     double sizeMs = 100.0;         // grain length, 10…2000 ms
     double rateHz = 20.0;          // grains started per second, 0.1…100
     double spray = 0.0;            // 0…1: start scatter up to ±1 s, plus stereo scatter
-    double start = 0.0;            // 0…1: where a note starts its playhead
-    double scan = 1.0;             // playhead speed, −4…+4 (1 = real time, 0 = frozen)
     double reverseChance = 0.0;    // 0…1: chance a grain plays backwards
-    int rootNote = 60;             // the key that plays at the sample's own pitch
+    double randomAmp = 0.0;        // 0…1: per-grain random level drop
+    double fade = 1.0;             // grain envelope (GrainEnvelope)
+    double slant = 0.5;
+    double ease = 0.5;
+    double declickMs = 1.0;        // shortest fade allowed
+
+    // Playhead and region
+    double start = 0.0;            // 0…1: region start, where a note starts its playhead
+    double length = 1.0;           // 0…1: region length as a share of the sample
+    double scan = 1.0;             // playhead speed, −4…+4 (1 = real time, 0 = frozen)
     EndMode endMode = EndMode::loop;
+
+    // Voice
+    int rootNote = 60;             // the key that plays at the sample's own pitch
+    double attackMs = 5.0;
+    double decayMs = 200.0;
+    double sustain = 1.0;          // 0…1
+    double releaseMs = 300.0;
+
     Interpolation interpolation = Interpolation::cubic;
 };
 
-// One MIDI-played voice: a playhead moving through the sample, a scheduler
-// starting grains around it, a fixed grain pool and an amplitude envelope.
+// One MIDI-played voice: a playhead moving through a region of the sample,
+// a scheduler starting grains around it, a fixed grain pool and an ADSR.
 class GrainVoice
 {
 public:
@@ -42,8 +59,12 @@ public:
     void reset() noexcept;
 
     bool isActive() const noexcept { return envStage != EnvStage::idle || activeGrains > 0; }
+    bool isReleasing() const noexcept { return envStage == EnvStage::release || envStage == EnvStage::idle; }
     int getCurrentNote() const noexcept { return currentNote; }
     int getActiveGrainCount() const noexcept { return activeGrains; }
+
+    // Playhead as a share of the buffer, for the UI.
+    float getPlayheadPosition() const noexcept { return playheadPosition; }
 
     // How many grains still read from this buffer (the engine retires an old
     // buffer only once none do).
@@ -64,15 +85,19 @@ private:
         double phaseInc = 0.0;
         int remaining = 0;          // output samples left; 0 = free
         float gainL = 0.0f, gainR = 0.0f;
+        GrainEnvelope envelope;
         Interpolation interpolation = Interpolation::cubic;
     };
 
-    enum class EnvStage { idle, attack, sustain, release };
+    enum class EnvStage { idle, attack, decay, sustain, release };
+
+    struct Region { double begin, end; };
 
     void spawnGrain (const GrainParams&, const SampleBuffer&) noexcept;
     bool advancePlayhead (const GrainParams&, const SampleBuffer&) noexcept;
-    float nextEnvelope() noexcept;
+    float nextEnvelope (const GrainParams&) noexcept;
     float targetGain (const GrainParams&) const noexcept;
+    static Region regionOf (const GrainParams&, const SampleBuffer&) noexcept;
 
     double sampleRate = 48000.0;
     HannWindow window;
@@ -84,12 +109,13 @@ private:
     double noteRatio = 1.0;
     float velocity = 1.0f;
     double playhead = 0.0;          // buffer frames
+    float playheadPosition = 0.0f;
     double samplesToNextGrain = 0.0;
     bool spawning = false;
 
     EnvStage envStage = EnvStage::idle;
     float envLevel = 0.0f;
-    float attackStep = 0.0f, releaseStep = 0.0f;
+    float releaseStep = 0.0f;       // set at note-off, from the level reached
 
     float outputGain = 1.0f;        // overlap normalisation, smoothed
     float gainSmoothing = 0.0f;

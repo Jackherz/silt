@@ -16,7 +16,7 @@ struct NoteEvent
     bool isNoteOn = true;
 };
 
-// The sampler engine. M1: one voice, last-note priority.
+// The sampler engine: 16 voices sharing one read-only sample (plan D11).
 //
 // Threads: setBuffer() and collectGarbage() run on the message thread,
 // everything else on the audio thread. A new buffer reaches the audio thread
@@ -26,11 +26,13 @@ struct NoteEvent
 class Engine
 {
 public:
+    static constexpr int numVoices = 16;
+
     Engine();
     ~Engine();
 
     void prepare (double sampleRate);
-    void setSeed (std::uint64_t seed) noexcept { voice.setSeed (seed); }
+    void setSeed (std::uint64_t seed) noexcept;
 
     // Message thread.
     void setBuffer (std::unique_ptr<SampleBuffer>);
@@ -39,15 +41,20 @@ public:
     // Audio thread. Writes (not adds) left/right. Events must be sorted by offset.
     void process (float* left, float* right, int numSamples,
                   const NoteEvent* events, int numEvents, const GrainParams&) noexcept;
+    void allNotesOff() noexcept;
 
     const SampleBuffer* getCurrentBuffer() const noexcept { return current; }
-    int getActiveGrainCount() const noexcept { return voice.getActiveGrainCount(); }
+    int getActiveGrainCount() const noexcept;
+    const GrainVoice& getVoice (int index) const noexcept { return voices[(size_t) index]; }
 
 private:
     void swapInPendingBuffer() noexcept;
     void handleEvent (const NoteEvent&, const GrainParams&) noexcept;
+    GrainVoice& voiceForNoteOn (int note) noexcept;
 
-    GrainVoice voice;
+    std::array<GrainVoice, numVoices> voices;
+    std::array<std::uint64_t, numVoices> startedAt {};   // note-on order, for stealing
+    std::uint64_t noteCounter = 0;
 
     SampleBuffer* current = nullptr;     // owned; new grains read this
     SampleBuffer* previous = nullptr;    // owned; still read by older grains

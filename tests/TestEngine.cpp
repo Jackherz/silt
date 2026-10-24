@@ -37,6 +37,7 @@ TEST_CASE ("A held note sounds, and falls silent after its release")
 {
     TestEngine engine (makeSine());
     GrainParams p;
+    p.releaseMs = 200.0;
     const auto out = render (engine, p, 48000, { { 0, 60, true }, { 24000, 60, false } });
 
     CHECK (peak ({ out.left.begin() + 4800, out.left.begin() + 24000 }) > 0.1f);
@@ -75,11 +76,18 @@ TEST_CASE ("Output is click-free across the grain controls")
                     }
 }
 
-TEST_CASE ("The click detector catches a real click: a grain across a broken loop seam")
+TEST_CASE ("The click detector catches a real click")
 {
-    // 1.003 s of 220 Hz doesn't end on a whole period, so the loop seam is a
-    // step. Grains reading across it click. Known M1 limitation: loop seams
-    // need a crossfade (plan M2); this test keeps the detector honest.
+    std::vector<float> x (1000);
+    for (size_t i = 0; i < x.size(); ++i)
+        x[i] = 0.5f * (float) std::sin (0.03 * (double) i) + (i >= 500 ? 0.1f : 0.0f);
+    CHECK (maxSecondDifference (x) > 0.05f);
+}
+
+TEST_CASE ("Grains never read across the buffer seam")
+{
+    // 1.003 s of 220 Hz doesn't end on a whole period, so the seam between the
+    // last and first frame is a step. Grains near the end must stay clear of it.
     auto buffer = std::make_unique<SampleBuffer> ((int) (1.003 * sampleRate), sampleRate);
     for (int ch = 0; ch < 2; ++ch)
         for (int i = 0; i < buffer->getNumFrames(); ++i)
@@ -89,8 +97,64 @@ TEST_CASE ("The click detector catches a real click: a grain across a broken loo
     GrainParams p;
     p.start = 0.95;
     p.sizeMs = 200.0;
-    const auto out = render (engine, p, 24000, { { 0, 60, true } });
-    CHECK (maxSecondDifference (out.left) > 0.05f);
+    p.reverseChance = 0.5;
+    p.pitchSemitones = 12.0;
+    const auto out = render (engine, p, 48000, { { 0, 60, true } });
+    CHECK (maxSecondDifference (out.left) < 0.05f);
+}
+
+TEST_CASE ("Chords use separate voices, and a 17th note steals one")
+{
+    TestEngine engine (makeSine());
+    GrainParams p;
+    std::vector<TimedNote> notes;
+    for (int i = 0; i < 17; ++i)
+        notes.push_back ({ i * 100, 48 + i, true });
+    render (engine, p, 4800, notes);
+
+    int sounding = 0;
+    for (int i = 0; i < Engine::numVoices; ++i)
+        sounding += engine.getVoice (i).isActive() ? 1 : 0;
+    CHECK (sounding == Engine::numVoices);
+
+    // The first note was stolen by the 17th.
+    bool firstStillHeld = false;
+    for (int i = 0; i < Engine::numVoices; ++i)
+        firstStillHeld |= engine.getVoice (i).getCurrentNote() == 48;
+    CHECK_FALSE (firstStillHeld);
+}
+
+TEST_CASE ("ADSR settles at the sustain level")
+{
+    GrainParams p;
+    p.sizeMs = 200.0;
+    p.decayMs = 50.0;
+
+    const auto levelAt = [&p] (double sustain)
+    {
+        TestEngine engine (makeSine());
+        p.sustain = sustain;
+        const auto out = render (engine, p, 48000, { { 0, 60, true } });
+        return peak ({ out.left.begin() + 24000, out.left.end() });
+    };
+
+    const float full = levelAt (1.0);
+    const float half = levelAt (0.5);
+    CHECK (half / full > 0.45f);
+    CHECK (half / full < 0.55f);
+}
+
+TEST_CASE ("A looping playhead stays inside its region")
+{
+    TestEngine engine (makeSine (240.0, 2.0));
+    GrainParams p;
+    p.start = 0.5;
+    p.length = 0.1;   // 0.2 s loop starting 1 s in
+    render (engine, p, 96000, { { 0, 60, true } });
+
+    const float pos = engine.getVoice (0).getPlayheadPosition();
+    CHECK (pos >= 0.499f);   // the region starts at 0.5 × the last frame's index
+    CHECK (pos < 0.6f);
 }
 
 TEST_CASE ("Same seed, same output; different seed, different output")

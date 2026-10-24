@@ -9,20 +9,32 @@ A granular sampler for VST3 / AU / CLAP, built twice from one codebase:
 
 Design and build plan: [`../granular-sampler-vst-research/09-implementation-plan.md`](../granular-sampler-vst-research/09-implementation-plan.md).
 
-**Status: M1 (engine core, headless).** The grain engine runs in the unit tests and the
-offline render tool, not yet inside the plug-ins. The plug-ins are still the M0 test
-panel reporting what the host sends them: capture source and level, MIDI notes, tempo
-and transport. The instrument outputs silence unless **Monitor input** is on; Silt FX
-passes its input through.
+**Status: M2, playable sampler (macOS).** Both plug-ins play the grain engine from MIDI:
+
+- **Get a sample in:** drag a file onto the panel, press **LOAD**, or **ARM** and
+  record. Capture waits for the next bar while the host is playing (or starts at once
+  when stopped), records 1/2/4/8 bars of the capture source (the sidechain on Silt, the
+  track's input on Silt FX), then swaps it in. Samples hold up to 30 s.
+- **Play it:** 16 voices with ADSR, keys transpose around the root note.
+- **Saved with the project:** parameters plus the sample as FLAC, checked end to end by
+  `silt_hostcheck`.
+- **Panel:** a working native panel in the plan §5 palette: the sample with its region
+  and a playhead per voice, capture and load, and a knob for every parameter. The
+  finished UI waits on Spike B (WebView).
+
+Not yet (M3): tempo-synced size/rate, scale quantize, Pattern, Slice and Live modes,
+feedback, Heads.
 
 ## Engine (core/)
 
-One MIDI-played voice: a playhead moving through the sample, a grain scheduler (Sync
-timing), a 64-grain pool, Hann envelopes, cubic or linear interpolation.
+16 MIDI-played voices, each a playhead moving through a region of the sample (Start +
+Length) with an ADSR, a grain scheduler (Sync timing), a 64-grain pool, cubic or linear
+interpolation, and a grain envelope after GRM Play: Fade, Slant, Ease and a Declick floor.
 
 - **Controls:** pitch, size, rate, spray (start scatter up to ±1 s, plus stereo
-  scatter), start, scan (playhead speed, −4…+4×), reverse chance, root note, and what
-  the playhead does at the end of the sample (loop / hold / stop).
+  scatter), reverse chance, random amp, fade/slant/ease, start, length, scan (playhead
+  speed, −4…+4×), loop / hold / stop at the region end, attack/decay/sustain/release,
+  root note.
 - **Grains latch their settings** when they start; a full pool drops new grains rather
   than cutting old ones off.
 - **Buffer swaps are lock-free:** grains already playing finish on the old buffer, which
@@ -49,9 +61,8 @@ build/silt_render_artefacts/Release/silt_render --in loop.wav --out out.wav \
     --note 64 --hold 6 --set size=150 --set spray=0.2 --set scan=0.5
 ```
 
-**Known limits, for M2:** a grain that crosses the loop point of a sample that doesn't
-loop cleanly clicks (needs a loop crossfade); there's no output limiter yet, so dense
-settings on loud material can peak just over 0 dBFS.
+Grains never read across the seam between a sample's end and start, and the output has
+a soft safety clip from −1.9 dBFS.
 
 ## Build
 
@@ -70,6 +81,7 @@ find them. Pass `-DSILT_COPY_AFTER_BUILD=OFF` to skip the copy.
 ## Validate
 
 ```bash
+build/silt_hostcheck_artefacts/Release/silt_hostcheck build/Silt_artefacts/Release/VST3/Silt.vst3
 pluginval --strictness-level 10 --skip-gui-tests --validate ~/Library/Audio/Plug-Ins/VST3/Silt.vst3
 auval -v aumu Slti SltA
 auval -v aumf Sltf SltA

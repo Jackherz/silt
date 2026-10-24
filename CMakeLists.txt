@@ -62,6 +62,14 @@ if(SILT_BUILD_TESTS)
     catch_discover_tests(silt_tests)
 endif()
 
+# Host check: loads a built VST3 and round-trips a sample through its state.
+juce_add_console_app(silt_hostcheck PRODUCT_NAME "silt-hostcheck")
+target_sources(silt_hostcheck PRIVATE tools/hostcheck/Main.cpp)
+target_compile_definitions(silt_hostcheck PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_PLUGINHOST_VST3=1)
+target_link_libraries(silt_hostcheck
+    PRIVATE juce::juce_audio_processors juce::juce_audio_formats
+    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+
 # Offline renderer: audio file + notes + settings in, WAV out.
 juce_add_console_app(silt_render PRODUCT_NAME "silt-render")
 target_sources(silt_render PRIVATE tools/render/Main.cpp)

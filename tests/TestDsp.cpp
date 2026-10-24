@@ -23,6 +23,36 @@ TEST_CASE ("Hann windows at 50% overlap sum to one")
         CHECK_THAT (w (t) + w (t + 0.5), WithinAbs (1.0, 1e-4));
 }
 
+TEST_CASE ("Default grain envelope is the Hann window")
+{
+    HannWindow hann;
+    GrainEnvelope env;
+    env.set (1.0, 0.5, 0.5, 4800, 0.0);
+    for (double t = 0.0; t <= 1.0; t += 0.01)
+        CHECK_THAT (env (hann, t), WithinAbs (hann (t), 1e-3));
+}
+
+TEST_CASE ("Grain envelope: fade, slant and the declick floor")
+{
+    HannWindow hann;
+    GrainEnvelope env;
+
+    // No fade: flat, except the 48-sample declick ramps at each end.
+    env.set (0.0, 0.5, 0.5, 4800, 48.0);
+    CHECK_THAT (env (hann, 0.5), WithinAbs (1.0, 1e-6));
+    CHECK (env (hann, 0.0) == 0.0f);
+    CHECK_THAT (env (hann, 0.01), WithinAbs (1.0, 1e-6));   // 48 samples is 1 % of 4800
+
+    // Slant 0: instant attack (only the declick floor), all fade at the end.
+    env.set (1.0, 0.0, 0.5, 4800, 48.0);
+    CHECK_THAT (env (hann, 0.02), WithinAbs (1.0, 0.01));
+    CHECK (env (hann, 0.5) < 1.0f);
+
+    // Linear ease: a straight ramp.
+    env.set (1.0, 0.5, 0.0, 4800, 0.0);
+    CHECK_THAT (env (hann, 0.25), WithinAbs (0.5, 1e-3));
+}
+
 TEST_CASE ("Interpolation is exact on whole frames")
 {
     const std::vector<float> data { 0.1f, -0.4f, 0.9f, 0.3f, -0.7f };

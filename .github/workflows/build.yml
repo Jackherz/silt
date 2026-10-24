@@ -79,6 +79,13 @@ jobs:
             pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --skip-gui-tests --timeout-ms 120000 --validate "$p"
           done
 
+      - name: State round trip (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          for p in "build/Silt_artefacts/Release/VST3/Silt.vst3" "build/SiltFX_artefacts/Release/VST3/Silt FX.vst3"; do
+            build/silt_hostcheck_artefacts/Release/silt_hostcheck "$p"
+          done
+
       - name: Validate VST3 (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
