@@ -6,10 +6,12 @@
 #include <silt/Color.h>
 #include <silt/Filter.h>
 #include <silt/LevelMeter.h>
+#include <silt/Modulator.h>
 #include <silt/Resonator.h>
 #include <silt/Space.h>
 
 #include <atomic>
+#include <map>
 
 // One processor class, compiled into both builds. JucePlugin_IsSynth tells
 // them apart: 1 for Silt (instrument), 0 for Silt FX.
@@ -59,7 +61,7 @@ public:
     // editor's (GRAIN / SHAPE / PITCH / PLAY), alternatives following the modes.
     // A knob takes over a parameter only once it reaches the parameter's value
     // (pickup), so switching pages never makes values jump.
-    static constexpr int numPages = 8, slotsPerPage = 8;
+    static constexpr int numPages = 9, slotsPerPage = 8, modPage = 8;
     std::atomic<int> currentPage { 0 };
     std::array<std::atomic<int>, slotsPerPage> knobCCs {};
     std::atomic<int> previousPageCC { 78 }, nextPageCC { 79 };
@@ -105,6 +107,20 @@ public:
 
     juce::AudioProcessorValueTreeState params;
 
+    // Modulation (MOD page): four modulators; a route gives one modulator an
+    // amount (−1…1 of the parameter's range) on one target parameter. Routes are
+    // edited on the message thread and read by the audio thread (atomics).
+    static constexpr int numModulators = 4, maxTargets = 160, modulationInterval = 64;
+    int modulationTarget (const juce::String& parameterId) const;   // −1: not a modulation target
+    float routeAmount (int modulator, int target) const noexcept;
+    void setRouteAmount (int modulator, int target, float amount) noexcept;
+    void clearRoutes (int target) noexcept;
+    float modulatedValue01 (int target) const noexcept;             // where modulation has it now
+    silt::ModulatorParams readModulatorParams (int modulator) const noexcept;
+    std::array<std::atomic<float>, numModulators> modOutputs {};    // each modulator's latest value
+    std::atomic<int> modShown { 0 };                                // the modulator the MOD page shows
+    std::atomic<int> assigning { -1 };                              // ≥ 0: knobs set this modulator's amounts
+
     // Read by the editor on the message thread.
     silt::LevelMeter captureMeter;
     std::atomic<CaptureSource> captureSource { CaptureSource::none };
@@ -128,6 +144,7 @@ private:
     silt::FilterParams readFilterParams() const noexcept;
     silt::ColorParams readColorParams() const noexcept;
     silt::SpaceParams readSpaceParams() const noexcept;
+    void applyModulation() noexcept;
     void runCapture (const juce::AudioBuffer<float>& capture, const juce::AudioPlayHead::PositionInfo*);
     void timerCallback() override;
 
@@ -143,6 +160,26 @@ private:
     silt::Color color;           // after the filter
     silt::Space space;           // last: delay and reverb sends
     int lastNote = -1;           // the last note played, for FOLLOW and KEY (audio thread)
+    bool lastLive = false;
+
+    // Modulation state.
+    struct Target
+    {
+        juce::RangedAudioParameter* parameter = nullptr;
+        std::atomic<float>* raw = nullptr;   // the parameter's own value
+    };
+    std::vector<Target> targets;
+    std::map<juce::String, int> targetIndex;
+    std::array<std::atomic<float>, maxTargets> modulated {};                       // what the audio code reads
+    std::array<std::atomic<float>, numModulators * maxTargets> routeAmounts {};
+    std::array<silt::Modulator, numModulators> modulators;
+    silt::ModContext modContext;                                                   // audio thread
+    struct ModulatorRaw
+    {
+        std::atomic<float>* type, *rate, *sync, *div, *shape, *phase, *retrig, *smooth, *jitter;
+        std::atomic<float>* attack, *decay, *sustain, *release, *repeat, *followAttack, *followRelease, *gain, *source;
+    };
+    std::array<ModulatorRaw, numModulators> modulatorRaw {};
     double currentSampleRate = 48000.0;
 
     juce::AudioFormatManager formats;

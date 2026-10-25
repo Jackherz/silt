@@ -1,10 +1,10 @@
 // silt-snapshot: renders the Silt panel to PNGs without a host or a window, so
 // UI changes can be checked from the command line.
 //
-//   silt_snapshot sample.wav out-folder [param=value ...]
+//   silt_snapshot sample.wav out-folder [param=value ...] [route=mod:param:amount ...]
 //
 // Loads the sample, holds a note so grains are sounding, then writes one PNG
-// per page (grain.png, shape.png, pitch.png, play.png, resonator.png, filter.png, color.png, space.png). Parameter values are in the
+// per page (grain.png, shape.png, pitch.png, play.png, resonator.png, filter.png, color.png, space.png, mod.png). Parameter values are in the
 // parameter's own units (ms, %, st...).
 
 #include "../../plugin/PluginEditor.h"
@@ -64,6 +64,12 @@ int main (int argc, char* argv[])
     {
         const juce::String setting (argv[i]);
         const auto id = setting.upToFirstOccurrenceOf ("=", false, false);
+        if (id == "route")   // route=modulator:parameter:amount (modulator 1–4)
+        {
+            const auto parts = juce::StringArray::fromTokens (setting.fromFirstOccurrenceOf ("=", false, false), ":", "");
+            silt.setRouteAmount (parts[0].getIntValue() - 1, silt.modulationTarget (parts[1]), parts[2].getFloatValue());
+            continue;
+        }
         if (auto* p = dynamic_cast<juce::RangedAudioParameter*> (silt.params.getParameter (id)))
             p->setValueNotifyingHost (p->convertTo0to1 (setting.fromFirstOccurrenceOf ("=", false, false).getFloatValue()));
         else
@@ -95,7 +101,7 @@ int main (int argc, char* argv[])
     editor->setVisible (true);
     runMessageLoop (100);
 
-    for (const auto* name : { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER", "COLOR", "SPACE" })
+    for (const auto* name : { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER", "COLOR", "SPACE", "MOD" })
     {
         for (auto* child : editor->getChildren())
             if (auto* tab = dynamic_cast<juce::TextButton*> (child); tab != nullptr && tab->getButtonText() == name)
@@ -110,6 +116,14 @@ int main (int argc, char* argv[])
         juce::FileOutputStream stream (file);
         juce::PNGImageFormat().writeImageToStream (image, stream);
         std::cout << file.getFullPathName() << "\n";
+    }
+
+    // Processing cost: ten seconds of audio in 512-sample blocks, against real time.
+    {
+        const auto started = juce::Time::getMillisecondCounterHiRes();
+        play (silt, 10.0, false);
+        const double ms = juce::Time::getMillisecondCounterHiRes() - started;
+        std::cout << "processing: " << juce::String (ms / 100.0, 2) << "% of one core\n";
     }
 
     // Drawing cost: the whole panel, repeatedly, at 1x (the plug-in itself

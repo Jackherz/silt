@@ -99,7 +99,13 @@ public:
         marker.addTriangle (centre.x - 4.0f, top - 5.0f, centre.x + 4.0f, top - 5.0f, centre.x, top);
         g.setColour (rust);
         g.fillPath (marker);
+
+        if (drawModulation != nullptr)
+            drawModulation (g, slider, centre, skirt + 4.0f, pos);
     }
+
+    // Draws a knob's modulation over it (the editor knows the routes).
+    std::function<void (juce::Graphics&, juce::Slider&, juce::Point<float>, float, float)> drawModulation;
 
 private:
     static constexpr float degreesPerNumber = 30.0f;   // 0–10 over 300°, like a guitar knob
@@ -526,6 +532,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
       look (std::make_unique<PanelLook>()), screen (std::make_unique<GrainScreen>())
 {
     setLookAndFeel (look.get());
+    look->drawModulation = [this] (juce::Graphics& g, juce::Slider& s, juce::Point<float> c, float r, float pos) { drawModulation (g, s, c, r, pos); };
     addAndMakeVisible (*screen);
 
     const auto rateModeIs = [this] (int m) { return std::function<bool()> ([this, m] { return rateMode.getSelectedItemIndex() == m; }); };
@@ -672,6 +679,77 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addChildComponent (spaceMode);
     menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "spaceMode", spaceMode));
 
+    // MOD: pick a modulator, its type, five settings for that type, and ASSIGN:
+    // while it's on, turning or dragging any knob on any page sets how far this
+    // modulator moves it. Rings round the knobs show the routes.
+    modSelect.addItemList ({ "MOD 1", "MOD 2", "MOD 3", "MOD 4" }, 1);
+    modSelect.setSelectedItemIndex (silt.modShown.load(), juce::dontSendNotification);
+    modSelect.onChange = [this]
+    {
+        silt.modShown.store (juce::jmax (0, modSelect.getSelectedItemIndex()));
+        updateVisibility();
+    };
+    addMenu (Page::mod, 0, modSelect, "MODULATOR");
+    for (int m = 0; m < SiltProcessor::numModulators; ++m)
+    {
+        const auto id = [m] (const char* suffix) { return "m" + juce::String (m + 1) + suffix; };
+        const auto shownAnd = [this, m] (int type) { return std::function<bool()> ([this, m, type]
+        {
+            return silt.modShown.load() == m && modType[(size_t) m].getSelectedItemIndex() == type;
+        }); };
+        const auto synced = [this, m] { return modSync[(size_t) m].getToggleState(); };
+        const auto wave = shownAnd (0), random = shownAnd (1), envelope = shownAnd (2), follow = shownAnd (3), midi = shownAnd (4);
+
+        modType[(size_t) m].addItemList ({ "WAVE", "RANDOM", "ENVELOPE", "FOLLOW", "MIDI" }, 1);
+        addMenu (Page::mod, 1, modType[(size_t) m], "TYPE").shown = [this, m] { return silt.modShown.load() == m; };
+        menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, id ("Type"), modType[(size_t) m]));
+        modType[(size_t) m].onChange = [this] { updateVisibility(); };
+
+        addKnob (Page::mod, 2, id ("Shape").toRawUTF8(), "SHAPE").shown = wave;
+        addKnob (Page::mod, 3, id ("Rate").toRawUTF8(), "RATE").shown = [=] { return (wave() || random()) && ! synced(); };
+        addKnob (Page::mod, 3, id ("Div").toRawUTF8(), "RATE").shown = [=] { return (wave() || random()) && synced(); };
+        addKnob (Page::mod, 4, id ("Phase").toRawUTF8(), "PHASE").shown = wave;
+        modRetrig[(size_t) m].setButtonText ("RETRIG");
+        addButton (Page::mod, 5, modRetrig[(size_t) m], id ("Retrig").toRawUTF8(), "ON NOTES").shown = wave;
+
+        addKnob (Page::mod, 2, id ("Smooth").toRawUTF8(), "SMOOTH").shown = random;
+        addKnob (Page::mod, 4, id ("Jitter").toRawUTF8(), "JITTER").shown = random;
+
+        addKnob (Page::mod, 2, id ("Attack").toRawUTF8(), "ATTACK").shown = envelope;
+        addKnob (Page::mod, 3, id ("Decay").toRawUTF8(), "DECAY").shown = envelope;
+        addKnob (Page::mod, 4, id ("Sustain").toRawUTF8(), "SUSTAIN").shown = envelope;
+        addKnob (Page::mod, 5, id ("Release").toRawUTF8(), "RELEASE").shown = envelope;
+        modRepeat[(size_t) m].setButtonText ("REPEAT");
+        addButton (Page::mod, 6, modRepeat[(size_t) m], id ("Repeat").toRawUTF8(), "LOOP").shown = envelope;
+
+        addKnob (Page::mod, 2, id ("FAttack").toRawUTF8(), "ATTACK").shown = follow;
+        addKnob (Page::mod, 3, id ("FRelease").toRawUTF8(), "RELEASE").shown = follow;
+        addKnob (Page::mod, 4, id ("Gain").toRawUTF8(), "GAIN").shown = follow;
+
+        modSource[(size_t) m].addItemList ({ "VELOCITY", "NOTE", "MOD WHEEL", "AFTERTOUCH", "PITCH BEND" }, 1);
+        addMenu (Page::mod, 2, modSource[(size_t) m], "SOURCE").shown = midi;
+        menuAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, id ("Source"), modSource[(size_t) m]));
+
+        modSync[(size_t) m].setButtonText ("SYNC");
+        modSync[(size_t) m].setClickingTogglesState (true);
+        addChildComponent (modSync[(size_t) m]);
+        buttonAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, id ("Sync"), modSync[(size_t) m]));
+        modSync[(size_t) m].onStateChange = [this] { updateVisibility(); };
+    }
+    addAction (Page::mod, 7, assignButton, "TURN A KNOB");
+    assignButton.setClickingTogglesState (false);
+    assignButton.onClick = [this]
+    {
+        silt.assigning.store (silt.assigning.load() >= 0 ? -1 : silt.modShown.load());
+        assignButton.setToggleState (silt.assigning.load() >= 0, juce::dontSendNotification);
+        repaint (header);
+    };
+
+    // Every knob can take modulation routes: assign by dragging, clear by right-click.
+    for (auto& c : controls)
+        if (c->menu == nullptr && c->button == nullptr)
+            wireModulation (*c);
+
     // Rate mode and Size SYNC sit under their knobs on the GRAIN page.
     rateMode.addItemList ({ "FREE", "SYNC", "GRAINS" }, 1);
     addChildComponent (rateMode);
@@ -683,7 +761,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     sizeSyncButton.onStateChange = [this] { updateVisibility(); };
 
     // Page tabs.
-    const char* names[] { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER", "COLOR", "SPACE" };
+    const char* names[] { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER", "COLOR", "SPACE", "MOD" };
     for (size_t i = 0; i < pageTabs.size(); ++i)
     {
         auto& tab = pageTabs[i];
@@ -817,6 +895,89 @@ SiltEditor::Control& SiltEditor::addAction (Page p, int slot, juce::Button& butt
     return *controls.back();
 }
 
+// Hooks a knob up to modulation: drag sets the ASSIGN modulator's amount, and
+// right-click offers to clear its routes.
+void SiltEditor::wireModulation (Control& c)
+{
+    const int target = silt.modulationTarget (c.slider.getComponentID());
+    if (target < 0)
+        return;
+    auto& s = c.slider;
+    s.assigning = [this] { return silt.assigning.load() >= 0; };
+    s.amount = [this, target] { return silt.routeAmount (juce::jmax (0, silt.assigning.load()), target); };
+    s.setAmount = [this, target, &s] (float amount)
+    {
+        silt.setRouteAmount (silt.assigning.load(), target, amount);
+        s.repaint();
+    };
+    s.showMenu = [this, target, &s]
+    {
+        juce::PopupMenu menu;
+        bool any = false;
+        for (int m = 0; m < SiltProcessor::numModulators; ++m)
+            if (const float amount = silt.routeAmount (m, target); amount != 0.0f)
+            {
+                menu.addItem (m + 1, "Clear MOD " + juce::String (m + 1) + " (" + juce::String (juce::roundToInt (amount * 100.0f)) + "%)");
+                any = true;
+            }
+        if (! any)
+        {
+            menu.addItem (100, "No modulation", false);
+        }
+        else
+            menu.addItem (99, "Clear all modulation");
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&s), [this, target, &s] (int chosen)
+        {
+            if (chosen == 99)
+                silt.clearRoutes (target);
+            else if (chosen >= 1 && chosen <= SiltProcessor::numModulators)
+                silt.setRouteAmount (chosen - 1, target, 0.0f);
+            s.repaint();
+        });
+    };
+}
+
+// Each route is an arc round the knob from its value to how far the
+// modulator can take it (both ways for bipolar sources), in the modulator's
+// colour; a dot shows where modulation has the value right now. Higher values
+// are anticlockwise here: the skirt turns so the value sits under the marker.
+void SiltEditor::drawModulation (juce::Graphics& g, juce::Slider& slider, juce::Point<float> centre, float radius, float position)
+{
+    const int target = silt.modulationTarget (slider.getComponentID());
+    if (target < 0)
+        return;
+    static const std::array<juce::Colour, SiltProcessor::numModulators> colours {
+        juce::Colour (0xffa64826), juce::Colour (0xffd29a2c), juce::Colour (0xff6f8f4e), juce::Colour (0xff4f62a8) };
+    constexpr float degreesPerUnit = 300.0f;
+    const auto angleFor = [position] (float value) { return juce::degreesToRadians ((position - value) * degreesPerUnit); };
+
+    bool any = false;
+    int ring = 0;
+    for (int m = 0; m < SiltProcessor::numModulators; ++m)
+    {
+        const float amount = silt.routeAmount (m, target);
+        if (amount == 0.0f)
+            continue;
+        any = true;
+        const bool bipolar = silt::Modulator::isBipolar (silt.readModulatorParams (m));
+        const float lo = juce::jlimit (0.0f, 1.0f, position + (bipolar ? -std::abs (amount) : juce::jmin (0.0f, amount)));
+        const float hi = juce::jlimit (0.0f, 1.0f, position + (bipolar ? std::abs (amount) : juce::jmax (0.0f, amount)));
+        juce::Path arc;
+        const float r = radius + 3.0f * (float) ring++;
+        arc.addCentredArc (centre.x, centre.y, r, r, 0.0f, angleFor (lo), angleFor (hi), true);
+        g.setColour (colours[(size_t) m].withAlpha (silt.assigning.load() == m ? 1.0f : 0.85f));
+        g.strokePath (arc, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+    if (! any)
+        return;
+
+    const auto dot = centre.getPointOnCircumference (radius + 1.5f + 3.0f * (float) (ring - 1) * 0.5f, angleFor (silt.modulatedValue01 (target)));
+    g.setColour (bone);
+    g.fillEllipse (juce::Rectangle<float> (5.0f, 5.0f).withCentre (dot));
+    g.setColour (ink);
+    g.drawEllipse (juce::Rectangle<float> (5.0f, 5.0f).withCentre (dot), 1.0f);
+}
+
 void SiltEditor::showPage (Page p)
 {
     page = p;
@@ -834,6 +995,8 @@ void SiltEditor::updateVisibility()
     snapMenu.setVisible (page == Page::play && keyMode.getSelectedItemIndex() == 0);
     for (juce::Component* c : { (juce::Component*) &spaceSyncButton, (juce::Component*) &spaceMode, (juce::Component*) &spaceFreezeButton })
         c->setVisible (page == Page::space);
+    for (int m = 0; m < SiltProcessor::numModulators; ++m)
+        modSync[(size_t) m].setVisible (page == Page::mod && silt.modShown.load() == m && modType[(size_t) m].getSelectedItemIndex() <= 1);
     repaint (pagePanel);
 }
 
@@ -861,6 +1024,9 @@ juce::String SiltEditor::statusText() const
     if (const int step = silt.learnStep.load(); step >= 0)
         return step < SiltProcessor::slotsPerPage ? "LEARN: TURN KNOB " + juce::String (step + 1)
              : step == 8 ? juce::String ("LEARN: PRESS PREVIOUS PAGE") : juce::String ("LEARN: PRESS NEXT PAGE");
+
+    if (const int m = silt.assigning.load(); m >= 0)
+        return "ASSIGN MOD " + juce::String (m + 1) + ": TURN OR DRAG A KNOB";
 
     using S = SiltProcessor::CaptureState;
     switch (silt.captureState.load())
@@ -941,6 +1107,25 @@ void SiltEditor::timerCallback()
         repaint (pagePanel);
     }
 
+    // Modulation: the MOD page follows the controller's choice of modulator;
+    // knobs with routes redraw so their live dot moves.
+    if (const int shown = silt.modShown.load(); shown != modShownSeen)
+    {
+        modShownSeen = shown;
+        modSelect.setSelectedItemIndex (shown, juce::dontSendNotification);
+        updateVisibility();
+    }
+    assignButton.setToggleState (silt.assigning.load() >= 0, juce::dontSendNotification);
+    for (auto& c : controls)
+        if (c->menu == nullptr && c->button == nullptr && c->slider.isVisible())
+            if (const int t = silt.modulationTarget (c->slider.getComponentID()); t >= 0)
+                for (int m = 0; m < SiltProcessor::numModulators; ++m)
+                    if (silt.routeAmount (m, t) != 0.0f)
+                    {
+                        c->slider.repaint();
+                        break;
+                    }
+
     const bool capturing = silt.captureState.load() != SiltProcessor::CaptureState::idle;
     armButton.setButtonText (capturing ? "CANCEL" : juce::String (juce::CharPointer_UTF8 ("\xe2\x97\x8f ARM")));
 
@@ -1010,6 +1195,8 @@ void SiltEditor::resized()
     spaceSyncButton.setBounds (under (0, 60));
     spaceMode.setBounds (under (1, 104));
     spaceFreezeButton.setBounds (under (4, 72));
+    for (auto& b : modSync)
+        b.setBounds (under (3, 60));
 }
 
 void SiltEditor::paintPreview (juce::Graphics& g)

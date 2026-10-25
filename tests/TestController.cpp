@@ -140,3 +140,133 @@ TEST_CASE ("The mapping and page are saved with the set")
     CHECK (restored.silt.nextPageCC.load() == 55);
     CHECK (restored.silt.currentPage.load() == 2);
 }
+
+// --- Modulation -----------------------------------------------------------------------
+
+namespace
+{
+void runBlocks (Rig& rig, int blocks, juce::MidiBuffer midi = {})
+{
+    juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 512);
+    for (int i = 0; i < blocks; ++i)
+    {
+        buffer.clear();
+        rig.silt.processBlock (buffer, midi);
+        midi.clear();
+    }
+}
+} // namespace
+
+TEST_CASE ("Modulation targets every parameter but modes, seeds and the modulators' own")
+{
+    Rig rig;
+    CHECK (rig.silt.modulationTarget ("filterCutoff") >= 0);
+    CHECK (rig.silt.modulationTarget ("pitch") >= 0);
+    CHECK (rig.silt.modulationTarget ("spaceReverb") >= 0);
+    CHECK (rig.silt.modulationTarget ("keyMode") < 0);
+    CHECK (rig.silt.modulationTarget ("patternSeed") < 0);
+    CHECK (rig.silt.modulationTarget ("m1Rate") < 0);
+}
+
+TEST_CASE ("A WAVE route swings its target round the knob's value, clamped to the range")
+{
+    Rig rig;
+    rig.set ("filterCutoff", 0.5f);
+    rig.set ("m1Rate", rig.silt.params.getParameter ("m1Rate")->convertTo0to1 (4.0f));   // 4 Hz sine
+    const int t = rig.silt.modulationTarget ("filterCutoff");
+    rig.silt.setRouteAmount (0, t, 0.3f);
+
+    float lo = 1.0f, hi = 0.0f;
+    for (int i = 0; i < 100; ++i)   // ~1 s
+    {
+        runBlocks (rig, 1);
+        lo = std::min (lo, rig.silt.modulatedValue01 (t));
+        hi = std::max (hi, rig.silt.modulatedValue01 (t));
+    }
+    CHECK_THAT (lo, WithinAbs (0.2, 0.02));
+    CHECK_THAT (hi, WithinAbs (0.8, 0.02));
+    CHECK_THAT (rig.value ("filterCutoff"), WithinAbs (0.5, 1.0e-6));   // the knob itself doesn't move
+
+    rig.silt.setRouteAmount (0, t, 1.0f);
+    lo = 1.0f, hi = 0.0f;
+    for (int i = 0; i < 100; ++i)
+    {
+        runBlocks (rig, 1);
+        lo = std::min (lo, rig.silt.modulatedValue01 (t));
+        hi = std::max (hi, rig.silt.modulatedValue01 (t));
+    }
+    CHECK (lo == 0.0f);
+    CHECK (hi == 1.0f);
+
+    rig.silt.clearRoutes (t);
+    runBlocks (rig, 1);
+    CHECK_THAT (rig.silt.modulatedValue01 (t), WithinAbs (0.5, 1.0e-6));
+}
+
+TEST_CASE ("An ENVELOPE route opens with a note and closes after it")
+{
+    Rig rig;
+    rig.set ("m2Type", rig.silt.params.getParameter ("m2Type")->convertTo0to1 (2.0f));   // envelope
+    rig.set ("filterCutoff", 0.0f);
+    const int t = rig.silt.modulationTarget ("filterCutoff");
+    rig.silt.setRouteAmount (1, t, 1.0f);
+
+    runBlocks (rig, 4);
+    CHECK (rig.silt.modulatedValue01 (t) == 0.0f);
+
+    juce::MidiBuffer on;
+    on.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+    runBlocks (rig, 30, on);   // past a 10 ms attack and 300 ms decay: at sustain 50%
+    CHECK_THAT (rig.silt.modulatedValue01 (t), WithinAbs (0.5, 0.02));
+
+    juce::MidiBuffer off;
+    off.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+    runBlocks (rig, 100, off);   // 500 ms release
+    CHECK (rig.silt.modulatedValue01 (t) == 0.0f);
+}
+
+TEST_CASE ("With ASSIGN on, a controller knob sets the amount on its slot's parameter")
+{
+    Rig rig;
+    rig.silt.currentPage.store (5);   // FILTER: knob 2 is CUTOFF
+    rig.silt.assigning.store (2);
+    const int t = rig.silt.modulationTarget ("filterCutoff");
+    const float before = rig.value ("filterCutoff");
+    rig.cc (71, 127);
+    CHECK_THAT (rig.silt.routeAmount (2, t), WithinAbs (1.0, 1.0e-6));
+    rig.cc (71, 0);
+    CHECK_THAT (rig.silt.routeAmount (2, t), WithinAbs (-64.0 / 63.0 < -1.0 ? -1.0 : -64.0 / 63.0, 1.0e-6));
+    rig.cc (71, 64);
+    CHECK (rig.silt.routeAmount (2, t) == 0.0f);
+    CHECK (rig.value ("filterCutoff") == before);   // the value itself is left alone
+
+    // On the MOD page, ASSIGN's button toggles it and knob 1 picks the modulator.
+    rig.silt.assigning.store (-1);
+    rig.silt.currentPage.store (SiltProcessor::modPage);
+    rig.cc (70, 127);
+    CHECK (rig.silt.modShown.load() == 3);
+    rig.cc (77, 127);
+    CHECK (rig.silt.assigning.load() == 3);
+    rig.cc (77, 0);
+    rig.cc (77, 127);
+    CHECK (rig.silt.assigning.load() == -1);
+}
+
+TEST_CASE ("Routes and the modulator shown are saved with the set")
+{
+    juce::MemoryBlock state;
+    {
+        Rig rig;
+        rig.silt.setRouteAmount (0, rig.silt.modulationTarget ("pitch"), 0.25f);
+        rig.silt.setRouteAmount (3, rig.silt.modulationTarget ("spaceReverb"), -0.5f);
+        rig.silt.modShown.store (2);
+        rig.silt.getStateInformation (state);
+    }
+    Rig restored;
+    restored.silt.setRouteAmount (1, restored.silt.modulationTarget ("filterReso"), 0.9f);   // must be cleared
+    restored.silt.setStateInformation (state.getData(), (int) state.getSize());
+    CHECK_THAT (restored.silt.routeAmount (0, restored.silt.modulationTarget ("pitch")), WithinAbs (0.25, 1.0e-4));
+    CHECK_THAT (restored.silt.routeAmount (3, restored.silt.modulationTarget ("spaceReverb")), WithinAbs (-0.5, 1.0e-4));
+    CHECK (restored.silt.routeAmount (1, restored.silt.modulationTarget ("filterReso")) == 0.0f);
+    CHECK (restored.silt.modShown.load() == 2);
+}

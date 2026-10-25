@@ -42,6 +42,7 @@ add_library(silt_core STATIC
     core/src/Filter.cpp
     core/src/GrainVoice.cpp
     core/src/LevelMeter.cpp
+    core/src/Modulator.cpp
     core/src/Onsets.cpp
     core/src/Resonator.cpp
     core/src/SampleBuffer.cpp
@@ -59,7 +60,7 @@ if(SILT_BUILD_TESTS)
         GIT_SHALLOW TRUE)
     FetchContent_MakeAvailable(Catch2)
 
-    add_executable(silt_tests tests/TestDsp.cpp tests/TestEffects.cpp tests/TestEngine.cpp tests/TestSpace.cpp)
+    add_executable(silt_tests tests/TestDsp.cpp tests/TestEffects.cpp tests/TestEngine.cpp tests/TestModulators.cpp tests/TestSpace.cpp)
     target_link_libraries(silt_tests PRIVATE silt_core Catch2::Catch2WithMain)
 
     enable_testing()

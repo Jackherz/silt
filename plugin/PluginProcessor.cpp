@@ -14,7 +14,7 @@ const juce::StringArray divisionNames { "1/64", "1/32", "1/16T", "1/16", "1/8T",
                                         "1/8D", "1/4", "1/2T", "1/4D", "1/2", "1/2D", "1 bar", "2 bars", "4 bars" };
 constexpr double divisionQuarters[] { 1.0 / 16, 1.0 / 8, 1.0 / 6, 1.0 / 4, 1.0 / 3, 3.0 / 8, 1.0 / 2, 2.0 / 3,
                                       3.0 / 4, 1.0, 4.0 / 3, 3.0 / 2, 2.0, 3.0, 4.0, 8.0, 16.0 };
-constexpr int sixteenth = 3, eighth = 6, dottedEighth = 8;
+constexpr int sixteenth = 3, eighth = 6, dottedEighth = 8, quarter = 9;
 constexpr double maxDelayMs = 4000.0;
 
 // In silt::Scale order.
@@ -55,13 +55,13 @@ juce::String formatSemitones (float v, int) { return (v >= 0.005f ? "+" : v <= -
 juce::String formatTimes (float v, int) { return juce::String (v, 2) + "x"; }
 juce::String formatDb (float v, int) { return v <= -47.95f ? juce::String ("-inf dB") : juce::String (v, 1) + " dB"; }
 
-std::unique_ptr<Float> percent (const char* id, const char* name, float def)
+std::unique_ptr<Float> percent (const juce::String& id, const juce::String& name, float def)
 {
     return std::make_unique<Float> (juce::ParameterID { id, 1 }, name, Range (0.0f, 100.0f, 0.1f), def,
                                     juce::AudioParameterFloatAttributes().withStringFromValueFunction (formatPercent));
 }
 
-std::unique_ptr<Float> withUnit (const char* id, const char* name, Range range, float def, Format format)
+std::unique_ptr<Float> withUnit (const juce::String& id, const juce::String& name, Range range, float def, Format format)
 {
     return std::make_unique<Float> (juce::ParameterID { id, 1 }, name, range, def,
                                     juce::AudioParameterFloatAttributes().withStringFromValueFunction (std::move (format)));
@@ -248,6 +248,42 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 percent ("spaceReverb", "Reverb level", 0.0f),
                 std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "spaceFreeze", 1 }, "Space freeze", false));
 
+    // Modulators 1–4 (MOD page). Their own settings aren't modulation targets.
+    for (int n = 1; n <= SiltProcessor::numModulators; ++n)
+    {
+        const auto id = [n] (const char* suffix) { return "m" + juce::String (n) + suffix; };
+        const auto name = [n] (const char* what) { return "Mod " + juce::String (n) + " " + what; };
+        layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("Type"), 1 }, name ("type"),
+                                                                  juce::StringArray { "Wave", "Random", "Envelope", "Follow", "MIDI" }, 0),
+                    withUnit (id ("Rate"), name ("rate"), skewed (0.01f, 50.0f, 1.0f), 1.0f, formatHz),
+                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Sync"), 1 }, name ("sync"), false),
+                    std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("Div"), 1 }, name ("rate (synced)"), divisionNames, quarter),
+                    withUnit (id ("Shape"), name ("shape"), Range (0.0f, 3.0f, 0.001f), 0.0f, [] (float v, int)
+                    {
+                        const char* names[] { "SINE", "TRI", "SAW", "SQUARE" };
+                        const int nearest = juce::roundToInt (v);
+                        if (std::abs (v - (float) nearest) < 0.02f)
+                            return juce::String (names[nearest]);
+                        const int lower = juce::jmin (2, (int) v);
+                        return juce::String (names[lower]) + "-" + names[lower + 1] + " " + juce::String (juce::roundToInt ((v - (float) lower) * 100.0f)) + "%";
+                    }),
+                    withUnit (id ("Phase"), name ("phase"), Range (0.0f, 360.0f, 0.1f), 0.0f,
+                              [] (float v, int) { return juce::String (juce::roundToInt (v)) + juce::String::charToString ((juce::juce_wchar) 0x00b0); }),
+                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Retrig"), 1 }, name ("retrigger"), false),
+                    percent (id ("Smooth"), name ("smooth"), 100.0f),
+                    percent (id ("Jitter"), name ("jitter"), 0.0f),
+                    withUnit (id ("Attack"), name ("attack"), skewed (0.0f, 5000.0f, 100.0f), 10.0f, formatMs),
+                    withUnit (id ("Decay"), name ("decay"), skewed (1.0f, 5000.0f, 200.0f), 300.0f, formatMs),
+                    percent (id ("Sustain"), name ("sustain"), 50.0f),
+                    withUnit (id ("Release"), name ("release"), skewed (1.0f, 10000.0f, 400.0f), 500.0f, formatMs),
+                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Repeat"), 1 }, name ("repeat"), false),
+                    withUnit (id ("FAttack"), name ("follow attack"), skewed (0.1f, 1000.0f, 30.0f), 10.0f, formatMs),
+                    withUnit (id ("FRelease"), name ("follow release"), skewed (1.0f, 3000.0f, 200.0f), 200.0f, formatMs),
+                    withUnit (id ("Gain"), name ("follow gain"), Range (-24.0f, 24.0f, 0.1f), 0.0f, formatDb),
+                    std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("Source"), 1 }, name ("MIDI source"),
+                                                                  juce::StringArray { "Velocity", "Note", "Mod wheel", "Aftertouch", "Pitch bend" }, 0));
+    }
+
     // Capture and output
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "captureBars", 1 }, "Capture length",
                                                               captureBarChoices, 1),
@@ -277,9 +313,10 @@ float safetyClip (float x) noexcept
 
 struct SiltProcessor::RawParams
 {
-    explicit RawParams (juce::AudioProcessorValueTreeState& s)
+    // lookup: where each parameter's value is read from (its modulated value,
+    // for modulation targets).
+    explicit RawParams (const std::function<std::atomic<float>* (const char*)>& p)
     {
-        const auto p = [&s] (const char* id) { return s.getRawParameterValue (id); };
         pitch = p ("pitch"); size = p ("size"); rate = p ("rate"); spray = p ("spray"); jitter = p ("jitter");
         reverse = p ("reverse"); randAmp = p ("randAmp"); randPan = p ("randPan"); fade = p ("fade"); slant = p ("slant"); ease = p ("ease");
         sizeSync = p ("sizeSync"); sizeDiv = p ("sizeDiv"); rateMode = p ("rateMode"); rateDiv = p ("rateDiv"); grains = p ("grains"); grainSize = p ("grainSize");
@@ -342,9 +379,41 @@ juce::AudioProcessor::BusesProperties SiltProcessor::makeBuses()
 
 SiltProcessor::SiltProcessor()
     : AudioProcessor (makeBuses()),
-      params (*this, nullptr, "SILT", makeParameters()),
-      raw (std::make_unique<RawParams> (params))
+      params (*this, nullptr, "SILT", makeParameters())
 {
+    // Modulation targets: every parameter but mode switches, seeds and the
+    // modulators' own settings. Each gets a modulated copy, which is what the
+    // audio code reads.
+    const juce::StringArray fixed { "keyMode", "captureBars", "monitor", "sizeSync", "delaySync", "spaceSync",
+                                    "rateMode", "filterMode", "patternSeed" };
+    for (auto* parameter : getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter))
+        {
+            const auto id = ranged->getParameterID();
+            const bool modulator = id.length() > 1 && id[0] == 'm' && juce::CharacterFunctions::isDigit (id[1]);
+            if (fixed.contains (id) || modulator)
+                continue;
+            jassert (targets.size() < (size_t) maxTargets);
+            targetIndex[id] = (int) targets.size();
+            targets.push_back ({ ranged, params.getRawParameterValue (id) });
+        }
+    for (size_t t = 0; t < targets.size(); ++t)
+        modulated[t].store (targets[t].raw->load());
+
+    for (int m = 0; m < numModulators; ++m)
+    {
+        const auto p = [this, m] (const char* suffix) { return params.getRawParameterValue ("m" + juce::String (m + 1) + suffix); };
+        modulatorRaw[(size_t) m] = { p ("Type"), p ("Rate"), p ("Sync"), p ("Div"), p ("Shape"), p ("Phase"), p ("Retrig"), p ("Smooth"), p ("Jitter"),
+                                     p ("Attack"), p ("Decay"), p ("Sustain"), p ("Release"), p ("Repeat"), p ("FAttack"), p ("FRelease"), p ("Gain"), p ("Source") };
+    }
+
+    raw = std::make_unique<RawParams> ([this] (const char* id) -> std::atomic<float>*
+    {
+        if (const auto it = targetIndex.find (id); it != targetIndex.end())
+            return &modulated[(size_t) it->second];
+        return params.getRawParameterValue (id);
+    });
+
     formats.registerBasicFormats();
     for (auto& v : voicePlayheads)
         v.store (-1.0f);
@@ -368,12 +437,15 @@ void SiltProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamples
     filter.prepare (sampleRate);
     color.prepare (sampleRate);
     space.prepare (sampleRate);
+    for (size_t m = 0; m < modulators.size(); ++m)
+        modulators[m].reset (0x5117 + m);
+    modContext = {};
     lastNote = -1;
     liveColumn = -1;
     liveColumnPeak = 0.0f;
     for (auto& c : livePeaks)
         c.store (0.0f);
-    wet.setSize (2, juce::jmax (1, maximumExpectedSamplesPerBlock));
+    wet.setSize (2, juce::jmax (modulationInterval, maximumExpectedSamplesPerBlock));
     noteEvents.reserve (1024);
     captureMeter.reset();
 }
@@ -637,18 +709,27 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     {
         const auto m = event.getMessage();
         if ((m.isNoteOnOrOff()) && noteEvents.size() < noteEvents.capacity())
-        {
             noteEvents.push_back ({ event.samplePosition, m.getNoteNumber(), m.getFloatVelocity(), m.isNoteOn() });
-            if (m.isNoteOn())
-                lastNote = m.getNoteNumber();
-        }
         else if (m.isAllNotesOff() || m.isAllSoundOff())
             allOff = true;
         else if (m.isController())
+        {
+            if (m.getControllerNumber() == 1)
+                modContext.modWheel = (float) m.getControllerValue() / 127.0f;
             handleController (m.getControllerNumber(), m.getControllerValue());
+        }
+        else if (m.isChannelPressure())
+            modContext.aftertouch = (float) m.getChannelPressureValue() / 127.0f;
+        else if (m.isAftertouch())
+            modContext.aftertouch = (float) m.getAfterTouchValue() / 127.0f;
+        else if (m.isPitchWheel())
+            modContext.pitchBend = juce::jlimit (-1.0f, 1.0f, (float) (m.getPitchWheelValue() - 8192) / 8191.0f);
     }
     if (allOff)
+    {
         engine.allNotesOff();
+        modContext.heldNotes = 0;
+    }
 
     auto source = CaptureSource::none;
     auto capture = findCaptureBus (buffer, source);
@@ -657,39 +738,66 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         captureMeter.process (capture.getArrayOfReadPointers(), capture.getNumChannels(), numSamples);
     runCapture (capture, position ? &*position : nullptr);
 
-    // Engine output. Hosts can send a block bigger than announced; render in chunks.
+    // Rendered in chunks of up to 64 samples: modulation updates per chunk and
+    // every parameter is read after it.
     auto output = getBusBuffer (buffer, false, 0);
-    const float gain = juce::Decibels::decibelsToGain (raw->gain->load (std::memory_order_relaxed), -48.0f);
-    const bool monitoring = isInstrument && raw->monitor->load (std::memory_order_relaxed) > 0.5f;
-    const float mix = isInstrument ? 1.0f : raw->mix->load (std::memory_order_relaxed) * 0.01f;
-    auto grainParams = readParams();
-    const auto resonatorParams = readResonatorParams (grainParams);
-    const auto filterParams = readFilterParams();
-    const auto colorParams = readColorParams();
-    const auto spaceParams = readSpaceParams();
+    const bool playing = position && position->getIsPlaying();
+    const double blockPpq = position ? position->getPpqPosition().orFallback (0.0) : 0.0;
+    const double bpm = position ? position->getBpm().orFallback (hostBpm.load (std::memory_order_relaxed))
+                                : hostBpm.load (std::memory_order_relaxed);
+    const double ppqPerSample = bpm / 60.0 / currentSampleRate;
 
-    // Synced Rate locks grains to the beat grid while the host plays; stopped,
-    // they free-run at the synced rate.
-    double blockPpq = 0.0;
-    if ((int) raw->rateMode->load (std::memory_order_relaxed) == rateModeSync && position && position->getIsPlaying())
-        if (const auto ppq = position->getPpqPosition())
-            if (const auto bpm = position->getBpm(); bpm && *bpm > 0.0)
-            {
-                grainParams.gridSync = true;
-                grainParams.ppqPerSample = *bpm / 60.0 / currentSampleRate;
-                blockPpq = *ppq;
-            }
-
-    for (int start = 0; start < numSamples; start += wet.getNumSamples())
+    for (int start = 0; start < numSamples; start += modulationInterval)
     {
-        const int len = juce::jmin (wet.getNumSamples(), numSamples - start);
-        grainParams.gridPpq = blockPpq + start * grainParams.ppqPerSample;
+        const int len = juce::jmin (modulationInterval, numSamples - start);
 
-        // Events for this chunk, shifted to its start.
+        // Events for this chunk, shifted to its start; they also feed the modulators.
         const auto first = std::find_if (noteEvents.begin(), noteEvents.end(), [start] (const auto& e) { return e.sampleOffset >= start; });
         const auto last = std::find_if (first, noteEvents.end(), [start, len] (const auto& e) { return e.sampleOffset >= start + len; });
+        modContext.noteStarted = false;
         for (auto it = first; it != last; ++it)
+        {
             it->sampleOffset -= start;
+            if (it->isNoteOn)
+            {
+                lastNote = it->note;
+                modContext.noteStarted = true;
+                modContext.note = it->note;
+                modContext.velocity = it->velocity;
+                ++modContext.heldNotes;
+            }
+            else
+                modContext.heldNotes = juce::jmax (0, modContext.heldNotes - 1);
+        }
+        float peak = 0.0f;
+        for (int ch = 0; ch < capture.getNumChannels(); ++ch)
+            peak = juce::jmax (peak, capture.getMagnitude (ch, start, len));
+        modContext.inputPeak = peak;
+        modContext.numSamples = len;
+        modContext.sampleRate = currentSampleRate;
+        modContext.hostPlaying = playing;
+        modContext.bpm = bpm;
+        modContext.ppqEnd = blockPpq + (start + len) * ppqPerSample;
+        applyModulation();
+
+        const float gain = juce::Decibels::decibelsToGain (raw->gain->load (std::memory_order_relaxed), -48.0f);
+        const bool monitoring = isInstrument && raw->monitor->load (std::memory_order_relaxed) > 0.5f;
+        const float mix = isInstrument ? 1.0f : raw->mix->load (std::memory_order_relaxed) * 0.01f;
+        auto grainParams = readParams();
+        const auto resonatorParams = readResonatorParams (grainParams);
+        const auto filterParams = readFilterParams();
+        const auto colorParams = readColorParams();
+        const auto spaceParams = readSpaceParams();
+
+        // Synced Rate locks grains to the beat grid while the host plays; stopped,
+        // they free-run at the synced rate.
+        if ((int) raw->rateMode->load (std::memory_order_relaxed) == rateModeSync && playing && bpm > 0.0)
+        {
+            grainParams.gridSync = true;
+            grainParams.ppqPerSample = ppqPerSample;
+            grainParams.gridPpq = blockPpq + start * ppqPerSample;
+        }
+        lastLive = grainParams.live;
 
         const int liveWriteBefore = engine.getLiveWritePosition();
         const float* inLeft = capture.getNumChannels() > 0 ? capture.getReadPointer (0, start) : nullptr;
@@ -720,7 +828,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     }
 
     activeGrains.store (engine.getActiveGrainCount(), std::memory_order_relaxed);
-    liveMode.store (grainParams.live, std::memory_order_relaxed);
+    liveMode.store (lastLive, std::memory_order_relaxed);
     if (const auto* ring = engine.getLiveBuffer())
         liveWriteShare.store ((float) engine.getLiveWritePosition() / (float) ring->getNumFrames(), std::memory_order_relaxed);
 
@@ -739,6 +847,90 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         const auto& voice = engine.getVoice (v);
         voicePlayheads[(size_t) v].store (voice.isActive() ? voice.getPlayheadPosition() : -1.0f, std::memory_order_relaxed);
     }
+}
+
+// Audio thread: steps the modulators over this chunk, then writes every
+// target's modulated value: its own value plus each route's amount times its
+// modulator, in the parameter's 0–1 range, clamped.
+void SiltProcessor::applyModulation() noexcept
+{
+    std::array<float, numModulators> value {};
+    for (int m = 0; m < numModulators; ++m)
+    {
+        const auto mp = readModulatorParams (m);
+        value[(size_t) m] = modulators[(size_t) m].advance (mp, modContext);
+        modOutputs[(size_t) m].store (value[(size_t) m], std::memory_order_relaxed);
+    }
+
+    for (size_t t = 0; t < targets.size(); ++t)
+    {
+        const float base = targets[t].raw->load (std::memory_order_relaxed);
+        float offset = 0.0f;
+        for (int m = 0; m < numModulators; ++m)
+            offset += routeAmounts[(size_t) m * maxTargets + t].load (std::memory_order_relaxed) * value[(size_t) m];
+        if (offset == 0.0f)
+        {
+            modulated[t].store (base, std::memory_order_relaxed);
+            continue;
+        }
+        auto* p = targets[t].parameter;
+        const float moved = juce::jlimit (0.0f, 1.0f, p->convertTo0to1 (base) + offset);
+        modulated[t].store (p->convertFrom0to1 (moved), std::memory_order_relaxed);
+    }
+}
+
+silt::ModulatorParams SiltProcessor::readModulatorParams (int m) const noexcept
+{
+    const auto& r = modulatorRaw[(size_t) m];
+    const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
+    silt::ModulatorParams p;
+    p.type = (silt::ModType) juce::jlimit (0, 4, (int) v (r.type));
+    p.rateHz = v (r.rate);
+    p.sync = v (r.sync) > 0.5f;
+    p.syncQuarters = quartersFor (r.div);
+    p.shape = v (r.shape);
+    p.phase = v (r.phase) / 360.0f;
+    p.retrigger = v (r.retrig) > 0.5f;
+    p.smooth = v (r.smooth) * 0.01f;
+    p.jitter = v (r.jitter) * 0.01f;
+    p.attackMs = v (r.attack);
+    p.decayMs = v (r.decay);
+    p.sustain = v (r.sustain) * 0.01f;
+    p.releaseMs = v (r.release);
+    p.repeat = v (r.repeat) > 0.5f;
+    p.followAttackMs = v (r.followAttack);
+    p.followReleaseMs = v (r.followRelease);
+    p.gainDb = v (r.gain);
+    p.source = (silt::MidiSource) juce::jlimit (0, 4, (int) v (r.source));
+    return p;
+}
+
+int SiltProcessor::modulationTarget (const juce::String& id) const
+{
+    const auto it = targetIndex.find (id);
+    return it == targetIndex.end() ? -1 : it->second;
+}
+
+float SiltProcessor::routeAmount (int modulator, int target) const noexcept
+{
+    return routeAmounts[(size_t) modulator * maxTargets + (size_t) target].load (std::memory_order_relaxed);
+}
+
+void SiltProcessor::setRouteAmount (int modulator, int target, float amount) noexcept
+{
+    if (modulator >= 0 && modulator < numModulators && target >= 0 && target < (int) targets.size())
+        routeAmounts[(size_t) modulator * maxTargets + (size_t) target].store (juce::jlimit (-1.0f, 1.0f, amount), std::memory_order_relaxed);
+}
+
+void SiltProcessor::clearRoutes (int target) noexcept
+{
+    for (int m = 0; m < numModulators; ++m)
+        setRouteAmount (m, target, 0.0f);
+}
+
+float SiltProcessor::modulatedValue01 (int target) const noexcept
+{
+    return targets[(size_t) target].parameter->convertTo0to1 (modulated[(size_t) target].load (std::memory_order_relaxed));
 }
 
 juce::AudioProcessorEditor* SiltProcessor::createEditor()
@@ -844,6 +1036,26 @@ juce::String SiltProcessor::slotParameter (int page, int slot) const
                 return v ("spaceSync") > 0.5f ? "spaceDiv" : "spaceTime";
             return ids[slot];
         }
+        case modPage:   // MOD: the modulator shown, its type, five settings for that type, ASSIGN
+        {
+            const auto id = [this] (const char* suffix) { return "m" + juce::String (modShown.load() + 1) + suffix; };
+            if (slot == 0)
+                return "!modSelect";
+            if (slot == 1)
+                return id ("Type");
+            if (slot == 7)
+                return "!assign";
+            const bool synced = v (id ("Sync").toRawUTF8()) > 0.5f;
+            const char* rate = synced ? "Div" : "Rate";
+            const char* wave[] { "Shape", rate, "Phase", "Retrig", nullptr };
+            const char* random[] { "Smooth", rate, "Jitter", nullptr, nullptr };
+            const char* envelope[] { "Attack", "Decay", "Sustain", "Release", "Repeat" };
+            const char* follow[] { "FAttack", "FRelease", "Gain", nullptr, nullptr };
+            const char* midi[] { "Source", nullptr, nullptr, nullptr, nullptr };
+            const char* const* byType[] { wave, random, envelope, follow, midi };
+            const auto* suffix = byType[juce::jlimit (0, 4, (int) v (id ("Type").toRawUTF8()))][slot - 2];
+            return suffix != nullptr ? id (suffix) : juce::String();
+        }
         case 3:   // PLAY
         {
             const bool live = (int) v ("keyMode") == 1;
@@ -893,6 +1105,31 @@ void SiltProcessor::applyControllerMoves()
         }
         if (id.isEmpty())
             return;
+
+        // ASSIGN on and on another page: a knob sets this modulator's amount on
+        // its slot's parameter, centre = none (no pickup needed: it's relative to nothing).
+        if (const int m = assigning.load(); m >= 0 && page != modPage && ! id.startsWith ("!"))
+        {
+            if (const int t = modulationTarget (id); t >= 0)
+                setRouteAmount (m, t, juce::jlimit (-1.0f, 1.0f, (float) (value - 64) / 63.0f));
+            last = value;
+            return;
+        }
+
+        if (id == "!modSelect")   // a knob picks the modulator shown
+        {
+            modShown.store (juce::jlimit (0, numModulators - 1, value * numModulators / 128));
+            last = value;
+            return;
+        }
+
+        if (id == "!assign")   // a button: ASSIGN on or off for the shown modulator
+        {
+            if (value > 63 && last <= 63)
+                assigning.store (assigning.load() >= 0 ? -1 : modShown.load());
+            last = value;
+            return;
+        }
 
         if (id == "!newPattern")   // a button: new pattern on each press
         {
@@ -1178,6 +1415,13 @@ void SiltProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("knobCCs", ccs.joinIntoString (","), nullptr);
     state.setProperty ("pageCCs", juce::String (previousPageCC.load()) + "," + juce::String (nextPageCC.load()), nullptr);
     state.setProperty ("page", currentPage.load(), nullptr);
+    juce::StringArray routes;   // "modulator:parameter:amount"
+    for (int m = 0; m < numModulators; ++m)
+        for (size_t t = 0; t < targets.size(); ++t)
+            if (const float amount = routeAmount (m, (int) t); amount != 0.0f)
+                routes.add (juce::String (m) + ":" + targets[t].parameter->getParameterID() + ":" + juce::String (amount, 4));
+    state.setProperty ("modRoutes", routes.joinIntoString (";"), nullptr);
+    state.setProperty ("modShown", modShown.load(), nullptr);
 
     juce::MemoryBlock flac;
     {
@@ -1246,6 +1490,15 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
         nextPageCC.store (juce::jlimit (0, 127, pages[1].getIntValue()));
     }
     currentPage.store (juce::jlimit (0, numPages - 1, (int) tree.getProperty ("page", 0)));
+    for (auto& amount : routeAmounts)
+        amount.store (0.0f);
+    for (const auto& route : juce::StringArray::fromTokens (tree.getProperty ("modRoutes").toString(), ";", ""))
+    {
+        const auto parts = juce::StringArray::fromTokens (route, ":", "");
+        if (parts.size() == 3)
+            setRouteAmount (parts[0].getIntValue(), modulationTarget (parts[1]), parts[2].getFloatValue());
+    }
+    modShown.store (juce::jlimit (0, numModulators - 1, (int) tree.getProperty ("modShown", 0)));
 
     if (flac.isEmpty())
         return;
