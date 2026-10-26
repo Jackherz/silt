@@ -41,6 +41,7 @@ struct Entry
     juce::String text;         // button text
     int width = 0;             // under-slot controls
     std::function<bool (const Context&)> shown;   // null: always
+    std::function<bool (const Context&)> dimmed;  // shown, but has no effect in the current state
 
     bool inSlot() const { return kind != Kind::underButton && kind != Kind::underMenu; }
     bool isShown (const Context& c) const { return shown == nullptr || shown (c); }

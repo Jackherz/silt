@@ -287,7 +287,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                     // Per voice: each voice runs its own copy from its own note (grain
                     // parameters only; the effects follow the shared one).
                     std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Voice"), 1 }, name ("per voice"), false),
-                    percent (id ("Macro"), name ("macro"), 0.0f));
+                    percent (id ("Macro"), name ("macro"), 0.0f),
+                    // WAVE: where the cycle turns round (50%: as drawn) and how it bends (0%: straight).
+                    percent (id ("Sym"), name ("symmetry"), 50.0f),
+                    withUnit (id ("Curve"), name ("curve"), Range (-100.0f, 100.0f, 0.1f), 0.0f, [] (float v, int)
+                    {
+                        const int n = juce::roundToInt (v);
+                        return (n > 0 ? "+" : "") + juce::String (n) + "%";
+                    }));
     }
 
     // Capture and output
@@ -432,7 +439,7 @@ SiltProcessor::SiltProcessor()
         };
         modulatorRaw[(size_t) m] = { p ("Type"), p ("Rate"), p ("Sync"), p ("Div"), p ("Shape"), p ("Phase"), p ("Retrig"), p ("Smooth"), p ("Jitter"),
                                      p ("Attack"), p ("Decay"), p ("Sustain"), p ("Release"), p ("Repeat"), p ("FAttack"), p ("FRelease"), p ("Gain"), p ("Source"),
-                                     p ("Enable"), p ("Voice"), p ("Macro") };
+                                     p ("Enable"), p ("Voice"), p ("Macro"), p ("Sym"), p ("Curve") };
     }
 
     for (auto* parameter : getParameters())
@@ -962,6 +969,8 @@ silt::ModulatorParams SiltProcessor::readModulatorParams (int m) const noexcept
     p.gainDb = v (r.gain);
     p.source = (silt::MidiSource) juce::jlimit (0, 4, (int) v (r.source));
     p.macro = v (r.macro) * 0.01f;
+    p.symmetry = v (r.sym) * 0.01f;
+    p.curve = v (r.curve) * 0.01f;
     return p;
 }
 

@@ -72,7 +72,9 @@ The reverb is an 8-channel diffuser into an 8-line feedback delay network with
 per-line modulation and absorption filters; changing TIME glides like tape.
 
 **Modulation:** four modulators, each a WAVE (sine → triangle → saw → square, free
-or synced, phase, retrigger on notes), RANDOM (smooth to stepped, jitter, free or
+or synced, phase, SYM (where the cycle turns round: 50% as drawn, the ends make
+saws and pulse widths), CURVE (bulging and lazy to spiked and snappy; greyed on a
+square, which it can't bend), retrigger on notes), RANDOM (smooth to stepped, jitter, free or
 synced), ENVELOPE (ADSR from the notes played; REPEAT loops it while held), FOLLOW
 (the input's level), MIDI (velocity, note, mod wheel, aftertouch, pitch bend) or
 MACRO (a knob, automatable and controller-mappable, that moves everything it's

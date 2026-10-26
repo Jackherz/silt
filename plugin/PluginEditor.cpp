@@ -711,6 +711,8 @@ void SiltEditor::updateVisibility()
     {
         const auto& c = *controls[i];
         const bool show = c.entry->page == page && c.entry->isShown (context);
+        if (show && c.entry->dimmed != nullptr)
+            c.component().setAlpha (c.entry->dimmed (context) ? 0.35f : 1.0f);
         if (show != shownNow[i] || c.component().isVisible() != show)
         {
             c.component().setVisible (show);

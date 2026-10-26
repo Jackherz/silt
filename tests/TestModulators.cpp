@@ -219,3 +219,70 @@ TEST_CASE ("MACRO is its knob, 0 to 1")
     CHECK (m.advance (p, context()) == 1.0f);
     CHECK_FALSE (Modulator::isBipolar (p));
 }
+
+TEST_CASE ("Wave: SYMMETRY 50% and CURVE 0% are exactly today's shapes")
+{
+    for (const float shape : { 0.0f, 1.0f, 1.5f, 2.0f, 3.0f })
+    {
+        Modulator a, b;
+        a.reset();
+        b.reset();
+        ModulatorParams plain, explicitDefaults;
+        plain.shape = explicitDefaults.shape = shape;
+        plain.rateHz = explicitDefaults.rateHz = 3.0f;
+        explicitDefaults.symmetry = 0.5f;
+        explicitDefaults.curve = 0.0f;
+        CHECK (run (a, plain, 1.0) == run (b, explicitDefaults, 1.0));
+    }
+}
+
+TEST_CASE ("Wave: SYMMETRY moves where the cycle turns; a square's duty follows it")
+{
+    Modulator m;
+    m.reset();
+    ModulatorParams p;
+    p.shape = 3.0f;        // square: low for the first half of the (warped) cycle
+    p.symmetry = 0.25f;
+    p.rateHz = 1.0f;
+    const auto out = run (m, p, 4.0);
+    int low = 0;
+    for (const float v : out)
+        low += v < 0.0f ? 1 : 0;
+    CHECK (std::abs ((double) low / (double) out.size() - 0.25) < 0.02);
+
+    // A triangle at 25% peaks a quarter of the way through its first half.
+    Modulator t;
+    t.reset();
+    p.shape = 1.0f;
+    const auto tri = run (t, p, 1.0);
+    const auto peak = std::max_element (tri.begin(), tri.end()) - tri.begin();
+    CHECK (std::abs ((double) peak / (double) tri.size() - 0.125) < 0.02);
+}
+
+TEST_CASE ("Wave: CURVE bends but keeps the peaks and the sign, everywhere in range")
+{
+    for (const float curve : { -1.0f, -0.5f, 0.5f, 1.0f })
+        for (const float sym : { 0.1f, 0.5f, 0.9f })
+        {
+            Modulator plain, bent;
+            plain.reset();
+            bent.reset();
+            ModulatorParams p;
+            p.shape = 1.0f;
+            p.symmetry = sym;
+            p.rateHz = 2.0f;
+            const auto a = run (plain, p, 1.0);
+            p.curve = curve;
+            const auto b = run (bent, p, 1.0);
+            for (size_t i = 0; i < a.size(); ++i)
+            {
+                REQUIRE (std::abs (b[i]) <= 1.0f);
+                REQUIRE ((a[i] < 0.0f) == (b[i] < 0.0f));
+                // Spikes (+) sit nearer zero than the original; bulges (−) further out.
+                if (curve > 0.0f)
+                    REQUIRE (std::abs (b[i]) <= std::abs (a[i]) + 1.0e-6f);
+                else
+                    REQUIRE (std::abs (b[i]) >= std::abs (a[i]) - 1.0e-6f);
+            }
+        }
+}

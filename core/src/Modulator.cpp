@@ -86,11 +86,26 @@ float Modulator::wave (const ModulatorParams& p, const ModContext& c) noexcept
         phase += step;
     phase -= std::floor (phase);
 
+    // SYMMETRY warps the phase before the wave is read: the first half of the
+    // cycle takes `symmetry` of it, the second half the rest.
+    double read = phase;
+    if (p.symmetry != 0.5f)
+    {
+        const double s = std::clamp ((double) p.symmetry, 0.001, 0.999);
+        read = phase < s ? 0.5 * phase / s : 0.5 + 0.5 * (phase - s) / (1.0 - s);
+    }
+
     const float shape = std::clamp (p.shape, 0.0f, 3.0f);
     const int lower = (int) shape;
     const float blend = shape - (float) lower;
-    const float a = shapeAt (phase, lower);
-    return blend > 0.0f ? a + (shapeAt (phase, lower + 1) - a) * blend : a;
+    const float a = shapeAt (read, lower);
+    const float y = blend > 0.0f ? a + (shapeAt (read, lower + 1) - a) * blend : a;
+
+    // CURVE bends the output, keeping its sign and its peaks: |y|^(4^curve).
+    if (p.curve == 0.0f)
+        return y;
+    const float exponent = std::pow (4.0f, std::clamp (p.curve, -1.0f, 1.0f));
+    return std::copysign (std::pow (std::abs (y), exponent), y);
 }
 
 // A new random value each step; SMOOTH glides to it (cosine), JITTER spreads

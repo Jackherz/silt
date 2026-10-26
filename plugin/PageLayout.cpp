@@ -23,19 +23,19 @@ std::vector<Entry> build (bool instrument)
     std::vector<Entry> e;
     const auto knob = [&] (int page, int slot, const juce::String& id, const juce::String& label, Shown shown = {})
     {
-        e.push_back ({ page, slot, Kind::knob, id, label, {}, {}, 0, std::move (shown) });
+        e.push_back ({ page, slot, Kind::knob, id, label, {}, {}, 0, std::move (shown), {} });
     };
     const auto menu = [&] (int page, int slot, const juce::String& id, const juce::String& label, juce::StringArray items, Shown shown = {})
     {
-        e.push_back ({ page, slot, Kind::menu, id, label, std::move (items), {}, 0, std::move (shown) });
+        e.push_back ({ page, slot, Kind::menu, id, label, std::move (items), {}, 0, std::move (shown), {} });
     };
     const auto button = [&] (int page, int slot, const juce::String& id, const juce::String& label, const juce::String& text, Shown shown = {})
     {
-        e.push_back ({ page, slot, Kind::button, id, label, {}, text, 0, std::move (shown) });
+        e.push_back ({ page, slot, Kind::button, id, label, {}, text, 0, std::move (shown), {} });
     };
     const auto under = [&] (Kind kind, int page, int slot, const juce::String& id, int width, juce::StringArray items, const juce::String& text, Shown shown = {})
     {
-        e.push_back ({ page, slot, kind, id, {}, std::move (items), text, width, std::move (shown) });
+        e.push_back ({ page, slot, kind, id, {}, std::move (items), text, width, std::move (shown), {} });
     };
 
     // GRAIN: what the grains are. SIZE and RATE change with SYNC and the rate mode.
@@ -71,7 +71,7 @@ std::vector<Entry> build (bool instrument)
     menu (pitch, 2, "key", "KEY", { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" });
     knob (pitch, 3, "patternDepth", "PATTERN");
     knob (pitch, 4, "patternSteps", "STEPS");
-    e.push_back ({ pitch, 5, Kind::action, "!newPattern", "NEW PATTERN", {}, "NEW", 0, {} });
+    e.push_back ({ pitch, 5, Kind::action, "!newPattern", "NEW PATTERN", {}, "NEW", 0, {}, {} });
     knob (pitch, 6, "heads", "HEADS");
     knob (pitch, 7, "headSpread", "SPREAD");
 
@@ -145,7 +145,7 @@ std::vector<Entry> build (bool instrument)
 
     // MOD: the shown modulator (picked on the rail, or by knob 1), its type,
     // five settings for that type, and ASSIGN (arms it for the controller).
-    e.push_back ({ mod, 0, Kind::banner, "!modSelect", "MODULATOR", {}, {}, 0, {} });
+    e.push_back ({ mod, 0, Kind::banner, "!modSelect", "MODULATOR", {}, {}, 0, {}, {} });
     for (int m = 0; m < 4; ++m)
     {
         const auto id = [m] (const char* suffix) { return "m" + juce::String (m + 1) + suffix; };
@@ -163,7 +163,11 @@ std::vector<Entry> build (bool instrument)
         knob (mod, 3, id ("Div"), "RATE", both (timed, on (id ("Sync"))));
         under (Kind::underButton, mod, 3, id ("Sync"), 60, {}, "SYNC", timed);
         knob (mod, 4, id ("Phase"), "PHASE", wave);
-        button (mod, 5, id ("Retrig"), "ON NOTES", "RETRIG", wave);
+        under (Kind::underButton, mod, 4, id ("Retrig"), 64, {}, "RETRIG", wave);
+        knob (mod, 5, id ("Sym"), "SYM", wave);
+        knob (mod, 6, id ("Curve"), "CURVE", wave);
+        // A square's ±1 doesn't bend: CURVE greys out on it.
+        e.back().dimmed = [=] (const Context& c) { return c.v (id ("Shape")) >= 2.99f; };
 
         knob (mod, 2, id ("Smooth"), "SMOOTH", random);
         knob (mod, 4, id ("Jitter"), "JITTER", random);
@@ -183,7 +187,7 @@ std::vector<Entry> build (bool instrument)
         // MACRO: one knob that moves everything it's routed to.
         knob (mod, 3, id ("Macro"), "MACRO", macro);
     }
-    e.push_back ({ mod, 7, Kind::action, "!assign", "CONTROLLER", {}, "ASSIGN", 0, {} });
+    e.push_back ({ mod, 7, Kind::action, "!assign", "CONTROLLER", {}, "ASSIGN", 0, {}, {} });
     return e;
 }
 } // namespace

@@ -19,6 +19,8 @@ struct ModulatorParams
     // WAVE
     float shape = 0.0f;          // 0 sine, 1 triangle, 2 saw, 3 square, blended between
     float phase = 0.0f;          // 0…1: where a retriggered or synced cycle starts
+    float symmetry = 0.5f;       // 0…1: where the cycle turns round (0.5: as drawn; the ends make saws)
+    float curve = 0.0f;          // −1…1: bends the output (−: bulges, dwells at the peaks; +: spikes, dwells at zero)
     bool retrigger = false;      // restart on each note
     // RANDOM
     float smooth = 1.0f;         // 0 stepped … 1 gliding
