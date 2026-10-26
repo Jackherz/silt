@@ -108,7 +108,7 @@ private:
     std::vector<SiltProcessor::Route> shown;
 
     std::array<juce::TextButton, SiltProcessor::numModulators + 1> filters;   // ALL, M1–M4
-    juce::TextButton pageFilter { "THIS PAGE" }, clearAll { "CLEAR ALL" }, close { "CLOSE" };
+    juce::TextButton pageFilter { "THIS PAGE" }, clearAll { "CLEAR ALL" }, close { "CLOSE" }, undo { "UNDO" }, redo { "REDO" };
     juce::Viewport viewport;
     juce::Component rows;
     std::vector<std::unique_ptr<Row>> rowComponents;

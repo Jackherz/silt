@@ -17,6 +17,8 @@ constexpr float degreesPerUnit = 300.0f;   // a knob's travel
 
 void SiltEditor::FineSlider::beginDepth (int modulator)
 {
+    if (routeGesture)
+        routeGesture();
     depthModulatorNow = modulator;
     amountAtStart = amountOf (modulator);
     if (depthDragged)
@@ -77,7 +79,11 @@ void SiltEditor::FineSlider::mouseUp (const juce::MouseEvent& e)
 void SiltEditor::FineSlider::mouseDoubleClick (const juce::MouseEvent& e)
 {
     if (e.mods.isAltDown() && target >= 0)
+    {
+        if (routeGesture)
+            routeGesture();
         setAmount (depthModulator(), 0.0f);   // remove that modulator's route
+    }
     else
         juce::Slider::mouseDoubleClick (e);   // back to the default value
 }
@@ -104,7 +110,11 @@ void SiltEditor::FineSlider::itemDropped (const SourceDetails& d)
     const int m = d.description.toString().fromFirstOccurrenceOf (":", false, false).getIntValue() - 1;
     dropHover = -1;
     if (m >= 0 && amountOf (m) == 0.0f)
+    {
+        if (routeGesture)
+            routeGesture();
         setAmount (m, 0.25f);   // a musical starting depth
+    }
     repaint();
 }
 
@@ -343,9 +353,10 @@ void SiltEditor::wireModulation (FineSlider& s)
         return depthModulatorFor (silt.armedMod.load(), amounts, lastUsedMod);
     };
     s.amountOf = [this, target] (int m) { return silt.routeAmount (m, target); };
+    s.routeGesture = [this] { silt.beginRouteGesture(); };
     s.setAmount = [this, target, &s] (int m, float amount)
     {
-        silt.setRouteAmount (m, target, amount);
+        silt.editRoutes ([&] { silt.setRouteAmount (m, target, amount); });
         lastUsedMod = m;
         s.repaint();
     };
@@ -390,18 +401,26 @@ void SiltEditor::showKnobMenu (FineSlider& s)
     menu.addSeparator();
     menu.addItem (1, "Clear all modulation on this knob", any);
     menu.addItem (2, "Show all routes...");
+    menu.addItem (3, "Undo route change", silt.canUndoRoutes());
+    menu.addItem (4, "Redo route change", silt.canRedoRoutes());
 
     juce::Component::SafePointer<FineSlider> safe (&s);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&s), [this, target, safe] (int chosen)
     {
+        if (chosen == 1 || chosen >= 100)
+            silt.beginRouteGesture();
         if (chosen == 1)
-            silt.clearRoutesOnTarget (target);
+            silt.editRoutes ([&] { silt.clearRoutesOnTarget (target); });
         else if (chosen == 2)
             showRoutes (-1);
+        else if (chosen == 3)
+            silt.undoRoutes();
+        else if (chosen == 4)
+            silt.redoRoutes();
         else if (chosen >= 100)
         {
             const int m = chosen / 100 - 1, i = chosen % 100;
-            silt.setRouteAmount (m, target, i == 99 ? 0.0f : depths[i]);
+            silt.editRoutes ([&] { silt.setRouteAmount (m, target, i == 99 ? 0.0f : depths[i]); });
             lastUsedMod = m;
         }
         if (safe != nullptr)
@@ -613,6 +632,13 @@ bool SiltEditor::keyPressed (const juce::KeyPress& key)
     if (c >= '1' && c <= '4' && ! key.getModifiers().isAnyModifierKeyDown())
     {
         selectModulator ((int) (c - '1'), true);
+        return true;
+    }
+    // Cmd/Ctrl+Z undoes a route change, with Shift redoes it.
+    if (key.getKeyCode() == 'Z' && key.getModifiers().isCommandDown())
+    {
+        if (key.getModifiers().isShiftDown() ? silt.redoRoutes() : silt.undoRoutes())
+            repaint();
         return true;
     }
     if (key == juce::KeyPress::escapeKey)

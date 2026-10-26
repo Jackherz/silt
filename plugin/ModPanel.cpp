@@ -155,7 +155,8 @@ void ModChip::mouseDown (const juce::MouseEvent& e)
     {
         if (pendingClear)
         {
-            silt.clearRoutesForModulator (m);
+            silt.beginRouteGesture();
+            silt.editRoutes ([this] { silt.clearRoutesForModulator (m); });
             pendingClear = false;
             stopTimer();
         }
@@ -223,7 +224,10 @@ void ModChip::showMenu()
                                                     juce::ModalCallbackFunction::create ([this] (int ok)
                                                     {
                                                         if (ok != 0)
-                                                            silt.clearRoutesForModulator (m);
+                                                        {
+                                                            silt.beginRouteGesture();
+                                                            silt.editRoutes ([this] { silt.clearRoutesForModulator (m); });
+                                                        }
                                                     }));
                 break;
             }
@@ -322,12 +326,18 @@ public:
         depth.addMouseListener (this, false);
         depth.onTextChange = [this]
         {
-            silt.setRouteAmount (route.modulator, route.target, snapped (depth.getText().retainCharacters ("-0123456789.").getFloatValue() / 100.0f));
+            const float typed = snapped (depth.getText().retainCharacters ("-0123456789.").getFloatValue() / 100.0f);
+            silt.beginRouteGesture();
+            silt.editRoutes ([&] { silt.setRouteAmount (route.modulator, route.target, typed); });
             refresh();
         };
         addAndMakeVisible (depth);
         remove.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x00d7));
-        remove.onClick = [this] { silt.setRouteAmount (route.modulator, route.target, 0.0f); };
+        remove.onClick = [this]
+        {
+            silt.beginRouteGesture();
+            silt.editRoutes ([this] { silt.setRouteAmount (route.modulator, route.target, 0.0f); });
+        };
         addAndMakeVisible (remove);
         refresh();
     }
@@ -336,21 +346,24 @@ public:
     {
         const bool bipolar = silt::Modulator::isBipolar (silt.readModulatorParams (route.modulator));
         depth.setText (percentText (silt.routeAmount (route.modulator, route.target), bipolar), juce::dontSendNotification);
-        span = silt.depthText (route.modulator, route.target).fromFirstOccurrenceOf ("(", false, false).upToLastOccurrenceOf (")", false, false);
+        span = silt.depthSpan (route.modulator, route.target);
         repaint();
     }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
         if (e.eventComponent == &depth)
+        {
             amountAtStart = silt.routeAmount (route.modulator, route.target);
+            silt.beginRouteGesture();
+        }
     }
     void mouseDrag (const juce::MouseEvent& e) override
     {
         if (e.eventComponent != &depth)
             return;
         const float amount = amountAtStart - (float) e.getDistanceFromDragStartY() / (e.mods.isShiftDown() ? 1000.0f : 150.0f);
-        silt.setRouteAmount (route.modulator, route.target, snapped (amount));
+        silt.editRoutes ([&] { silt.setRouteAmount (route.modulator, route.target, snapped (amount)); });
         refresh();
     }
 
@@ -420,8 +433,12 @@ RouteList::RouteList (SiltProcessor& p, ModActions& a) : silt (p), actions (a)
     {
         if (pendingClearAll)
         {
-            for (int m = 0; m < SiltProcessor::numModulators; ++m)
-                silt.clearRoutesForModulator (m);
+            silt.beginRouteGesture();
+            silt.editRoutes ([this]
+            {
+                for (int m = 0; m < SiltProcessor::numModulators; ++m)
+                    silt.clearRoutesForModulator (m);
+            });
             timerCallback();
             rebuild();
         }
@@ -435,6 +452,10 @@ RouteList::RouteList (SiltProcessor& p, ModActions& a) : silt (p), actions (a)
     addAndMakeVisible (clearAll);
     close.onClick = [this] { if (onClose) onClose(); };
     addAndMakeVisible (close);
+    undo.onClick = [this] { silt.undoRoutes(); rebuild(); };
+    redo.onClick = [this] { silt.redoRoutes(); rebuild(); };
+    addAndMakeVisible (undo);
+    addAndMakeVisible (redo);
     viewport.setViewedComponent (&rows, false);
     viewport.setScrollBarsShown (true, false);
     viewport.setScrollBarThickness (8);
@@ -482,6 +503,8 @@ void RouteList::update()
     }
     for (auto& row : rowComponents)
         row->refresh();
+    undo.setEnabled (silt.canUndoRoutes());
+    redo.setEnabled (silt.canRedoRoutes());
     repaint (footer);
 }
 
@@ -523,7 +546,12 @@ void RouteList::resized()
     for (auto& f : filters)
         f.setBounds (head.removeFromLeft (40).reduced (2, 0));
     footer = r.removeFromBottom (24);
-    clearAll.setBounds (footer.withTrimmedLeft (footer.getWidth() - 110).reduced (0, 2));
+    auto buttons = footer;
+    clearAll.setBounds (buttons.removeFromRight (110).reduced (0, 2));
+    buttons.removeFromRight (8);
+    redo.setBounds (buttons.removeFromRight (64).reduced (0, 2));
+    buttons.removeFromRight (4);
+    undo.setBounds (buttons.removeFromRight (64).reduced (0, 2));
     r.removeFromTop (2);
     viewport.setBounds (r);
 

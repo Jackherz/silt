@@ -19,7 +19,7 @@ class GrainScreen;
 // Modulation gestures (docs/mod-section-design.md): drag a knob for its value,
 // Alt-drag for the depth of the armed modulator (or the knob's only route),
 // right-click for its routes; drag a chip onto a knob to make a route; keys
-// 1–4 arm a modulator and Esc disarms.
+// 1–4 arm a modulator and Esc disarms; Cmd/Ctrl+Z undoes route changes.
 class SiltEditor final : public juce::AudioProcessorEditor,
                          public juce::FileDragAndDropTarget,
                          public juce::DragAndDropContainer,
@@ -61,6 +61,7 @@ public:
         std::function<void (int modulator, float amount)> setAmount;
         std::function<void (int modulator, bool dragging)> depthDragged;   // for the LCD readout
         std::function<void()> showMenu;                  // right-click
+        std::function<void()> routeGesture;              // a new undo step begins
         int dropHover = -1;                              // a chip held over it
 
         // The depth gesture, also used directly by tests.

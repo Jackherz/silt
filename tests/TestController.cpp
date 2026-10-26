@@ -213,7 +213,8 @@ TEST_CASE ("Routes list every non-zero pair; clearing a modulator touches only i
     rig.silt.clearRoutesForModulator (2);
     CHECK (rig.silt.routeCount (2) == 0);
     CHECK (rig.silt.routeAmount (0, cutoff) == 0.4f);
-    CHECK (rig.silt.depthText (0, cutoff).startsWith (juce::String::charToString ((juce::juce_wchar) 0x00b1) + "40%"));
+    CHECK (rig.silt.depthText (0, cutoff).endsWith ("(" + juce::String::charToString ((juce::juce_wchar) 0x00b1) + "40%)"));
+    CHECK (rig.silt.depthText (0, cutoff).startsWith (rig.silt.depthSpan (0, cutoff)));
 }
 
 TEST_CASE ("A muted modulator contributes nothing, keeps its routes, and saves")
@@ -515,4 +516,24 @@ TEST_CASE ("Cross-modulation: one modulator speeds up another, and self-modulati
         REQUIRE (std::isfinite (v));
         REQUIRE (std::abs (v) <= 1.0f);
     }
+}
+
+TEST_CASE ("Route edits undo and redo; a gesture is one step")
+{
+    Rig rig;
+    const int t = rig.silt.modulationTarget ("filterCutoff");
+    rig.silt.beginRouteGesture();
+    for (const float a : { 0.1f, 0.2f, 0.3f })   // a drag
+        rig.silt.editRoutes ([&] { rig.silt.setRouteAmount (0, t, a); });
+    rig.silt.beginRouteGesture();
+    rig.silt.editRoutes ([&] { rig.silt.clearRoutesForModulator (0); });
+    CHECK (rig.silt.routeAmount (0, t) == 0.0f);
+
+    REQUIRE (rig.silt.undoRoutes());   // the clear
+    CHECK (rig.silt.routeAmount (0, t) == 0.3f);
+    REQUIRE (rig.silt.undoRoutes());   // the whole drag
+    CHECK (rig.silt.routeAmount (0, t) == 0.0f);
+    CHECK_FALSE (rig.silt.canUndoRoutes());
+    REQUIRE (rig.silt.redoRoutes());
+    CHECK (rig.silt.routeAmount (0, t) == 0.3f);
 }

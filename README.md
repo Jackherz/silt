@@ -96,6 +96,10 @@ routed to). Design: `docs/mod-section-design.md`.
 - **ROUTES** (strip, or right-click): every route in one list, filtered by
   modulator or page. Drag a depth (double-click to type it), see its span in the
   parameter's units, × removes one, CLEAR ALL (twice) removes them all.
+- **Undo:** route changes (drags, drops, menus, clears, controller turns) undo
+  and redo with Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z, the route list's UNDO/REDO, or a
+  knob's right-click; a whole drag or a clear-all is one step. Depths read in the
+  parameter's units first ("480 Hz to 2.64 kHz (±35%)").
 - **Mute** a modulator (ON under TYPE, or the chip's menu): it contributes nothing
   and keeps its routes.
 - **MOD page:** the shown modulator (click the banner for the next), its type, five

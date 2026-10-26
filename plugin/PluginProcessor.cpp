@@ -1014,9 +1014,10 @@ bool SiltProcessor::isModulatorEnabled (int modulator) const noexcept
     return modulatorRaw[(size_t) modulator].enable->load (std::memory_order_relaxed) > 0.5f;
 }
 
-// The depth as a percentage of the range, then the span it moves the value
-// over in the parameter's own units (both ways for bipolar sources).
-juce::String SiltProcessor::depthText (int modulator, int target) const
+// What a route moves its parameter over, in the parameter's own units (both
+// ways from the knob for bipolar sources): the readout that means the same for
+// cutoff and for mix, which a percentage doesn't.
+juce::String SiltProcessor::depthSpan (int modulator, int target) const
 {
     const float amount = routeAmount (modulator, target);
     auto& p = *targets[(size_t) target].parameter;
@@ -1024,9 +1025,68 @@ juce::String SiltProcessor::depthText (int modulator, int target) const
     const bool bipolar = silt::Modulator::isBipolar (readModulatorParams (modulator));
     const float lo = juce::jlimit (0.0f, 1.0f, base + (bipolar ? -std::abs (amount) : juce::jmin (0.0f, amount)));
     const float hi = juce::jlimit (0.0f, 1.0f, base + (bipolar ? std::abs (amount) : juce::jmax (0.0f, amount)));
+    return p.getText (lo, 0) + " to " + p.getText (hi, 0);
+}
+
+// The span, then the depth as a share of the range.
+juce::String SiltProcessor::depthText (int modulator, int target) const
+{
+    const float amount = routeAmount (modulator, target);
+    const bool bipolar = silt::Modulator::isBipolar (readModulatorParams (modulator));
     const int percent = juce::roundToInt (amount * 100.0f);
     const auto sign = bipolar ? juce::String::charToString ((juce::juce_wchar) 0x00b1) : (percent > 0 ? juce::String ("+") : juce::String());
-    return sign + juce::String (bipolar ? std::abs (percent) : percent) + "%  (" + p.getText (lo, 0) + " to " + p.getText (hi, 0) + ")";
+    return depthSpan (modulator, target) + "  (" + sign + juce::String (bipolar ? std::abs (percent) : percent) + "%)";
+}
+
+// --- route undo ---------------------------------------------------------------------
+
+// One undo step: every route before and after. Steps in one gesture merge, so
+// the first "before" and the last "after" are kept.
+class SiltProcessor::RoutesChange final : public juce::UndoableAction
+{
+public:
+    RoutesChange (SiltProcessor& p, std::vector<float> b, std::vector<float> a)
+        : processor (p), before (std::move (b)), after (std::move (a)) {}
+
+    bool perform() override { processor.restoreRoutes (after); return true; }
+    bool undo() override { processor.restoreRoutes (before); return true; }
+    int getSizeInUnits() override { return 1; }
+
+    juce::UndoableAction* createCoalescedAction (juce::UndoableAction* next) override
+    {
+        if (auto* change = dynamic_cast<RoutesChange*> (next))
+            return new RoutesChange (processor, before, change->after);
+        return nullptr;
+    }
+
+private:
+    SiltProcessor& processor;
+    std::vector<float> before, after;
+};
+
+std::vector<float> SiltProcessor::routeSnapshot() const
+{
+    std::vector<float> s ((size_t) (numModulators * numTargets()));
+    for (int m = 0; m < numModulators; ++m)
+        for (int t = 0; t < numTargets(); ++t)
+            s[(size_t) (m * numTargets() + t)] = routeAmount (m, t);
+    return s;
+}
+
+void SiltProcessor::restoreRoutes (const std::vector<float>& s) noexcept
+{
+    for (int m = 0; m < numModulators; ++m)
+        for (int t = 0; t < numTargets(); ++t)
+            setRouteAmount (m, t, s[(size_t) (m * numTargets() + t)]);
+}
+
+void SiltProcessor::editRoutes (const std::function<void()>& edit)
+{
+    auto before = routeSnapshot();
+    edit();
+    auto after = routeSnapshot();
+    if (before != after)
+        routeUndo.perform (new RoutesChange (*this, std::move (before), std::move (after)));
 }
 
 float SiltProcessor::modulatedValue01 (int target) const noexcept
@@ -1283,7 +1343,15 @@ void SiltProcessor::applyControllerMoves()
         if (const int m = armedMod.load(); m >= 0 && page != modPage && ! id.startsWith ("!"))
         {
             if (const int t = modulationTarget (id); t >= 0)
-                setRouteAmount (m, t, juce::jlimit (-1.0f, 1.0f, (float) (value - 64) / 63.0f));
+            {
+                // One undo step per knob turn: a new step on another route or after a pause.
+                const auto now = juce::Time::getMillisecondCounter();
+                if (m * maxTargets + t != lastControllerRoute || now - lastControllerRouteTime > 1000)
+                    beginRouteGesture();
+                lastControllerRoute = m * maxTargets + t;
+                lastControllerRouteTime = now;
+                editRoutes ([&] { setRouteAmount (m, t, juce::jlimit (-1.0f, 1.0f, (float) (value - 64) / 63.0f)); });
+            }
             last = value;
             return;
         }
@@ -1676,6 +1744,7 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
             setRouteAmount (parts[0].getIntValue(), modulationTarget (parts[1]), parts[2].getFloatValue());
     }
     modShown.store (juce::jlimit (0, numModulators - 1, (int) tree.getProperty ("modShown", 0)));
+    routeUndo.clearUndoHistory();   // a loaded set starts its own history
     editorWidth.store ((int) tree.getProperty ("editorWidth", 0));
     editorHeight.store ((int) tree.getProperty ("editorHeight", 0));
 

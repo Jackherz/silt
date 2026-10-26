@@ -130,7 +130,18 @@ public:
     int routeCount (int modulator) const noexcept;
     struct Route { int modulator, target; float amount; };
     std::vector<Route> allRoutes() const;                            // in panel order, then modulator
-    juce::String depthText (int modulator, int target) const;       // "+37%  (1.00 kHz … 2.64 kHz)"
+    juce::String depthSpan (int modulator, int target) const;       // "480 Hz to 2.64 kHz": what it moves over
+    juce::String depthText (int modulator, int target) const;       // "480 Hz to 2.64 kHz  (±35%)"
+
+    // Message thread: route edits that can be undone. `edit` changes routes; the
+    // change becomes one undo step, merged with the previous step until the next
+    // beginRouteGesture(), so a whole drag undoes at once.
+    void editRoutes (const std::function<void()>& edit);
+    void beginRouteGesture() { routeUndo.beginNewTransaction(); }
+    bool undoRoutes() { return routeUndo.undo(); }
+    bool redoRoutes() { return routeUndo.redo(); }
+    bool canUndoRoutes() const { return routeUndo.canUndo(); }
+    bool canRedoRoutes() const { return routeUndo.canRedo(); }
     float modulatedValue01 (int target) const noexcept;             // where modulation has it now
     silt::ModulatorParams readModulatorParams (int modulator) const noexcept;
     bool isModulatorEnabled (int modulator) const noexcept;         // muted: contributes nothing, routes kept
@@ -208,6 +219,14 @@ private:
     std::array<bool, 128> heldKeys {};   // audio thread: which notes are down, so repeats don't miscount
     std::array<float, numModulators> globalModValues {};   // audio thread: this chunk's shared values
     std::vector<int> voiceTargets;
+
+    // Route undo (message thread).
+    class RoutesChange;
+    std::vector<float> routeSnapshot() const;
+    void restoreRoutes (const std::vector<float>&) noexcept;
+    juce::UndoManager routeUndo { 0, 50 };
+    int lastControllerRoute = -1;
+    juce::uint32 lastControllerRouteTime = 0;
 
     // Per-voice modulation (docs/per-voice-modulation.md): each voice's own
     // copies of the per-voice modulators, its own note context, and its grain
