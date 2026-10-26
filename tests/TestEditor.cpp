@@ -266,3 +266,58 @@ TEST_CASE ("Choosing a page while the route list is open goes to that page")
     CHECK_FALSE (rig.editor->routesShown());
     CHECK (rig.editor->visibleParameterId (silt::layout::grain, 0) == "pitch");
 }
+
+TEST_CASE ("Dragging a route's depth through 0 in MOD ROUTES keeps the row and carries on past it")
+{
+    EditorRig rig;
+    const int t = rig.silt.modulationTarget ("filterCutoff");
+    rig.silt.setRouteAmount (0, t, 0.1f);
+    rig.editor->showRoutes (-1);
+
+    silt::ui::RouteList* list = nullptr;
+    for (auto* child : rig.editor->getChildren())
+        if (auto* l = dynamic_cast<silt::ui::RouteList*> (child))
+            list = l;
+    REQUIRE (list != nullptr);
+    list->update();
+
+    // The depth box: the route list's only editable label.
+    juce::Label* depth = nullptr;
+    std::function<void (juce::Component&)> find = [&] (juce::Component& c)
+    {
+        for (auto* child : c.getChildren())
+        {
+            if (auto* label = dynamic_cast<juce::Label*> (child); label != nullptr && label->isEditableOnDoubleClick())
+                depth = label;
+            find (*child);
+        }
+    };
+    find (*list);
+    REQUIRE (depth != nullptr);
+
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    const auto event = [&] (float dy)
+    {
+        const auto now = juce::Time::getCurrentTime();
+        return juce::MouseEvent (source, { 10.0f, 10.0f + dy }, {}, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                 depth, depth, now, { 10.0f, 10.0f }, now, 1, dy != 0.0f);
+    };
+    auto* row = depth->getParentComponent();   // the row listens to its depth box
+    row->mouseDown (event (0.0f));
+    for (const float dy : { 10.0f, 15.0f, 30.0f, 45.0f })   // 150 px is 100%: +10% through 0 to −20%
+    {
+        row->mouseDrag (event (dy));
+        list->update();
+    }
+    CHECK_THAT (rig.silt.routeAmount (0, t), WithinAbs (-0.2, 1e-4));
+    row->mouseUp (event (45.0f));
+
+    // Released at 0, the route goes.
+    row->mouseDown (event (0.0f));
+    row->mouseDrag (event (-30.0f));
+    list->update();
+    row->mouseUp (event (-30.0f));
+    CHECK (rig.silt.routeAmount (0, t) == 0.0f);
+    list->update();
+    CHECK (rig.silt.allRoutes().empty());
+}

@@ -329,7 +329,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addAndMakeVisible (undoButton);
     addAndMakeVisible (redoButton);
 
-    // ROUTES: every modulation route in one list, from any page.
+    // MOD ROUTES: every modulation route in one list, from any page.
     routesButton.onClick = [this]
     {
         if (routeList->isVisible())
@@ -1084,7 +1084,7 @@ void SiltEditor::resized()
         monitorButton.setBounds (row.removeFromRight (104).reduced (0, 4));
         row.removeFromRight (8);
     }
-    routesButton.setBounds (row.removeFromRight (90));
+    routesButton.setBounds (row.removeFromRight (112));
     row.removeFromRight (8);
     redoButton.setBounds (row.removeFromRight (60));
     row.removeFromRight (4);

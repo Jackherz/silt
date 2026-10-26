@@ -584,6 +584,7 @@ TEST_CASE ("A route's polarity: unipolar goes one way from a bipolar source, bip
     CHECK (restored.silt.routePolarityOf (0, t) == SiltProcessor::unipolar);
     CHECK (restored.silt.routePolarityOf (1, reso) == SiltProcessor::bipolar);
     restored.silt.setRouteAmount (0, t, 0.0f);
+    restored.silt.beginRouteGesture();   // removed for good once the next edit starts
     CHECK (restored.silt.routePolarityOf (0, t) == SiltProcessor::natural);
 }
 
@@ -832,4 +833,34 @@ TEST_CASE ("The scope sees the sound going into the tapped module and out of it"
     }
     CHECK (peak > 0.01f);
     CHECK (difference > 0.005f);   // 3 bits: the output is visibly steppier
+}
+
+TEST_CASE ("A depth dragged through 0 keeps its route's polarity; a removed route starts natural next time")
+{
+    Rig rig;
+    const int t = rig.silt.modulationTarget ("filterCutoff");
+    rig.silt.beginRouteGesture();
+    rig.silt.editRoutes ([&] { rig.silt.setRouteAmount (0, t, 0.4f); });
+    rig.silt.setRoutePolarity (0, t, SiltProcessor::unipolar);   // MOD 1 is a WAVE: naturally bipolar
+    REQUIRE_FALSE (rig.silt.routeIsBipolar (0, t));
+
+    // One drag, from +40% through 0 to −30%.
+    rig.silt.beginRouteGesture();
+    for (const float amount : { 0.2f, 0.0f, -0.3f })
+        rig.silt.editRoutes ([&] { rig.silt.setRouteAmount (0, t, amount); });
+    CHECK_THAT (rig.silt.routeAmount (0, t), WithinAbs (-0.3, 1e-6));
+    CHECK_FALSE (rig.silt.routeIsBipolar (0, t));
+
+    // Left at 0, it's gone; made again later, it starts natural.
+    rig.silt.beginRouteGesture();
+    rig.silt.editRoutes ([&] { rig.silt.setRouteAmount (0, t, 0.0f); });
+    rig.silt.beginRouteGesture();
+    rig.silt.editRoutes ([&] { rig.silt.setRouteAmount (0, t, 0.5f); });
+    CHECK (rig.silt.routeIsBipolar (0, t));
+
+    // Undo goes back through the drag with its polarity.
+    rig.silt.undoRoutes();
+    rig.silt.undoRoutes();
+    CHECK_THAT (rig.silt.routeAmount (0, t), WithinAbs (-0.3, 1e-6));
+    CHECK_FALSE (rig.silt.routeIsBipolar (0, t));
 }

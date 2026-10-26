@@ -173,7 +173,7 @@ public:
     // merged with the previous step until the next beginRouteGesture(), so a
     // whole drag undoes at once.
     void editRoutes (const std::function<void()>& edit);
-    void beginRouteGesture() { routeUndo.beginNewTransaction ("MODULATION"); }
+    void beginRouteGesture();
     bool undoRoutes() { return undoing ([this] { return routeUndo.undo(); }); }
     bool redoRoutes() { return undoing ([this] { return routeUndo.redo(); }); }
     bool canUndoRoutes() const { return routeUndo.canUndo(); }

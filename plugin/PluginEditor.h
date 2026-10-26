@@ -153,7 +153,7 @@ private:
     int page = 0;
     std::vector<bool> shownNow;   // per control: what updateVisibility last showed
 
-    juce::TextButton armButton, loadButton { "LOAD" }, learnButton { "LEARN" }, routesButton { "ROUTES" };
+    juce::TextButton armButton, loadButton { "LOAD" }, learnButton { "LEARN" }, routesButton { "MOD ROUTES" };
     juce::TextButton undoButton { "UNDO" }, redoButton { "REDO" };
     juce::String flash;                                // a moment's message in the LCD
     juce::uint32 flashUntil = 0;

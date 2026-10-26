@@ -1110,8 +1110,6 @@ void SiltProcessor::setRouteAmount (int modulator, int target, float amount) noe
     if (modulator >= 0 && modulator < numModulators && target >= 0 && target < (int) targets.size())
     {
         routeAmounts[(size_t) modulator * maxTargets + (size_t) target].store (juce::jlimit (-1.0f, 1.0f, amount), std::memory_order_relaxed);
-        if (amount == 0.0f)
-            routePolarity[(size_t) modulator * maxTargets + (size_t) target].store (natural, std::memory_order_relaxed);   // a new route starts natural
     }
 }
 
@@ -1362,6 +1360,16 @@ bool SiltProcessor::undoing (const std::function<bool()>& step)
 {
     lastGestureParameter = -1;   // the next change starts its own step
     return step();
+}
+
+// A route removed earlier starts natural when it's made again. Only here, at a
+// gesture's start: a depth dragged through 0 keeps its polarity.
+void SiltProcessor::beginRouteGesture()
+{
+    for (size_t i = 0; i < routeAmounts.size(); ++i)
+        if (juce::exactlyEqual (routeAmounts[i].load (std::memory_order_relaxed), 0.0f))
+            routePolarity[i].store (natural, std::memory_order_relaxed);
+    routeUndo.beginNewTransaction ("MODULATION");
 }
 
 void SiltProcessor::editRoutes (const std::function<void()>& edit)

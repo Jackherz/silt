@@ -392,8 +392,10 @@ public:
         {
             amountAtStart = silt.routeAmount (route.modulator, route.target);
             silt.beginRouteGesture();
+            dragging = true;
         }
     }
+    void mouseUp (const juce::MouseEvent&) override { dragging = false; }
     void mouseDrag (const juce::MouseEvent& e) override
     {
         if (e.eventComponent != &depth)
@@ -438,6 +440,7 @@ public:
     }
 
     const SiltProcessor::Route& getRoute() const noexcept { return route; }
+    bool isDragging() const noexcept { return dragging; }
 
 private:
     SiltProcessor& silt;
@@ -447,6 +450,7 @@ private:
     juce::TextButton polarity, remove;
     juce::String span;
     float amountAtStart = 0.0f;
+    bool dragging = false;   // a depth at 0 mid-drag stays listed until the drag ends
 };
 
 RouteList::RouteList (SiltProcessor& p, ModActions& a) : silt (p), actions (a)
@@ -533,7 +537,8 @@ void RouteList::update()
     const bool same = now.size() == shown.size()
                    && std::equal (now.begin(), now.end(), shown.begin(), [] (const auto& a, const auto& b)
                                   { return a.modulator == b.modulator && a.target == b.target; });
-    if (! same)
+    const bool dragging = std::any_of (rowComponents.begin(), rowComponents.end(), [] (const auto& row) { return row->isDragging(); });
+    if (! same && ! dragging)
     {
         rebuild();
         return;
@@ -552,7 +557,7 @@ void RouteList::paint (juce::Graphics& g)
     g.setColour (ink);
     g.drawRect (getLocalBounds(), 2);
     g.setFont (panelFont (12.0f));
-    g.drawText ("ROUTES", getLocalBounds().reduced (10, 4).removeFromTop (22), juce::Justification::centredLeft);
+    g.drawText ("MOD ROUTES", getLocalBounds().reduced (10, 4).removeFromTop (22), juce::Justification::centredLeft);
 
     if (shown.empty())
     {
@@ -575,7 +580,7 @@ void RouteList::resized()
 {
     auto r = getLocalBounds().reduced (6, 4);
     auto head = r.removeFromTop (22);
-    head.removeFromLeft (70);
+    head.removeFromLeft (112);   // the "MOD ROUTES" title
     close.setBounds (head.removeFromRight (64));
     head.removeFromRight (6);
     pageFilter.setBounds (head.removeFromRight (84));
