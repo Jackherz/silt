@@ -9,6 +9,7 @@ namespace silt::ui
 class PanelLook;
 class GrainScreen;
 }
+class PresetBar;
 
 // The panel, drawn natively in the plan §5 palette. A screen on top shows the
 // sample and every sounding grain; below it, one page of controls at a time,
@@ -124,6 +125,8 @@ private:
     silt::ui::ModActions modActions;
     std::unique_ptr<silt::ui::ModRail> rail;
     std::unique_ptr<silt::ui::RouteList> routeList;
+    std::unique_ptr<PresetBar> presetBar;
+    juce::String presetShown;
     juce::TooltipWindow tooltips { this, 600 };
 
     std::vector<std::unique_ptr<Control>> controls;
@@ -138,7 +141,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> monitorAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
 
-    juce::Rectangle<int> header, stripesArea, strip, pagePanel, controlRow, railArea;
+    juce::Rectangle<int> header, stripesArea, lcdArea, strip, pagePanel, controlRow, railArea;
     int seenGeneration = -1;
     bool dragHover = false, screenWasLive = false;
     int learnSeen = -1, armedSeen = -2, modShownSeen = -1;

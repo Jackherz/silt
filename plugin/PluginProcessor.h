@@ -155,6 +155,12 @@ public:
     std::atomic<int> modShown { 0 };                                // the modulator the MOD page shows
     std::atomic<int> armedMod { -1 };                               // ≥ 0: controller knobs set this modulator's depth
 
+    // Presets (see Presets.h): the sound without the sample, controller mapping
+    // or window. Message thread.
+    std::unique_ptr<juce::XmlElement> capturePreset (const juce::String& name) const;
+    void applyPreset (const juce::XmlElement&, const juce::String& name);
+    juce::String presetName { "Init" };
+
     // The editor's size, saved with the set.
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };
 

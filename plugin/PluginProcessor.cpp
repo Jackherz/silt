@@ -1230,6 +1230,62 @@ bool SiltProcessor::isModulatorPerVoice (int m) const noexcept
     return modulatorRaw[(size_t) m].voice->load (std::memory_order_relaxed) > 0.5f;
 }
 
+// --- presets ---------------------------------------------------------------------------
+
+namespace
+{
+// Session settings, not part of a sound.
+bool inPresets (const juce::String& id) { return id != "monitor" && id != "captureBars"; }
+} // namespace
+
+std::unique_ptr<juce::XmlElement> SiltProcessor::capturePreset (const juce::String& name) const
+{
+    auto xml = std::make_unique<juce::XmlElement> ("SiltPreset");
+    xml->setAttribute ("name", name);
+    xml->setAttribute ("version", 1);
+    auto* values = xml->createNewChildElement ("PARAMS");
+    for (auto* parameter : getParameters())
+        if (auto* p = dynamic_cast<juce::RangedAudioParameter*> (parameter); p != nullptr && inPresets (p->getParameterID()))
+            values->setAttribute (p->getParameterID(), p->convertFrom0to1 (p->getValue()));
+    juce::StringArray routes;
+    for (const auto& r : allRoutes())
+        routes.add (juce::String (r.modulator) + ":" + targets[(size_t) r.target].parameter->getParameterID() + ":" + juce::String (r.amount, 4));
+    xml->setAttribute ("routes", routes.joinIntoString (";"));
+    xml->setAttribute ("modShown", modShown.load());
+    return xml;
+}
+
+// Every parameter takes the preset's value, or its default if the preset
+// doesn't list it (so presets are complete), as host-visible gestures. Routes
+// are replaced; the route undo history starts over (it can't undo the values).
+void SiltProcessor::applyPreset (const juce::XmlElement& xml, const juce::String& name)
+{
+    const auto* values = xml.getChildByName ("PARAMS");
+    for (auto* parameter : getParameters())
+        if (auto* p = dynamic_cast<juce::RangedAudioParameter*> (parameter); p != nullptr && inPresets (p->getParameterID()))
+        {
+            const auto id = p->getParameterID();
+            const float normalised = values != nullptr && values->hasAttribute (id)
+                                   ? p->convertTo0to1 ((float) values->getDoubleAttribute (id))
+                                   : p->getDefaultValue();
+            p->beginChangeGesture();
+            p->setValueNotifyingHost (normalised);
+            p->endChangeGesture();
+        }
+
+    for (auto& amount : routeAmounts)
+        amount.store (0.0f);
+    for (const auto& route : juce::StringArray::fromTokens (xml.getStringAttribute ("routes"), ";", ""))
+    {
+        const auto parts = juce::StringArray::fromTokens (route, ":", "");
+        if (parts.size() == 3)
+            setRouteAmount (parts[0].getIntValue(), modulationTarget (parts[1]), parts[2].getFloatValue());
+    }
+    modShown.store (juce::jlimit (0, numModulators - 1, xml.getIntAttribute ("modShown", 0)));
+    routeUndo.clearUndoHistory();
+    presetName = name;
+}
+
 juce::AudioProcessorEditor* SiltProcessor::createEditor()
 {
     return new SiltEditor (*this);
@@ -1662,6 +1718,7 @@ void SiltProcessor::getStateInformation (juce::MemoryBlock& destData)
                 routes.add (juce::String (m) + ":" + targets[t].parameter->getParameterID() + ":" + juce::String (amount, 4));
     state.setProperty ("modRoutes", routes.joinIntoString (";"), nullptr);
     state.setProperty ("modShown", modShown.load(), nullptr);
+    state.setProperty ("presetName", presetName, nullptr);
     if (editorWidth.load() > 0)
     {
         state.setProperty ("editorWidth", editorWidth.load(), nullptr);
@@ -1745,6 +1802,7 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
     }
     modShown.store (juce::jlimit (0, numModulators - 1, (int) tree.getProperty ("modShown", 0)));
     routeUndo.clearUndoHistory();   // a loaded set starts its own history
+    presetName = tree.getProperty ("presetName", "Init").toString();
     editorWidth.store ((int) tree.getProperty ("editorWidth", 0));
     editorHeight.store ((int) tree.getProperty ("editorHeight", 0));
 

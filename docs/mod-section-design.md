@@ -15,7 +15,20 @@ referenced where they matter.
   on load rather than listed, since nothing can apply them.
 - MOD slot 7 (ASSIGN) arms the shown modulator and lights only while that one is armed.
 
-§8 "later" ideas: per-voice spread is done (see `per-voice-modulation.md`); the rest follow.
+§8 "later" ideas, 26 Oct 2026: all done.
+
+- **Undo:** route changes only (a `juce::UndoManager` of before/after snapshots;
+  gestures merge into one step; Cmd/Ctrl+Z). Parameter values aren't in it: an APVTS
+  undo manager would also record host automation.
+- **Depth in real units:** `depthSpan()`/`depthText()` lead with the span in the
+  parameter's units; the LCD readout, menus and route list use it.
+- **Macros:** a MACRO modulator type (its knob is the value), not a separate second row
+  of four: any of the four modulators can be one.
+- **Per-voice spread:** see `per-voice-modulation.md` (a VOICE switch per modulator).
+- **Cross-modulation:** modulators' continuous settings are targets; modulators read
+  their settings through the modulated values, a chunk late, so order never matters.
+- **Presets:** factory set plus user files, a header bar; see the README.
+- **Resizable panel:** done with F11.
 
 ---
 

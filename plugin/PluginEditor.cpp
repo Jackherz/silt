@@ -2,6 +2,7 @@
 #include "GrainScreen.h"
 #include "ModColours.h"
 #include "PanelLook.h"
+#include "Presets.h"
 
 using namespace silt::ui;
 namespace layout = silt::layout;
@@ -173,6 +174,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
 
     rail = std::make_unique<ModRail> (silt, modActions);
     addAndMakeVisible (*rail);
+    presetBar = std::make_unique<PresetBar> (silt);
+    addAndMakeVisible (*presetBar);
 
     for (const auto& entry : layout::entries (SiltProcessor::isInstrument))
         buildControl (entry);
@@ -786,6 +789,12 @@ void SiltEditor::timerCallback()
         repaint (stripesArea);
     }
 
+    if (silt.presetName != presetShown)
+    {
+        presetShown = silt.presetName;
+        presetBar->refresh();
+    }
+
     const bool capturing = silt.captureState.load() != SiltProcessor::CaptureState::idle;
     armButton.setButtonText (capturing ? "CANCEL" : juce::String (juce::CharPointer_UTF8 ("\xe2\x97\x8f ARM")));
 
@@ -815,6 +824,9 @@ void SiltEditor::resized()
     auto r = getLocalBounds().reduced (14);
     header = r.removeFromTop (44);
     stripesArea = header.withTrimmedLeft (130).withWidth (180).withSizeKeepingCentre (180, 19);
+    lcdArea = header.withTrimmedLeft (header.getWidth() - juce::jmin (420, header.getWidth() * 2 / 5)).reduced (8, 7);
+    presetBar->setBounds (juce::Rectangle<int>::leftTopRightBottom (stripesArea.getRight() + 16, header.getY(), lcdArea.getX() - 12, header.getBottom())
+                              .withSizeKeepingCentre (juce::jmin (330, lcdArea.getX() - 12 - stripesArea.getRight() - 16), 26));
     r.removeFromTop (10);
 
     pagePanel = r.removeFromBottom (192);
@@ -970,7 +982,7 @@ void SiltEditor::paint (juce::Graphics& g)
     g.drawText (juce::String (JucePlugin_Name).toUpperCase(), header.withTrimmedLeft (16), juce::Justification::centredLeft);
     paintStripes (g);
 
-    auto lcd = header.withTrimmedLeft (header.getWidth() - 420).reduced (8, 7);
+    const auto lcd = lcdArea;
     g.setColour (juce::Colour (0xff14110f));
     g.fillRect (lcd);
     g.setColour (lcdGreen);

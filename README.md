@@ -121,6 +121,14 @@ Targets are the continuous and stepped parameters; switches (menus, buttons),
 the pattern seed and MACRO knobs aren't. Modulation updates every 64 samples (the
 knobs' own smoothing takes it from there); routes are saved with the set.
 
+**Presets** (header: ◀ name ▶, SAVE): a preset is the sound (every parameter, the
+modulation routes, the shown modulator), not the sample, the controller mapping or
+the window. Eight factory presets are built in (Init, Glass Cloud, Tape Choir, Rust
+Rhythm, Bell Garden, Wander, Dark Drone, Shimmer Pad); user presets are
+`.siltpreset` XML files in `~/Library/Audio/Presets/Silt Audio/<plug-in>/` on macOS
+(`%APPDATA%/Silt Audio/<plug-in>/Presets` on Windows). SAVE updates a user preset,
+or asks for a name; the name menu lists both sets, SAVE AS… and the folder.
+
 **8-knob controller:** a controller's 8 knobs move the 8 slots of the current page
 (GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER / COLOR / SPACE / MOD), following the modes
 (the editor and the controller read the same page table, and a test checks they agree); two buttons step pages; works with

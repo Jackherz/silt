@@ -163,3 +163,74 @@ TEST_CASE ("The editor's size is kept with the set")
     CHECK (editor->getWidth() == 1200);
     CHECK (editor->getHeight() == 700);
 }
+
+// --- Presets ------------------------------------------------------------------------------
+
+#include "../plugin/Presets.h"
+
+TEST_CASE ("A preset carries the sound: values and routes, not session settings")
+{
+    juce::ScopedJuceInitialiser_GUI juce;
+    SiltProcessor a, b;
+    a.params.getParameter ("spray")->setValueNotifyingHost (0.7f);
+    a.params.getParameter ("captureBars")->setValueNotifyingHost (1.0f);
+    a.setRouteAmount (1, a.modulationTarget ("filterCutoff"), -0.3f);
+    const auto xml = a.capturePreset ("Mine");
+    CHECK_FALSE (xml->getChildByName ("PARAMS")->hasAttribute ("captureBars"));
+
+    b.params.getParameter ("pitch")->setValueNotifyingHost (0.9f);   // must go back to its default
+    b.setRouteAmount (3, b.modulationTarget ("pitch"), 0.5f);        // must be cleared
+    b.applyPreset (*xml, "Mine");
+    CHECK_THAT (b.params.getParameter ("spray")->getValue(), WithinAbs (0.7, 1.0e-3));
+    CHECK (b.params.getParameter ("pitch")->getValue() == b.params.getParameter ("pitch")->getDefaultValue());
+    CHECK_THAT (b.routeAmount (1, b.modulationTarget ("filterCutoff")), WithinAbs (-0.3, 1.0e-4));
+    CHECK (b.routeAmount (3, b.modulationTarget ("pitch")) == 0.0f);
+    CHECK (b.presetName == "Mine");
+}
+
+TEST_CASE ("Every factory preset names real parameters and real routes")
+{
+    juce::ScopedJuceInitialiser_GUI juce;
+    SiltProcessor silt;
+    for (int i = 0; i < PresetManager::numFactoryPresets(); ++i)
+    {
+        const auto xml = PresetManager::factoryPreset (i);
+        INFO (xml->getStringAttribute ("name"));
+        const auto* values = xml->getChildByName ("PARAMS");
+        for (int a = 0; a < values->getNumAttributes(); ++a)
+        {
+            INFO (values->getAttributeName (a));
+            CHECK (silt.params.getParameter (values->getAttributeName (a)) != nullptr);
+        }
+        for (const auto& route : juce::StringArray::fromTokens (xml->getStringAttribute ("routes"), ";", ""))
+        {
+            INFO (route);
+            CHECK (silt.modulationTarget (route.fromFirstOccurrenceOf (":", false, false).upToFirstOccurrenceOf (":", false, false)) >= 0);
+        }
+    }
+}
+
+TEST_CASE ("User presets save, list, load and step")
+{
+    juce::ScopedJuceInitialiser_GUI juce;
+    SiltProcessor silt;
+    juce::TemporaryFile folder;
+    PresetManager presets (silt, folder.getFile());
+
+    silt.params.getParameter ("spray")->setValueNotifyingHost (0.4f);
+    REQUIRE (presets.save ("Zeta"));
+    silt.params.getParameter ("spray")->setValueNotifyingHost (0.9f);
+    REQUIRE (presets.save ("Alpha"));
+
+    const auto list = presets.list();
+    REQUIRE ((int) list.size() == PresetManager::numFactoryPresets() + 2);
+    CHECK (list[(size_t) PresetManager::numFactoryPresets()].name == "Alpha");   // users after factory, by name
+
+    REQUIRE (presets.load (list.back()));   // Zeta
+    CHECK_THAT (silt.params.getParameter ("spray")->getValue(), WithinAbs (0.4, 1.0e-3));
+    REQUIRE (presets.step (1));             // wraps to the first factory preset
+    CHECK (silt.presetName == "Init");
+    REQUIRE (presets.step (-1));
+    CHECK (silt.presetName == "Zeta");
+    folder.getFile().deleteRecursively();
+}
