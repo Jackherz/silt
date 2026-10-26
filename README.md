@@ -81,8 +81,9 @@ MACRO (a knob, automatable and controller-mappable, that moves everything it's
 routed to). Design: `docs/mod-section-design.md`.
 
 - **The mod rail**, left of every page: a chip per modulator with its colour and
-  number, type, a live meter and its route count. Click arms it (filled with its
-  colour; click again to disarm), Shift-click only selects it, drag it onto a knob
+  number, type, a two-second trace of what it's doing (its shape, round a centre
+  line for bipolar sources) and, when it has routes, a badge with how many. Click
+  arms it (outlined in its colour; click again to disarm), Shift-click only selects it, drag it onto a knob
   to make a +25% route, hover × (twice) clears its routes, right-click to edit,
   mute, show or clear. Keys 1–4 arm, Esc disarms. The header's four stripes are the
   same four modulators as meters.

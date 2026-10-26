@@ -43,6 +43,10 @@ juce::Rectangle<int> ModChip::clearBox() const
     return getLocalBounds().reduced (3).removeFromRight (14).removeFromTop (14);
 }
 
+// The chip: swatch and number, type, badges, and a short trace of what the
+// modulator has done over the last two seconds (its shape, not just its
+// level). Bipolar sources trace round a centre line, the rest up from the
+// bottom. Armed: an outline in its colour; shown on the MOD page: an ink one.
 void ModChip::paint (juce::Graphics& g)
 {
     const auto& colour = modColour (m);
@@ -50,31 +54,35 @@ void ModChip::paint (juce::Graphics& g)
     const bool muted = ! silt.isModulatorEnabled (m);
     const bool selected = silt.modShown.load() == m;
     const int routes = silt.routeCount (m);
-    auto r = getLocalBounds().toFloat().reduced (1.0f);
+    auto r = getLocalBounds().toFloat().reduced (1.5f);
 
-    g.setColour (armed ? colour.base : (muted ? chassis.darker (0.08f) : bone));
+    g.setColour (muted ? chassis.darker (0.08f) : bone);
     g.fillRoundedRectangle (r, 3.0f);
-    g.setColour (selected ? ink : boneLip);
-    g.drawRoundedRectangle (r, 3.0f, selected ? 2.0f : 1.0f);
-
-    auto area = getLocalBounds().reduced (5, 3);
-    auto top = area.removeFromTop (juce::jmax (12, area.getHeight() - 8));
-    const auto text = armed ? colour.ink : (muted ? inkSoft : ink);
-
-    // Swatch with the number: colour plus a label, never colour alone.
-    auto swatch = top.removeFromLeft (20).withSizeKeepingCentre (20, 14).toFloat();
-    g.setColour (muted ? colour.dim : colour.base);
-    g.fillRoundedRectangle (swatch, 2.0f);
     if (armed)
     {
-        g.setColour (colour.ink);
-        g.drawRoundedRectangle (swatch, 2.0f, 1.0f);
+        g.setColour (colour.base);
+        g.drawRoundedRectangle (r, 3.0f, 2.5f);
     }
+    else
+    {
+        g.setColour (selected ? ink : boneLip);
+        g.drawRoundedRectangle (r, 3.0f, selected ? 1.6f : 1.0f);
+    }
+
+    auto area = getLocalBounds().reduced (5, 3);
+    auto top = area.removeFromTop (juce::jmin (14, area.getHeight() / 2));
+    const auto text = muted ? inkSoft : ink;
+
+    // Swatch with the number: colour plus a label, never colour alone.
+    auto swatch = top.removeFromLeft (18).withSizeKeepingCentre (18, 13).toFloat();
+    g.setColour (muted ? colour.dim : colour.base);
+    g.fillRoundedRectangle (swatch, 2.0f);
     g.setColour (colour.ink);
     g.setFont (monoFont (10.0f));
     g.drawText (juce::String (m + 1), swatch, juce::Justification::centred);
     top.removeFromLeft (5);
 
+    // Right side: the clear × on hover, else the route count, only when routed.
     const bool hovered = isMouseOver (true);
     if (hovered && routes > 0)
     {
@@ -83,49 +91,68 @@ void ModChip::paint (juce::Graphics& g)
         g.drawText (juce::String::charToString ((juce::juce_wchar) 0x00d7), box, juce::Justification::centred);
         top.removeFromRight (16);
     }
-    else
+    else if (routes > 0)
     {
-        g.setColour (text);
-        g.setFont (monoFont (10.0f));
-        g.drawText (juce::String (routes), top.removeFromRight (16), juce::Justification::centredRight);
+        auto badge = top.removeFromRight (16).withSizeKeepingCentre (16, 12).toFloat();
+        g.setColour (muted ? colour.dim : colour.base);
+        g.fillRoundedRectangle (badge, 2.0f);
+        g.setColour (colour.ink);
+        g.setFont (monoFont (9.5f));
+        g.drawText (juce::String (routes), badge, juce::Justification::centred);
     }
     if (silt.isModulatorPerVoice (m))   // a V badge: each voice runs its own copy
     {
+        top.removeFromRight (3);
         auto badge = top.removeFromRight (13).withSizeKeepingCentre (12, 11).toFloat();
         g.setColour (text);
         g.drawRoundedRectangle (badge, 2.0f, 1.0f);
         g.setFont (monoFont (8.5f));
         g.drawText ("V", badge, juce::Justification::centred);
-        top.removeFromRight (2);
     }
 
     g.setFont (monoFont (11.0f));
     g.setColour (pendingClear ? signalRed : text);
     const auto label = pendingClear ? juce::String ("CLICK AGAIN")
                      : muted ? juce::String ("MUTED")
-                     : juce::String (typeName (typeOf (silt, m)));   // filled with its colour = armed
+                     : juce::String (typeName (typeOf (silt, m)));
     g.drawText (label, top, juce::Justification::centredLeft);
 
-    // The live meter: bipolar sources from the centre, the rest from the left.
-    auto meter = area.removeFromBottom (5).toFloat();
-    g.setColour ((armed ? colour.ink : ink).withAlpha (0.15f));
-    g.fillRect (meter);
-    const float v = silt.modOutputs[(size_t) m].load();
+    // The trace.
+    auto trace = area.reduced (2, 1).toFloat();
+    trace.removeFromLeft (21.0f);
     const bool bipolar = silt::Modulator::isBipolar (silt.readModulatorParams (m));
-    g.setColour (armed ? colour.ink : (muted ? colour.dim : colour.base));
-    if (bipolar)
+    const float baseline = bipolar ? trace.getCentreY() : trace.getBottom();
+    g.setColour (ink.withAlpha (0.25f));
+    g.drawHorizontalLine ((int) baseline, trace.getX(), trace.getRight());
+    juce::Path line;
+    const int n = (int) history.size();
+    for (int i = 0; i < n; ++i)
     {
-        const float mid = meter.getCentreX(), x = mid + juce::jlimit (-1.0f, 1.0f, v) * meter.getWidth() * 0.5f;
-        g.fillRect (juce::Rectangle<float>::leftTopRightBottom (juce::jmin (mid, x), meter.getY(), juce::jmax (mid, x), meter.getBottom()));
-        g.fillRect (mid - 0.5f, meter.getY() - 1.0f, 1.0f, meter.getHeight() + 2.0f);
+        const float v = history[(size_t) ((written + i) % n)];
+        const float y = bipolar ? baseline - juce::jlimit (-1.0f, 1.0f, v) * trace.getHeight() * 0.5f
+                                : baseline - juce::jlimit (0.0f, 1.0f, v) * trace.getHeight();
+        const float x = trace.getX() + trace.getWidth() * (float) i / (float) (n - 1);
+        if (i == 0)
+            line.startNewSubPath (x, y);
+        else
+            line.lineTo (x, y);
     }
-    else
-        g.fillRect (meter.withWidth (meter.getWidth() * juce::jlimit (0.0f, 1.0f, v)));
+    g.setColour (muted ? colour.dim : colour.base);
+    g.strokePath (line, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
 void ModChip::update()
 {
     const float v = silt.modOutputs[(size_t) m].load();
+    // Record the trace; while anything in it moves, it scrolls.
+    history[(size_t) written] = v;
+    written = (written + 1) % (int) history.size();
+    const auto [lo, hi] = std::minmax_element (history.begin(), history.end());
+    if (*hi - *lo > 1.0e-4f)
+    {
+        repaint();
+        return;
+    }
     const int routes = silt.routeCount (m), type = typeOf (silt, m);
     const bool armed = silt.armedMod.load() == m, muted = ! silt.isModulatorEnabled (m), selected = silt.modShown.load() == m;
     const bool perVoice = silt.isModulatorPerVoice (m);

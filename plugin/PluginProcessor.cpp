@@ -292,8 +292,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                     percent (id ("Sym"), name ("symmetry"), 50.0f),
                     withUnit (id ("Curve"), name ("curve"), Range (-100.0f, 100.0f, 0.1f), 0.0f, [] (float v, int)
                     {
-                        const int n = juce::roundToInt (v);
-                        return (n > 0 ? "+" : "") + juce::String (n) + "%";
+                        const int whole = juce::roundToInt (v);
+                        return (whole > 0 ? "+" : "") + juce::String (whole) + "%";
                     }));
     }
 

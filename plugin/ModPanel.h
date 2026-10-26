@@ -36,7 +36,9 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
-    void update();   // from the editor's timer: repaint if anything shown changed
+    void update();   // from the editor's timer: records the trace, repaints if anything shown changed
+    const std::array<float, 64>& getHistory() const noexcept { return history; }
+    int getHistoryStart() const noexcept { return written; }   // the oldest value
 
 private:
     void timerCallback() override { pendingClear = false; stopTimer(); repaint(); }
@@ -48,6 +50,8 @@ private:
     ModActions& actions;
     const int m;
     bool dragging = false, pendingClear = false;
+    std::array<float, 64> history {};   // the last ~2 s at the editor's 30 Hz
+    int written = 0;
     float shownValue = 0.0f;
     int shownRoutes = -1, shownType = -1;
     bool shownArmed = false, shownMuted = false, shownSelected = false, shownPerVoice = false;
@@ -59,6 +63,7 @@ public:
     ModRail (SiltProcessor&, ModActions&);
     void resized() override;
     void update();
+    const ModChip& chip (int m) const { return *chips[(size_t) m]; }
 
 private:
     std::array<std::unique_ptr<ModChip>, SiltProcessor::numModulators> chips;
