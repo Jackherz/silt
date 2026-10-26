@@ -255,3 +255,14 @@ TEST_CASE ("A knob's coloured ring is a handle for its route's depth")
     rig.editor->createComponentSnapshot (rig.editor->getLocalBounds());
     CHECK (knob->modulatorAtRing (knob->ringCentre.translated (0.0f, -(knob->ringBase + 3.0f))) == 0);
 }
+
+TEST_CASE ("Choosing a page while the route list is open goes to that page")
+{
+    EditorRig rig;
+    rig.editor->showPage (silt::layout::filter);
+    rig.editor->showRoutes (-1);
+    REQUIRE (rig.editor->routesShown());
+    rig.editor->showPage (silt::layout::grain);
+    CHECK_FALSE (rig.editor->routesShown());
+    CHECK (rig.editor->visibleParameterId (silt::layout::grain, 0) == "pitch");
+}

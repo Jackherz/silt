@@ -43,6 +43,7 @@ public:
     void showPage (int page);
     void refreshLayout();                          // re-reads which alternatives each slot shows
     void showRoutes (int modulatorFilter = -1);    // the route list; −1 shows every modulator
+    bool routesShown() const;
     juce::String visibleParameterId (int page, int slot) const;   // for tests: what the slot shows
     juce::Slider* findKnob (const juce::String& parameterId);     // for tests
 

@@ -553,6 +553,11 @@ void SiltEditor::selectModulator (int m, bool arm)
     repaint (header);
 }
 
+bool SiltEditor::routesShown() const
+{
+    return routeList->isVisible();
+}
+
 void SiltEditor::showRoutes (int modulatorFilter)
 {
     routeList->setCurrentPage (layout::pageName (page));
@@ -687,7 +692,7 @@ void SiltEditor::showPage (int p)
 {
     page = juce::jlimit (0, layout::numPages - 1, p);
     if (routeList->isVisible())
-        routeList->setCurrentPage (layout::pageName (page));
+        routeList->onClose();   // choosing a page (tab or controller) goes to it
     updateVisibility();
 }
 
