@@ -156,6 +156,7 @@ std::vector<Entry> build (bool instrument)
 
         menu (mod, 1, id ("Type"), "TYPE", { "WAVE", "RANDOM", "ENVELOPE", "FOLLOW", "MIDI" }, shownMod);
         under (Kind::underButton, mod, 1, id ("Enable"), 50, {}, "ON", shownMod);
+        under (Kind::underButton, mod, 2, id ("Voice"), 64, {}, "VOICE", shownMod);
 
         knob (mod, 2, id ("Shape"), "SHAPE", wave);
         knob (mod, 3, id ("Rate"), "RATE", both (timed, off (id ("Sync"))));

@@ -15,7 +15,7 @@ referenced where they matter.
   on load rather than listed, since nothing can apply them.
 - MOD slot 7 (ASSIGN) arms the shown modulator and lights only while that one is armed.
 
-Not done (§8, later): undo, macros, per-voice spread, cross-modulation, presets.
+§8 "later" ideas: per-voice spread is done (see `per-voice-modulation.md`); the rest follow.
 
 ---
 

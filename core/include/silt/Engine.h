@@ -17,6 +17,21 @@ struct NoteEvent
     bool isNoteOn = true;
 };
 
+// Per-voice parameters (per-voice modulation). When set, the engine tells it
+// when a note starts or ends on a voice; while it's active, it also asks it for
+// each voice's own parameters (it gets the shared ones to adjust) before starting a
+// note and before each stretch it renders. Inactive or unset: every voice gets
+// the shared parameters, exactly as without it. Audio thread; no allocation.
+class VoiceParams
+{
+public:
+    virtual ~VoiceParams() = default;
+    virtual bool isActive() const noexcept = 0;
+    virtual void noteStarted (int voice, int note, float velocity) noexcept = 0;
+    virtual void noteReleased (int voice) noexcept = 0;
+    virtual void apply (int voice, GrainParams& params) noexcept = 0;
+};
+
 // The sampler engine: 16 voices sharing one read-only sample (plan D11), or in
 // Live mode the live ring buffer: the last ringSeconds of input, written as it
 // arrives (plus feedback), which grains read a delay behind.
@@ -54,6 +69,7 @@ public:
         process (left, right, numSamples, nullptr, nullptr, events, numEvents, p);
     }
     void allNotesOff() noexcept;
+    void setVoiceParams (VoiceParams* provider) noexcept { voiceParams = provider; }
 
     const SampleBuffer* getCurrentBuffer() const noexcept { return current; }
     const SampleBuffer* getLiveBuffer() const noexcept { return live.get(); }
@@ -76,7 +92,10 @@ private:
     void writeLive (const float* inLeft, const float* inRight, int numSamples, const GrainParams&) noexcept;
     void updateDrone (const GrainParams&, const SampleBuffer*, const float* inLeft, const float* inRight, int numSamples) noexcept;
     void startDrone (const GrainParams&, const SampleBuffer&, float velocity) noexcept;
-    GrainVoice& voiceForNoteOn (int note) noexcept;
+    int voiceForNoteOn (int note) noexcept;
+    void startNote (int voice, int note, float velocity, const SampleBuffer& source, const GrainParams&) noexcept;
+    void releaseVoice (int voice) noexcept;
+    VoiceParams* voiceParams = nullptr;
 
     std::array<GrainVoice, numVoices> voices;
     std::array<std::uint64_t, numVoices> startedAt {};   // note-on order, for stealing

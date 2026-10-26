@@ -916,3 +916,51 @@ TEST_CASE ("Analysis finds the notes of a melodic line, not just loud hits")
     // And no flood of false ones: at most a couple of extras.
     CHECK (t.size() <= std::size (notes) + 2);
 }
+
+namespace
+{
+// A per-voice provider for tests: records note starts and gives odd voices a
+// pitch an octave up, so they sound differently from even ones.
+struct OddVoicesPitch : VoiceParams
+{
+    bool active = true;
+    std::vector<std::pair<int, int>> started;   // (voice, note)
+    std::vector<int> released;
+    bool isActive() const noexcept override { return active; }
+    void noteStarted (int voice, int note, float) noexcept override { started.push_back ({ voice, note }); }
+    void noteReleased (int voice) noexcept override { released.push_back (voice); }
+    void apply (int voice, GrainParams& p) noexcept override
+    {
+        if (voice % 2 == 1)
+            p.pitchSemitones += 12.0;
+    }
+};
+} // namespace
+
+TEST_CASE ("Per-voice parameters: inactive is bit-identical; active reaches each voice")
+{
+    GrainParams p;
+    const std::vector<TimedNote> notes { { 0, 60, true }, { 2400, 64, true }, { 30000, 60, false }, { 30000, 64, false } };
+
+    TestEngine plain (makeSine());
+    const auto reference = render (plain, p, 48000, notes);
+
+    TestEngine withInactive (makeSine());
+    OddVoicesPitch inactive;
+    inactive.active = false;
+    withInactive.setVoiceParams (&inactive);
+    const auto same = render (withInactive, p, 48000, notes);
+    CHECK (same.left == reference.left);
+    CHECK (same.right == reference.right);
+
+    TestEngine withActive (makeSine());
+    OddVoicesPitch provider;
+    withActive.setVoiceParams (&provider);
+    const auto changed = render (withActive, p, 48000, notes);
+    CHECK (changed.left != reference.left);
+    REQUIRE (provider.started.size() == 2);
+    CHECK (provider.started[0].second == 60);
+    CHECK (provider.started[1].second == 64);
+    CHECK (provider.started[0].first != provider.started[1].first);
+    CHECK (provider.released.size() >= 2);
+}

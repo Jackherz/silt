@@ -50,7 +50,7 @@ private:
     bool dragging = false, pendingClear = false;
     float shownValue = 0.0f;
     int shownRoutes = -1, shownType = -1;
-    bool shownArmed = false, shownMuted = false, shownSelected = false;
+    bool shownArmed = false, shownMuted = false, shownSelected = false, shownPerVoice = false;
 };
 
 class ModRail final : public juce::Component

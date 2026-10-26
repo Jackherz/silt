@@ -512,6 +512,21 @@ void SiltEditor::drawModulation (juce::Graphics& g, juce::Slider& slider, juce::
 
     if (! anyLive)
         return;
+
+    // Per-voice modulation on a grain parameter: a small pip per sounding voice,
+    // just inside the rings, where that voice's own modulation has it.
+    bool perVoiceRoute = false;
+    for (int m = 0; m < SiltProcessor::numModulators; ++m)
+        perVoiceRoute = perVoiceRoute || (silt.isModulatorPerVoice (m) && silt.isModulatorEnabled (m) && silt.routeAmount (m, target) != 0.0f);
+    if (perVoiceRoute && silt.isVoiceTarget (target))
+        for (int v = 0; v < silt::Engine::numVoices; ++v)
+            if (silt.voiceShown[(size_t) v].load())
+            {
+                const auto pip = centre.getPointOnCircumference (ringRadius (0) - 4.0f, angleFor (silt.voiceModulated01[(size_t) v][(size_t) target].load()));
+                g.setColour (bone.withAlpha (0.9f));
+                g.fillEllipse (juce::Rectangle<float> (3.0f, 3.0f).withCentre (pip));
+            }
+
     const auto dot = centre.getPointOnCircumference (ringRadius (0), angleFor (silt.modulatedValue01 (target)));
     g.setColour (bone);
     g.fillEllipse (juce::Rectangle<float> (5.0f, 5.0f).withCentre (dot));

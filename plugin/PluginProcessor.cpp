@@ -283,7 +283,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                     std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("Source"), 1 }, name ("MIDI source"),
                                                                   juce::StringArray { "Velocity", "Note", "Mod wheel", "Aftertouch", "Pitch bend" }, 0),
                     // Muted: contributes nothing; its routes are kept.
-                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Enable"), 1 }, name ("on"), true));
+                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Enable"), 1 }, name ("on"), true),
+                    // Per voice: each voice runs its own copy from its own note (grain
+                    // parameters only; the effects follow the shared one).
+                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Voice"), 1 }, name ("per voice"), false));
     }
 
     // Capture and output
@@ -381,7 +384,8 @@ juce::AudioProcessor::BusesProperties SiltProcessor::makeBuses()
 
 SiltProcessor::SiltProcessor()
     : AudioProcessor (makeBuses()),
-      params (*this, nullptr, "SILT", makeParameters())
+      params (*this, nullptr, "SILT", makeParameters()),
+      voiceModulation (*this)
 {
     // Modulation targets: continuous and stepped parameters (see the header).
     // Each gets a modulated copy, which is what the audio code reads.
@@ -405,12 +409,19 @@ SiltProcessor::SiltProcessor()
     for (size_t t = 0; t < targets.size(); ++t)
         modulated[t].store (targets[t].raw->load());
 
+    // Grain parameters: the ones voices read, so per-voice modulation reaches them.
+    for (const auto* id : { "pitch", "size", "rate", "spray", "jitter", "reverse", "randAmp", "randPan", "fade", "slant", "ease",
+                            "grains", "grainSize", "start", "length", "scan", "attack", "decay", "sustain", "release", "root",
+                            "randPitch", "patternDepth", "patternSteps", "heads", "headSpread", "liveDelay", "feedback" })
+        if (const int t = modulationTarget (id); t >= 0)
+            voiceTargets.push_back (t);
+
     for (int m = 0; m < numModulators; ++m)
     {
         const auto p = [this, m] (const char* suffix) { return params.getRawParameterValue ("m" + juce::String (m + 1) + suffix); };
         modulatorRaw[(size_t) m] = { p ("Type"), p ("Rate"), p ("Sync"), p ("Div"), p ("Shape"), p ("Phase"), p ("Retrig"), p ("Smooth"), p ("Jitter"),
                                      p ("Attack"), p ("Decay"), p ("Sustain"), p ("Release"), p ("Repeat"), p ("FAttack"), p ("FRelease"), p ("Gain"), p ("Source"),
-                                     p ("Enable") };
+                                     p ("Enable"), p ("Voice") };
     }
 
     raw = std::make_unique<RawParams> ([this] (const char* id) -> std::atomic<float>*
@@ -439,6 +450,8 @@ void SiltProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamples
 {
     currentSampleRate = sampleRate;
     engine.prepare (sampleRate, juce::jmax (1, maximumExpectedSamplesPerBlock));
+    voiceModulation.reset();
+    engine.setVoiceParams (&voiceModulation);
     resonator.prepare (sampleRate);
     filter.prepare (sampleRate);
     color.prepare (sampleRate);
@@ -496,9 +509,17 @@ juce::AudioBuffer<float> SiltProcessor::findCaptureBus (juce::AudioBuffer<float>
     return {};
 }
 
-silt::GrainParams SiltProcessor::readParams() const noexcept
+// voiceValues (one voice's modulated values, by target) stands in for the
+// shared modulated values when given.
+silt::GrainParams SiltProcessor::readParams (const float* voiceValues) const noexcept
 {
-    const auto v = [] (const std::atomic<float>* a) { return (double) a->load (std::memory_order_relaxed); };
+    const auto* first = modulated.data();
+    const auto v = [first, voiceValues] (const std::atomic<float>* a)
+    {
+        if (voiceValues != nullptr && std::less_equal<>() (first, a) && std::less<>() (a, first + maxTargets))
+            return (double) voiceValues[a - first];
+        return (double) a->load (std::memory_order_relaxed);
+    };
 
     silt::GrainParams p;
     p.pitchSemitones = v (raw->pitch);
@@ -794,6 +815,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         modContext.bpm = bpm;
         modContext.ppqEnd = blockPpq + (start + len) * ppqPerSample;
         applyModulation();
+        voiceModulation.prepareChunk();
 
         const float gain = juce::Decibels::decibelsToGain (raw->gain->load (std::memory_order_relaxed), -48.0f);
         const bool monitoring = isInstrument && raw->monitor->load (std::memory_order_relaxed) > 0.5f;
@@ -876,6 +898,7 @@ void SiltProcessor::applyModulation() noexcept
         value[(size_t) m] = modulators[(size_t) m].advance (mp, modContext);   // runs muted too, so unmuting picks up in step
         if (! isModulatorEnabled (m))
             value[(size_t) m] = 0.0f;
+        globalModValues[(size_t) m] = value[(size_t) m];
         modOutputs[(size_t) m].store (value[(size_t) m], std::memory_order_relaxed);
     }
 
@@ -997,6 +1020,142 @@ juce::String SiltProcessor::depthText (int modulator, int target) const
 float SiltProcessor::modulatedValue01 (int target) const noexcept
 {
     return targets[(size_t) target].parameter->convertTo0to1 (modulated[(size_t) target].load (std::memory_order_relaxed));
+}
+
+// --- per-voice modulation -----------------------------------------------------------
+
+SiltProcessor::VoiceModulation::VoiceModulation (SiltProcessor& p) : owner (p) {}
+
+void SiltProcessor::VoiceModulation::reset() noexcept
+{
+    for (int v = 0; v < silt::Engine::numVoices; ++v)
+    {
+        for (int m = 0; m < numModulators; ++m)
+            mods[(size_t) v][(size_t) m].reset (0x7019e + (std::uint64_t) (v * numModulators + m));
+        context[(size_t) v] = {};
+        held[(size_t) v] = false;
+        started[(size_t) v] = false;
+    }
+    active = false;
+}
+
+// Per chunk: which modulators run per voice and whether any reaches a grain
+// parameter; then each sounding voice's modulators step and its parameters
+// are worked out once (the engine copies them per stretch).
+void SiltProcessor::VoiceModulation::prepareChunk() noexcept
+{
+    active = false;
+    for (int m = 0; m < numModulators; ++m)
+    {
+        perVoice[(size_t) m] = owner.isModulatorEnabled (m) && owner.modulatorRaw[(size_t) m].voice->load (std::memory_order_relaxed) > 0.5f;
+        if (perVoice[(size_t) m])
+            for (const int t : owner.voiceTargets)
+                active = active || owner.routeAmount (m, t) != 0.0f;
+    }
+    for (auto& shown : owner.voiceShown)
+        shown.store (false, std::memory_order_relaxed);
+    if (! active)
+        return;
+
+    for (const int t : owner.voiceTargets)
+        base01[(size_t) t] = owner.targets[(size_t) t].parameter->convertTo0to1 (owner.targets[(size_t) t].raw->load (std::memory_order_relaxed));
+
+    for (int v = 0; v < silt::Engine::numVoices; ++v)
+    {
+        if (! owner.engine.getVoice (v).isActive() && ! held[(size_t) v])
+            continue;
+        step (v, owner.modContext.numSamples);
+        compute (v);
+    }
+}
+
+// Steps one voice's per-voice modulators: the shared context (clock, CCs,
+// input level) with this voice's own note.
+void SiltProcessor::VoiceModulation::step (int v, int numSamples) noexcept
+{
+    auto& c = context[(size_t) v];
+    const auto& shared = owner.modContext;
+    c.numSamples = numSamples;
+    c.sampleRate = shared.sampleRate;
+    c.hostPlaying = shared.hostPlaying;
+    c.ppqEnd = shared.ppqEnd;
+    c.bpm = shared.bpm;
+    c.modWheel = shared.modWheel;
+    c.aftertouch = shared.aftertouch;
+    c.pitchBend = shared.pitchBend;
+    c.inputPeak = shared.inputPeak;
+    c.heldNotes = held[(size_t) v] ? 1 : 0;
+    c.noteStarted = started[(size_t) v];
+    started[(size_t) v] = false;
+    for (int m = 0; m < numModulators; ++m)
+        if (perVoice[(size_t) m])
+            values[(size_t) v][(size_t) m] = mods[(size_t) v][(size_t) m].advance (owner.readModulatorParams (m), c);
+}
+
+// One voice's grain parameters: grain targets from this voice's modulators
+// (shared ones for modulators that aren't per voice), the rest as shared.
+void SiltProcessor::VoiceModulation::compute (int v) noexcept
+{
+    for (int t = 0; t < owner.numTargets(); ++t)
+        scratch[(size_t) t] = owner.modulated[(size_t) t].load (std::memory_order_relaxed);
+    for (const int t : owner.voiceTargets)
+    {
+        float offset = 0.0f;
+        for (int m = 0; m < numModulators; ++m)
+            offset += owner.routeAmount (m, t) * (perVoice[(size_t) m] ? values[(size_t) v][(size_t) m] : owner.globalModValues[(size_t) m]);
+        const float moved = juce::jlimit (0.0f, 1.0f, base01[(size_t) t] + offset);
+        scratch[(size_t) t] = owner.targets[(size_t) t].parameter->convertFrom0to1 (moved);
+        owner.voiceModulated01[(size_t) v][(size_t) t].store (moved, std::memory_order_relaxed);
+    }
+    owner.voiceShown[(size_t) v].store (true, std::memory_order_relaxed);
+    params[(size_t) v] = owner.readParams (scratch.data());
+}
+
+void SiltProcessor::VoiceModulation::noteStarted (int v, int note, float velocity) noexcept
+{
+    // A new note (or a stolen voice) starts its modulators afresh.
+    for (int m = 0; m < numModulators; ++m)
+        mods[(size_t) v][(size_t) m].reset (0x7019e + (std::uint64_t) (v * numModulators + m) + (std::uint64_t) note * 977u);
+    auto& c = context[(size_t) v];
+    c.note = note;
+    c.velocity = velocity;
+    held[(size_t) v] = true;
+    started[(size_t) v] = true;
+    if (active)
+    {
+        step (v, 0);
+        compute (v);
+    }
+}
+
+void SiltProcessor::VoiceModulation::noteReleased (int v) noexcept
+{
+    held[(size_t) v] = false;
+}
+
+// The engine's stretch settings (grid, pattern, live position) stay; the
+// parameters are this voice's.
+void SiltProcessor::VoiceModulation::apply (int v, silt::GrainParams& out) noexcept
+{
+    auto own = params[(size_t) v];
+    own.gridSync = out.gridSync;
+    own.ppqPerSample = out.ppqPerSample;
+    own.gridPpq = out.gridPpq;
+    own.liveMargin = out.liveMargin;
+    own.liveNow = out.liveNow;
+    own.pattern = out.pattern;
+    own.patternSteps = juce::jlimit (1, 16, own.patternSteps);
+    out = own;
+}
+
+bool SiltProcessor::isVoiceTarget (int target) const noexcept
+{
+    return std::find (voiceTargets.begin(), voiceTargets.end(), target) != voiceTargets.end();
+}
+
+bool SiltProcessor::isModulatorPerVoice (int m) const noexcept
+{
+    return modulatorRaw[(size_t) m].voice->load (std::memory_order_relaxed) > 0.5f;
 }
 
 juce::AudioProcessorEditor* SiltProcessor::createEditor()

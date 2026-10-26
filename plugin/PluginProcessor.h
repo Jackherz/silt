@@ -133,6 +133,12 @@ public:
     float modulatedValue01 (int target) const noexcept;             // where modulation has it now
     silt::ModulatorParams readModulatorParams (int modulator) const noexcept;
     bool isModulatorEnabled (int modulator) const noexcept;         // muted: contributes nothing, routes kept
+    bool isModulatorPerVoice (int modulator) const noexcept;        // each voice runs its own copy
+    bool isVoiceTarget (int target) const noexcept;                 // a grain parameter: per-voice modulation reaches it
+    // Per voice, for the rings: whether a voice is sounding with per-voice
+    // modulation, and where its modulation has each grain target (0–1).
+    std::array<std::atomic<bool>, silt::Engine::numVoices> voiceShown {};
+    std::array<std::array<std::atomic<float>, maxTargets>, silt::Engine::numVoices> voiceModulated01 {};
     std::array<std::atomic<float>, numModulators> modOutputs {};    // each modulator's latest value (0 if muted)
     std::atomic<int> modShown { 0 };                                // the modulator the MOD page shows
     std::atomic<int> armedMod { -1 };                               // ≥ 0: controller knobs set this modulator's depth
@@ -158,7 +164,7 @@ private:
 
     static BusesProperties makeBuses();
     juce::AudioBuffer<float> findCaptureBus (juce::AudioBuffer<float>& buffer, CaptureSource& source);
-    silt::GrainParams readParams() const noexcept;
+    silt::GrainParams readParams (const float* voiceValues = nullptr) const noexcept;
     silt::ResonatorParams readResonatorParams (const silt::GrainParams&) const noexcept;
     silt::FilterParams readFilterParams() const noexcept;
     silt::ColorParams readColorParams() const noexcept;
@@ -196,9 +202,43 @@ private:
     struct ModulatorRaw
     {
         std::atomic<float>* type, *rate, *sync, *div, *shape, *phase, *retrig, *smooth, *jitter;
-        std::atomic<float>* attack, *decay, *sustain, *release, *repeat, *followAttack, *followRelease, *gain, *source, *enable;
+        std::atomic<float>* attack, *decay, *sustain, *release, *repeat, *followAttack, *followRelease, *gain, *source, *enable, *voice;
     };
     std::array<bool, 128> heldKeys {};   // audio thread: which notes are down, so repeats don't miscount
+    std::array<float, numModulators> globalModValues {};   // audio thread: this chunk's shared values
+    std::vector<int> voiceTargets;
+
+    // Per-voice modulation (docs/per-voice-modulation.md): each voice's own
+    // copies of the per-voice modulators, its own note context, and its grain
+    // parameters for the chunk. The engine asks for them (silt::VoiceParams).
+    class VoiceModulation final : public silt::VoiceParams
+    {
+    public:
+        explicit VoiceModulation (SiltProcessor&);
+        void reset() noexcept;
+        void prepareChunk() noexcept;
+
+        bool isActive() const noexcept override { return active; }
+        void noteStarted (int voice, int note, float velocity) noexcept override;
+        void noteReleased (int voice) noexcept override;
+        void apply (int voice, silt::GrainParams&) noexcept override;
+
+    private:
+        void step (int voice, int numSamples) noexcept;
+        void compute (int voice) noexcept;
+
+        SiltProcessor& owner;
+        static constexpr int voicesN = silt::Engine::numVoices;
+        std::array<std::array<silt::Modulator, numModulators>, voicesN> mods;
+        std::array<silt::ModContext, voicesN> context {};
+        std::array<std::array<float, numModulators>, voicesN> values {};
+        std::array<silt::GrainParams, voicesN> params {};
+        std::array<bool, voicesN> held {}, started {};
+        std::array<bool, numModulators> perVoice {};
+        std::array<float, maxTargets> base01 {}, scratch {};
+        bool active = false;
+    };
+    VoiceModulation voiceModulation;
     std::array<ModulatorRaw, numModulators> modulatorRaw {};
     double currentSampleRate = 48000.0;
 

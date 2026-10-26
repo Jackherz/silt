@@ -89,6 +89,15 @@ void ModChip::paint (juce::Graphics& g)
         g.setFont (monoFont (10.0f));
         g.drawText (juce::String (routes), top.removeFromRight (16), juce::Justification::centredRight);
     }
+    if (silt.isModulatorPerVoice (m))   // a V badge: each voice runs its own copy
+    {
+        auto badge = top.removeFromRight (13).withSizeKeepingCentre (12, 11).toFloat();
+        g.setColour (text);
+        g.drawRoundedRectangle (badge, 2.0f, 1.0f);
+        g.setFont (monoFont (8.5f));
+        g.drawText ("V", badge, juce::Justification::centred);
+        top.removeFromRight (2);
+    }
 
     g.setFont (monoFont (11.0f));
     g.setColour (pendingClear ? signalRed : text);
@@ -119,9 +128,11 @@ void ModChip::update()
     const float v = silt.modOutputs[(size_t) m].load();
     const int routes = silt.routeCount (m), type = typeOf (silt, m);
     const bool armed = silt.armedMod.load() == m, muted = ! silt.isModulatorEnabled (m), selected = silt.modShown.load() == m;
+    const bool perVoice = silt.isModulatorPerVoice (m);
     if (std::abs (v - shownValue) > 0.004f || routes != shownRoutes || type != shownType
-        || armed != shownArmed || muted != shownMuted || selected != shownSelected)
+        || armed != shownArmed || muted != shownMuted || selected != shownSelected || perVoice != shownPerVoice)
     {
+        shownPerVoice = perVoice;
         shownValue = v;
         shownRoutes = routes;
         shownType = type;

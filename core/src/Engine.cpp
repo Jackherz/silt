@@ -91,7 +91,7 @@ void Engine::swapInPendingBuffer() noexcept
 
 // Same key again: that voice. Else a silent voice, else the oldest released
 // one, else the oldest of all.
-GrainVoice& Engine::voiceForNoteOn (int note) noexcept
+int Engine::voiceForNoteOn (int note) noexcept
 {
     int best = -1;
     const auto older = [this, &best] (int i) { return best < 0 || startedAt[(size_t) i] < startedAt[(size_t) best]; };
@@ -116,7 +116,31 @@ GrainVoice& Engine::voiceForNoteOn (int note) noexcept
                 best = i;
 
     startedAt[(size_t) best] = ++noteCounter;
-    return voices[(size_t) best];
+    return best;
+}
+
+// Starts a note on a voice, with that voice's own parameters when per-voice
+// modulation is on (the provider resets the voice's modulators first, so a
+// stolen voice doesn't carry the old note's envelope).
+void Engine::startNote (int voice, int note, float velocity, const SampleBuffer& source, const GrainParams& p) noexcept
+{
+    if (voiceParams != nullptr)
+        voiceParams->noteStarted (voice, note, velocity);   // always: it tracks which notes each voice holds
+    if (voiceParams != nullptr && voiceParams->isActive())
+    {
+        auto own = p;
+        voiceParams->apply (voice, own);
+        voices[(size_t) voice].noteOn (note, velocity, source, own);
+        return;
+    }
+    voices[(size_t) voice].noteOn (note, velocity, source, p);
+}
+
+void Engine::releaseVoice (int voice) noexcept
+{
+    voices[(size_t) voice].noteOff();
+    if (voiceParams != nullptr)
+        voiceParams->noteReleased (voice);
 }
 
 void Engine::handleEvent (const NoteEvent& e, const GrainParams& p, const SampleBuffer* source) noexcept
@@ -126,25 +150,25 @@ void Engine::handleEvent (const NoteEvent& e, const GrainParams& p, const Sample
         ++heldNotes;
         if (droneVoice >= 0)
         {
-            voices[(size_t) droneVoice].noteOff();   // a played key takes over from RUN
+            releaseVoice (droneVoice);   // a played key takes over from RUN
             droneVoice = -1;
         }
         if (source != nullptr)
-            voiceForNoteOn (e.note).noteOn (e.note, std::clamp (e.velocity, 0.0f, 1.0f), *source, p);
+            startNote (voiceForNoteOn (e.note), e.note, std::clamp (e.velocity, 0.0f, 1.0f), *source, p);
         return;
     }
 
     heldNotes = std::max (0, heldNotes - 1);
     for (size_t i = 0; i < voices.size(); ++i)
         if ((int) i != droneVoice && voices[i].getCurrentNote() == e.note && ! voices[i].isReleasing())
-            voices[i].noteOff();
+            releaseVoice ((int) i);
 }
 
 void Engine::startDrone (const GrainParams& p, const SampleBuffer& source, float velocity) noexcept
 {
-    auto& voice = droneVoice >= 0 ? voices[(size_t) droneVoice] : voiceForNoteOn (p.rootNote);
-    voice.noteOn (p.rootNote, velocity, source, p);   // from its current level: retriggers don't click
-    droneVoice = (int) (&voice - voices.data());
+    const int voice = droneVoice >= 0 ? droneVoice : voiceForNoteOn (p.rootNote);
+    startNote (voice, p.rootNote, velocity, source, p);   // from its current level: retriggers don't click
+    droneVoice = voice;
 }
 
 // Live mode with no keys held: a voice at the root note plays grains, so Silt
@@ -160,7 +184,7 @@ void Engine::updateDrone (const GrainParams& p, const SampleBuffer* source,
     if (! wanted)
     {
         if (droneVoice >= 0)
-            voices[(size_t) droneVoice].noteOff();
+            releaseVoice (droneVoice);
         droneVoice = -1;
         gateOpen = false;
         return;
@@ -207,7 +231,7 @@ void Engine::updateDrone (const GrainParams& p, const SampleBuffer* source,
     if (trigger)
         startDrone (p, *source, std::clamp (0.4f + 2.0f * triggerLevel, 0.4f, 1.0f));
     else if (release && droneVoice >= 0)
-        voices[(size_t) droneVoice].noteOff();
+        releaseVoice (droneVoice);
 }
 
 namespace
@@ -257,8 +281,8 @@ void Engine::writeLive (const float* inLeft, const float* inRight, int numSample
 
 void Engine::allNotesOff() noexcept
 {
-    for (auto& v : voices)
-        v.noteOff();
+    for (int v = 0; v < numVoices; ++v)
+        releaseVoice (v);
     heldNotes = 0;
     droneVoice = -1;
 }
@@ -304,8 +328,18 @@ void Engine::process (float* left, float* right, int numSamples,
         segment.gridPpq = p.gridPpq + pos * p.ppqPerSample;
         segment.liveNow = now + (p.freeze ? 0 : pos);
         if (end > pos)
-            for (auto& v : voices)
-                v.render (left + pos, right + pos, end - pos, segment, source);
+        {
+            if (voiceParams != nullptr && voiceParams->isActive())
+                for (int v = 0; v < numVoices; ++v)
+                {
+                    auto own = segment;   // ~400 bytes; grains latch it when they start
+                    voiceParams->apply (v, own);
+                    voices[(size_t) v].render (left + pos, right + pos, end - pos, own, source);
+                }
+            else
+                for (auto& v : voices)
+                    v.render (left + pos, right + pos, end - pos, segment, source);
+        }
         pos = end;
 
         if (e < numEvents)

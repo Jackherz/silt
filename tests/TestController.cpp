@@ -358,3 +358,102 @@ TEST_CASE ("Routes and the modulator shown are saved with the set")
     CHECK (restored.silt.routeAmount (1, restored.silt.modulationTarget ("filterReso")) == 0.0f);
     CHECK (restored.silt.modShown.load() == 2);
 }
+
+// --- Per-voice modulation ------------------------------------------------------------
+
+namespace
+{
+// Loads a two-second sine as the sample, through the real loader.
+void loadSine (Rig& rig)
+{
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("silt-test", ".wav");
+    {
+        juce::AudioBuffer<float> sine (1, 96000);
+        for (int i = 0; i < sine.getNumSamples(); ++i)
+            sine.setSample (0, i, 0.5f * std::sin (2.0f * 3.14159265f * 220.0f * (float) i / 48000.0f));
+        std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (file);
+        auto writer = juce::WavAudioFormat().createWriterFor (stream, juce::AudioFormatWriterOptions{}.withSampleRate (48000.0).withNumChannels (1).withBitsPerSample (16));
+        writer->writeFromAudioSampleBuffer (sine, 0, sine.getNumSamples());
+    }
+    rig.silt.loadFile (file);
+    for (int i = 0; i < 300 && rig.silt.getSampleGeneration() == 0; ++i)
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    file.deleteFile();
+    REQUIRE (rig.silt.getSampleGeneration() > 0);
+    runBlocks (rig, 2);   // the engine picks the buffer up
+}
+
+int soundingVoices (Rig& rig)
+{
+    int n = 0;
+    for (auto& shown : rig.silt.voiceShown)
+        n += shown.load() ? 1 : 0;
+    return n;
+}
+} // namespace
+
+TEST_CASE ("Per voice off: no voice values; on: each note runs its own ENVELOPE")
+{
+    Rig rig;
+    loadSine (rig);
+    rig.set ("m1Type", rig.silt.params.getParameter ("m1Type")->convertTo0to1 (2.0f));   // envelope
+    rig.set ("m1Attack", rig.silt.params.getParameter ("m1Attack")->convertTo0to1 (200.0f));
+    const int t = rig.silt.modulationTarget ("spray");
+    rig.silt.setRouteAmount (0, t, 1.0f);
+
+    juce::MidiBuffer first;
+    first.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+    runBlocks (rig, 10, first);
+    CHECK (soundingVoices (rig) == 0);   // shared modulation: no per-voice values
+
+    rig.set ("m1Voice", 1.0f);
+    juce::MidiBuffer off;
+    off.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+    runBlocks (rig, 100, off);   // let it finish
+
+    juce::MidiBuffer again;
+    again.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+    runBlocks (rig, 34, again);   // 363 ms: past the 200 ms attack, decaying
+    juce::MidiBuffer second;
+    second.addEvent (juce::MidiMessage::noteOn (1, 67, (juce::uint8) 100), 0);
+    runBlocks (rig, 4, second);   // 43 ms into the second note's 200 ms attack
+    REQUIRE (soundingVoices (rig) == 2);
+    std::vector<float> levels;
+    for (int v = 0; v < silt::Engine::numVoices; ++v)
+        if (rig.silt.voiceShown[(size_t) v].load())
+            levels.push_back (rig.silt.voiceModulated01[(size_t) v][(size_t) t].load());
+    std::sort (levels.begin(), levels.end());
+    INFO ("voice levels " << levels[0] << ", " << levels[1]);
+    CHECK (levels[0] < 0.4f);   // the new note, early in its attack
+    CHECK (levels[1] > 0.6f);   // the earlier note, decaying from its peak
+}
+
+TEST_CASE ("Per-voice RANDOM decorrelates voices started together")
+{
+    Rig rig;
+    loadSine (rig);
+    rig.set ("m2Type", rig.silt.params.getParameter ("m2Type")->convertTo0to1 (1.0f));   // random
+    rig.set ("m2Voice", 1.0f);
+    const int t = rig.silt.modulationTarget ("pitch");
+    rig.silt.setRouteAmount (1, t, 0.5f);
+
+    juce::MidiBuffer chord;
+    for (const int note : { 60, 64, 67 })
+        chord.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
+    runBlocks (rig, 100, chord);   // about a second
+    std::vector<float> values;
+    for (int v = 0; v < silt::Engine::numVoices; ++v)
+        if (rig.silt.voiceShown[(size_t) v].load())
+            values.push_back (rig.silt.voiceModulated01[(size_t) v][(size_t) t].load());
+    REQUIRE (values.size() == 3);
+    CHECK (values[0] != values[1]);
+    CHECK (values[1] != values[2]);
+}
+
+TEST_CASE ("Per-voice routes don't reach effect parameters, which follow the shared modulator")
+{
+    Rig rig;
+    rig.set ("m1Voice", 1.0f);
+    CHECK_FALSE (rig.silt.isVoiceTarget (rig.silt.modulationTarget ("filterCutoff")));
+    CHECK (rig.silt.isVoiceTarget (rig.silt.modulationTarget ("spray")));
+}

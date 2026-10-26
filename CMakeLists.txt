@@ -110,7 +110,7 @@ if(SILT_BUILD_TESTS)
     juce_add_console_app(silt_plugin_tests PRODUCT_NAME "silt-plugin-tests")
     target_sources(silt_plugin_tests PRIVATE tests/TestController.cpp tests/TestEditor.cpp ${SILT_PLUGIN_SOURCES})
     target_compile_definitions(silt_plugin_tests PRIVATE
-        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1
         JucePlugin_Name="Silt" JucePlugin_IsSynth=1 JucePlugin_VersionString="${PROJECT_VERSION}")
     target_link_libraries(silt_plugin_tests
         PRIVATE silt_core juce::juce_audio_utils Catch2::Catch2WithMain

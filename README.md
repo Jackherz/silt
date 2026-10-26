@@ -101,10 +101,15 @@ Design: `docs/mod-section-design.md`.
   settings for that type, and ASSIGN, which arms it for the controller: turning a
   controller knob on any page then sets that slot's depth (centre = none).
 
+- **Per voice** (VOICE under slot 2 on the MOD page; a V on the chip): each voice
+  runs its own copy of the modulator from its own note (its own envelope, random
+  stream, velocity, retrigger). It reaches the grain parameters; the effects follow
+  the shared copy. Rings show a pip per sounding voice. Off is exactly as before.
+  Design: `docs/per-voice-modulation.md`.
+
 Targets are the continuous and stepped parameters; switches (menus, buttons) and
 the modulators' own settings aren't. Modulation updates every 64 samples (the
-knobs' own smoothing takes it from there); routes are saved with the set. Global
-for now; per-voice spread is next.
+knobs' own smoothing takes it from there); routes are saved with the set.
 
 **8-knob controller:** a controller's 8 knobs move the 8 slots of the current page
 (GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER / COLOR / SPACE / MOD), following the modes
