@@ -143,7 +143,7 @@ TEST_CASE ("Dropping a mod chip on a knob makes a +25% route; switch-like contro
     CHECK_THAT (rig.silt.routeAmount (2, rig.silt.modulationTarget ("spray")), WithinAbs (0.25, 1.0e-6));
 
     // A knob that isn't a modulation target doesn't accept the drop.
-    auto* modKnob = dynamic_cast<SiltEditor::FineSlider*> (rig.editor->findKnob ("m1Rate"));
+    auto* modKnob = dynamic_cast<SiltEditor::FineSlider*> (rig.editor->findKnob ("m1Macro"));
     REQUIRE (modKnob != nullptr);
     CHECK_FALSE (modKnob->isInterestedInDragSource (details));
 }

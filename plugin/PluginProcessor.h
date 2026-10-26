@@ -114,9 +114,10 @@ public:
     // amount (−1…1 of the parameter's range) on one target parameter. Routes are
     // edited on the message thread and read by the audio thread (atomics).
     //
-    // Targets are the continuous and stepped (integer) parameters. Switch-like
-    // ones (choices and bools), seeds and the modulators' own settings aren't:
-    // a route there would jump between modes and has no ring to show it.
+    // Targets are the continuous and stepped (integer) parameters, including the
+    // modulators' own settings (cross-modulation, read a chunk late so the
+    // order never matters). Switch-like ones (choices and bools), the seed and
+    // MACRO knobs aren't: a route there would jump between modes.
     static constexpr int numModulators = 4, maxTargets = 160, modulationInterval = 64;
     int modulationTarget (const juce::String& parameterId) const;   // −1: not a modulation target
     int numTargets() const noexcept { return (int) targets.size(); }

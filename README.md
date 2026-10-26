@@ -108,8 +108,13 @@ routed to). Design: `docs/mod-section-design.md`.
   the shared copy. Rings show a pip per sounding voice. Off is exactly as before.
   Design: `docs/per-voice-modulation.md`.
 
-Targets are the continuous and stepped parameters; switches (menus, buttons) and
-the modulators' own settings aren't. Modulation updates every 64 samples (the
+- **Cross-modulation:** a modulator's continuous settings (rate, shape, phase,
+  smooth, jitter, envelope and follow times, sustain, gain) take routes like any
+  knob, so one modulator can move another, or itself. Modulators read each other
+  a chunk (1.3 ms) late, so the order never matters.
+
+Targets are the continuous and stepped parameters; switches (menus, buttons),
+the pattern seed and MACRO knobs aren't. Modulation updates every 64 samples (the
 knobs' own smoothing takes it from there); routes are saved with the set.
 
 **8-knob controller:** a controller's 8 knobs move the 8 slots of the current page

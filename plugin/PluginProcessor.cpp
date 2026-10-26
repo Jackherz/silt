@@ -394,10 +394,12 @@ SiltProcessor::SiltProcessor()
         if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter))
         {
             const auto id = ranged->getParameterID();
-            const bool modulator = id.length() > 1 && id[0] == 'm' && juce::CharacterFunctions::isDigit (id[1]);
+            // Modulators' own continuous settings are targets too (cross-modulation),
+            // except MACRO, which stays a plain knob.
+            const bool macro = id.length() > 1 && id[0] == 'm' && juce::CharacterFunctions::isDigit (id[1]) && id.endsWith ("Macro");
             const bool switchLike = dynamic_cast<juce::AudioParameterChoice*> (ranged) != nullptr
                                  || dynamic_cast<juce::AudioParameterBool*> (ranged) != nullptr;
-            if (switchLike || modulator || id == "patternSeed")
+            if (switchLike || macro || id == "patternSeed")
                 continue;
             if (targets.size() >= (size_t) maxTargets)
             {
@@ -419,7 +421,15 @@ SiltProcessor::SiltProcessor()
 
     for (int m = 0; m < numModulators; ++m)
     {
-        const auto p = [this, m] (const char* suffix) { return params.getRawParameterValue ("m" + juce::String (m + 1) + suffix); };
+        // Modulated values where a setting is a target: modulators read each
+        // other (and themselves) as of the previous chunk, so order never matters.
+        const auto p = [this, m] (const char* suffix)
+        {
+            const auto id = "m" + juce::String (m + 1) + suffix;
+            if (const auto it = targetIndex.find (id); it != targetIndex.end())
+                return &modulated[(size_t) it->second];
+            return params.getRawParameterValue (id);
+        };
         modulatorRaw[(size_t) m] = { p ("Type"), p ("Rate"), p ("Sync"), p ("Div"), p ("Shape"), p ("Phase"), p ("Retrig"), p ("Smooth"), p ("Jitter"),
                                      p ("Attack"), p ("Decay"), p ("Sustain"), p ("Release"), p ("Repeat"), p ("FAttack"), p ("FRelease"), p ("Gain"), p ("Source"),
                                      p ("Enable"), p ("Voice"), p ("Macro") };

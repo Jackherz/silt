@@ -165,7 +165,9 @@ TEST_CASE ("Modulation targets the continuous and stepped parameters")
     CHECK (rig.silt.modulationTarget ("spaceReverb") >= 0);
     CHECK (rig.silt.modulationTarget ("keyMode") < 0);
     CHECK (rig.silt.modulationTarget ("patternSeed") < 0);
-    CHECK (rig.silt.modulationTarget ("m1Rate") < 0);
+    CHECK (rig.silt.modulationTarget ("m1Rate") >= 0);    // cross-modulation
+    CHECK (rig.silt.modulationTarget ("m1Macro") < 0);   // a plain knob
+    CHECK (rig.silt.modulationTarget ("m1Type") < 0);
     // Switch-like parameters (choices, bools) aren't targets; stepped ones are.
     for (const auto* id : { "scale", "key", "endMode", "resNotes", "liveRun", "spaceMode", "snap", "freeze", "resFollow", "spaceFreeze", "sizeDiv" })
     {
@@ -473,4 +475,44 @@ TEST_CASE ("A MACRO modulator moves its routes with its knob")
     // The MOD page's knob 4 is the macro when the type is MACRO.
     rig.silt.modShown.store (2);
     CHECK (rig.silt.slotParameter (SiltProcessor::modPage, 3) == "m3Macro");
+}
+
+TEST_CASE ("Cross-modulation: one modulator speeds up another, and self-modulation stays sane")
+{
+    Rig rig;
+    const auto crossings = [&rig] (int blocks)
+    {
+        int n = 0;
+        float last = rig.silt.modOutputs[0].load();
+        for (int i = 0; i < blocks; ++i)
+        {
+            runBlocks (rig, 1);
+            const float now = rig.silt.modOutputs[0].load();
+            n += (last < 0.0f) != (now < 0.0f);
+            last = now;
+        }
+        return n;
+    };
+    // M1: a 1 Hz sine. 2 s: about 4 sign changes.
+    const int alone = crossings (188);
+    INFO ("alone " << alone);
+    CHECK (alone <= 6);
+
+    // M2 as a MACRO, fully up, routed +40% onto M1's rate: much faster.
+    rig.set ("m2Type", rig.silt.params.getParameter ("m2Type")->convertTo0to1 (5.0f));
+    rig.set ("m2Macro", 1.0f);
+    rig.silt.setRouteAmount (1, rig.silt.modulationTarget ("m1Rate"), 0.4f);
+    const int faster = crossings (188);
+    INFO ("faster " << faster);
+    CHECK (faster > 3 * std::max (1, alone));
+
+    // M1 on its own rate: still finite and in range.
+    rig.silt.setRouteAmount (0, rig.silt.modulationTarget ("m1Rate"), 1.0f);
+    for (int i = 0; i < 200; ++i)
+    {
+        runBlocks (rig, 1);
+        const float v = rig.silt.modOutputs[0].load();
+        REQUIRE (std::isfinite (v));
+        REQUIRE (std::abs (v) <= 1.0f);
+    }
 }
