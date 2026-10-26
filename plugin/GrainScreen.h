@@ -138,14 +138,31 @@ public:
         }
     }
 
+    // How the screen is shared: the grain field's share of the height, the
+    // corner picture's share of the width (the screen's tiled sections).
+    void setSplit (float fieldPart, float insetPart)
+    {
+        if (! juce::approximatelyEqual (fieldPart, fieldShare) || ! juce::approximatelyEqual (insetPart, insetShare))
+        {
+            fieldShare = fieldPart;
+            insetShare = insetPart;
+            waveCache = {};
+            field = {};
+            repaint();
+        }
+    }
+
     // Where the grain roll is: the lower part of the screen.
     juce::Rectangle<int> rollArea() const
     {
         auto inner = getLocalBounds().reduced (8 + 12 + 10, 8 + 8 + 6);
         inner.removeFromTop (16);
         inner.removeFromBottom (20);
-        return inner.removeFromBottom (juce::roundToInt ((float) inner.getHeight() * 0.36f));
+        return inner.removeFromBottom (juce::roundToInt ((float) inner.getHeight() * fieldShare));
     }
+
+    juce::Point<int> getInsetTopLeft() const { return insetArea().getTopLeft(); }
+    void restyle() { bezel = {}; field = {}; repaint(); }   // after a theme change
 
     juce::Rectangle<int> scopeArea() const
     {
@@ -176,14 +193,26 @@ public:
             g.reduceClipRegion (area.toNearestInt());
             drawInset (g, area);
         }
+
+        // Under glass: a shadow cast by the bezel along the top, and a faint sheen.
+        if (! glass.isEmpty())
+        {
+            const auto face = glass.toFloat();
+            g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.45f), 0.0f, face.getY(),
+                                                     juce::Colours::transparentBlack, 0.0f, face.getY() + 9.0f, false));
+            g.fillRect (face.withHeight (9.0f));
+            g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.07f), 0.0f, face.getY(),
+                                                     juce::Colours::transparentWhite, 0.0f, face.getY() + face.getHeight() * 0.45f, false));
+            g.fillRect (face.withHeight (face.getHeight() * 0.45f));
+        }
     }
 
     // Right-aligned at the bottom: the grain roll's height plus the status line.
     juce::Rectangle<int> insetArea() const
     {
         auto content = getLocalBounds().reduced (8 + 12 + 10, 8 + 8 + 6);
-        const int rollAndStatus = juce::roundToInt ((float) (content.getHeight() - 36) * 0.36f) + 20;
-        return content.removeFromRight (juce::jmin (330, content.getWidth() * 42 / 100)).removeFromBottom (rollAndStatus);
+        const int rollAndStatus = juce::roundToInt ((float) (content.getHeight() - 36) * fieldShare) + 20;
+        return content.removeFromRight (juce::roundToInt ((float) content.getWidth() * insetShare)).removeFromBottom (rollAndStatus);
     }
 
 private:
@@ -237,21 +266,34 @@ private:
 
     void paintScreen (juce::Graphics& g)
     {
+        // The bezel: a dark frame lit from above, a lighter ring, then the
+        // glass; drawn once per size and theme.
         auto r = getLocalBounds();
-        g.setColour (frame);
-        g.fillRoundedRectangle (r.toFloat(), 8.0f);
-        r.reduce (8, 8);
-        g.setColour (screenLight);
-        g.fillRoundedRectangle (r.toFloat(), 8.0f);
-        r.reduce (12, 8);
-        g.setColour (screenBlue);
-        g.fillRect (r);
+        if (bezel.getWidth() != getWidth() || bezel.getHeight() != getHeight())
+        {
+            bezel = juce::Image (juce::Image::ARGB, juce::jmax (1, getWidth()), juce::jmax (1, getHeight()), true);
+            juce::Graphics b (bezel);
+            auto ring = r;
+            b.setGradientFill (juce::ColourGradient (frame.brighter (0.25f), 0.0f, (float) ring.getY(), frame.darker (0.35f), 0.0f, (float) ring.getBottom(), false));
+            b.fillRoundedRectangle (ring.toFloat(), 9.0f);
+            b.setColour (juce::Colours::white.withAlpha (0.12f));
+            b.drawRoundedRectangle (ring.toFloat().reduced (0.5f), 9.0f, 1.0f);
+            ring.reduce (8, 8);
+            b.setGradientFill (juce::ColourGradient (screenLight.brighter (0.15f), 0.0f, (float) ring.getY(), screenLight.darker (0.15f), 0.0f, (float) ring.getBottom(), false));
+            b.fillRoundedRectangle (ring.toFloat(), 8.0f);
+            ring.reduce (12, 8);
+            b.setColour (screenBlue);
+            b.fillRect (ring);
+        }
+        g.drawImageAt (bezel, 0, 0);
+        r.reduce (20, 16);
+        glass = r;
 
         auto inner = r.reduced (10, 6);
         auto top = inner.removeFromTop (16);
         auto bottom = inner.removeFromBottom (16);
         inner.removeFromBottom (4);
-        const auto rollArea = inner.removeFromBottom (juce::roundToInt ((float) inner.getHeight() * 0.36f));
+        const auto rollArea = inner.removeFromBottom (juce::roundToInt ((float) inner.getHeight() * fieldShare));
         inner.removeFromBottom (6);
         const auto waveArea = inner;
 
@@ -472,6 +514,9 @@ private:
     std::array<float, silt::Engine::numVoices> heads {};
     juce::String hud;
     juce::Image field;     // the grain field with its trails
+    juce::Rectangle<int> glass;   // the screen's face, inside the bezel
+    juce::Image bezel;            // the bezel and the empty glass, drawn once per size and theme
+    float fieldShare = 0.36f, insetShare = 0.33f;
     int fadeFrames = 0;    // frames left to fade after the last grain
     bool scopeShown = false, scopeQuiet = true;
     std::vector<float> scopeIn, scopeOut;

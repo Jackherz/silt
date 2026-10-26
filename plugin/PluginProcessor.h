@@ -230,6 +230,15 @@ public:
     // The editor's size, saved with the set.
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };
 
+    // The panel's tiled sections, as shares (dragged with their corner grips,
+    // kept with the session): how much of the flexible height the knob well
+    // takes, how much of the width the mod rail takes, and within the screen
+    // how much of its height the grain field (and the corner picture) takes
+    // and how much of its width the corner picture takes.
+    struct Layout { float well = 0.4f, rail = 0.16f, field = 0.36f, inset = 0.33f; };
+    static Layout defaultLayout() { return {}; }
+    std::atomic<float> layoutWell { 0.4f }, layoutRail { 0.16f }, layoutField { 0.36f }, layoutInset { 0.33f };   // as Layout's
+
     // Read by the editor on the message thread.
     silt::LevelMeter captureMeter;
     std::atomic<CaptureSource> captureSource { CaptureSource::none };

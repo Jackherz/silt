@@ -222,19 +222,128 @@ private:
 public:
     void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool hover, bool down) override
     {
+        // A key: a lip below, a face lit from above with a bright top edge.
+        // Switches (the "led" property) stay up and show their state with a
+        // light; other keys that are on look pressed in, dark.
         auto r = b.getLocalBounds().toFloat();
         const bool red = b.getProperties().getWithDefault ("red", false);
+        const bool led = b.getProperties().getWithDefault ("led", false);
         const bool on = b.getToggleState();
-        const auto cap = red ? signalRed : (on ? ink : bone);
-        const auto lip = red ? rustLip : (on ? knobCap : boneLip);
+        const bool pressedIn = (on && ! led && ! red) || down;
+        const auto cap = red ? signalRed : (on && ! led ? ink : bone);
+        const auto lip = red ? rustLip : (on && ! led ? knobCap : boneLip);
 
+        if (! pressedIn)
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.16f));
+            g.fillRoundedRectangle (r.translated (0.0f, 1.0f), 3.0f);   // a soft shadow under the lip
+        }
         g.setColour (lip);
-        g.fillRoundedRectangle (r, 2.0f);
-        g.setColour (hover && ! on ? cap.brighter (0.06f) : cap);
-        g.fillRoundedRectangle (r.withTrimmedBottom (down ? 1.0f : 3.0f), 2.0f);
+        g.fillRoundedRectangle (r.withTrimmedBottom (pressedIn ? 0.0f : 1.0f), 3.0f);
+
+        const auto face = r.withTrimmedBottom (pressedIn ? 1.0f : 4.0f).withTrimmedTop (pressedIn ? 2.0f : 0.0f);
+        const auto top = hover && ! pressedIn ? cap.brighter (0.16f) : cap.brighter (0.1f);
+        g.setGradientFill (juce::ColourGradient (pressedIn ? cap.darker (0.2f) : top, 0.0f, face.getY(),
+                                                 pressedIn ? cap.brighter (0.05f) : cap.darker (0.06f), 0.0f, face.getBottom(), false));
+        g.fillRoundedRectangle (face, 3.0f);
+        if (pressedIn)
+        {
+            g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.45f), 0.0f, face.getY(), juce::Colours::transparentBlack, 0.0f, face.getY() + 4.0f, false));
+            g.fillRoundedRectangle (face.withHeight (5.0f), 3.0f);
+        }
+        else
+        {
+            g.setColour (juce::Colours::white.withAlpha (red ? 0.3f : 0.6f));
+            g.drawHorizontalLine ((int) face.getY() + 1, face.getX() + 3.0f, face.getRight() - 3.0f);
+        }
+        g.setColour (cap.darker (0.5f).withAlpha (0.5f));
+        g.drawRoundedRectangle (face.reduced (0.5f), 3.0f, 1.0f);
+
+        if (led)
+        {
+            const auto light = juce::Rectangle<float> (6.0f, 6.0f).withCentre ({ face.getX() + 10.0f, face.getCentreY() });
+            if (on)
+            {
+                g.setColour (screenLime.withAlpha (0.35f));
+                g.fillEllipse (light.expanded (3.0f));
+            }
+            g.setColour (on ? screenLime : boneLip.darker (0.3f));
+            g.fillEllipse (light);
+            g.setColour (juce::Colours::black.withAlpha (0.35f));
+            g.drawEllipse (light, 0.8f);
+        }
+    }
+
+    // Value boxes and menus: sunk displays, shaded along the top edge.
+    void drawSunkBox (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour face, juce::Colour edge)
+    {
+        g.setColour (edge);
+        g.fillRect (r);
+        const auto inner = r.reduced (1.0f);
+        g.setGradientFill (juce::ColourGradient (face.darker (0.12f), 0.0f, inner.getY(), face.brighter (0.04f), 0.0f, inner.getBottom(), false));
+        g.fillRect (inner);
+        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.3f), 0.0f, inner.getY(), juce::Colours::transparentBlack, 0.0f, inner.getY() + 4.0f, false));
+        g.fillRect (inner.withHeight (4.0f));
+    }
+
+    void drawComboBox (juce::Graphics& g, int width, int height, bool, int, int, int, int, juce::ComboBox& box) override
+    {
+        drawSunkBox (g, juce::Rectangle<float> ((float) width, (float) height), box.findColour (juce::ComboBox::backgroundColourId),
+                     box.findColour (juce::ComboBox::outlineColourId));
+        juce::Path chevron;
+        const float cx = (float) width - 13.0f, cy = (float) height * 0.5f;
+        chevron.startNewSubPath (cx - 4.0f, cy - 2.0f);
+        chevron.lineTo (cx, cy + 2.0f);
+        chevron.lineTo (cx + 4.0f, cy - 2.0f);
+        g.setColour (box.findColour (juce::ComboBox::arrowColourId));
+        g.strokePath (chevron, juce::PathStrokeType (1.6f));
+    }
+
+    void drawLabel (juce::Graphics& g, juce::Label& label) override
+    {
+        const auto background = label.findColour (juce::Label::backgroundColourId);
+        if (background != lcdGreen)
+        {
+            LookAndFeel_V4::drawLabel (g, label);
+            return;
+        }
+        drawSunkBox (g, label.getLocalBounds().toFloat(), background, label.findColour (juce::Label::outlineColourId));
+        if (! label.isBeingEdited())
+        {
+            const auto font = getLabelFont (label);
+            g.setColour (label.findColour (juce::Label::textColourId));
+            g.setFont (font);
+            const auto area = getLabelBorderSize (label).subtractedFrom (label.getLocalBounds());
+            g.drawFittedText (label.getText(), area, label.getJustificationType(),
+                              juce::jmax (1, (int) ((float) area.getHeight() / font.getHeight())), label.getMinimumHorizontalScale());
+        }
     }
 
     juce::Font getTextButtonFont (juce::TextButton&, int h) override { return panelFont (juce::jmin (12.0f, (float) h * 0.55f)); }
+
+    // Key text sits on the key's face (lower when pressed in), clear of a
+    // switch's light, and shrinks to fit rather than being cut short.
+    void drawButtonText (juce::Graphics& g, juce::TextButton& b, bool, bool down) override
+    {
+        const bool led = b.getProperties().getWithDefault ("led", false);
+        const bool red = b.getProperties().getWithDefault ("red", false);
+        const bool pressedIn = (b.getToggleState() && ! led && ! red) || down;
+        auto area = b.getLocalBounds().toFloat().withTrimmedBottom (pressedIn ? 1.0f : 4.0f).withTrimmedTop (pressedIn ? 2.0f : 0.0f);
+        if (led)
+            area.removeFromLeft (16.0f);
+        area = area.reduced (4.0f, 0.0f);
+
+        const auto text = b.getButtonText();
+        float size = juce::jmin (12.0f, (float) b.getHeight() * 0.55f);
+        const float width = juce::GlyphArrangement::getStringWidth (panelFont (size), text);
+        if (width > area.getWidth() && width > 0.0f)
+            size = juce::jmax (8.0f, size * area.getWidth() / width);
+
+        const auto colour = b.findColour (b.getToggleState() ? juce::TextButton::textColourOnId : juce::TextButton::textColourOffId);
+        g.setColour (colour.withMultipliedAlpha (b.isEnabled() ? 1.0f : 0.45f));
+        g.setFont (panelFont (size));
+        g.drawText (text, area, juce::Justification::centred, false);
+    }
     juce::Font getComboBoxFont (juce::ComboBox&) override { return monoFont (12.0f); }
     juce::Font getPopupMenuFont() override { return monoFont (13.0f); }
     juce::Label* createSliderTextBox (juce::Slider& s) override

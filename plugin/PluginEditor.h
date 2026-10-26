@@ -12,6 +12,7 @@ class ChainView;
 class GrainScreen;
 class SampleGainBox;
 class RandomAmountBox;
+class Grip;
 }
 class PresetBar;
 
@@ -190,7 +191,17 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> monitorAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
 
-    juce::Rectangle<int> header, stripesArea, lcdArea, strip, pagePanel, controlRow, railArea;
+    juce::Rectangle<int> header, stripesArea, lcdArea, strip, pagePanel, controlRow, railArea, tray, wellArea;
+    int flexibleHeight = 0, contentWidth = 0;          // what the tiled sections share
+    juce::Image backdrop;                              // the panel's still parts, drawn once per size and theme
+    std::unique_ptr<silt::ui::Grip> screenGrip, railGrip, insetGrip;
+    SiltProcessor::Layout layoutAtDragStart;
+    struct SlotParts { juce::Rectangle<int> label, control, under; };
+    SlotParts slotParts (int slot) const;
+    void makeGrips();
+    void drawRecess (juce::Graphics&, juce::Rectangle<float> area, float corner);
+    static void drawSunk (juce::Graphics&, juce::Rectangle<float> area, juce::Colour face);
+    void resetLayout (int grip);   // 0 the screen's, 1 the rail's, 2 the corner picture's
     int seenGeneration = -1;
     bool dragHover = false, screenWasLive = false;
     int learnSeen = -1, armedSeen = -2, modShownSeen = -1;

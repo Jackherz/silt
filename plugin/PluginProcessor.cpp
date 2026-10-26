@@ -2375,6 +2375,8 @@ void SiltProcessor::getStateInformation (juce::MemoryBlock& destData)
     {
         state.setProperty ("editorWidth", editorWidth.load(), nullptr);
         state.setProperty ("editorHeight", editorHeight.load(), nullptr);
+        state.setProperty ("layout", juce::String (layoutWell.load()) + "," + juce::String (layoutRail.load()) + ","
+                                         + juce::String (layoutField.load()) + "," + juce::String (layoutInset.load()), nullptr);
     }
 
     juce::MemoryBlock flac;
@@ -2462,6 +2464,13 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
         randomExcluded = juce::StringArray::fromTokens (tree.getProperty ("randomExcluded").toString(), ",", "");
     editorWidth.store ((int) tree.getProperty ("editorWidth", 0));
     editorHeight.store ((int) tree.getProperty ("editorHeight", 0));
+    if (const auto layout = juce::StringArray::fromTokens (tree.getProperty ("layout").toString(), ",", ""); layout.size() == 4)
+    {
+        layoutWell.store (juce::jlimit (0.1f, 0.9f, layout[0].getFloatValue()));
+        layoutRail.store (juce::jlimit (0.1f, 0.5f, layout[1].getFloatValue()));
+        layoutField.store (juce::jlimit (0.15f, 0.85f, layout[2].getFloatValue()));
+        layoutInset.store (juce::jlimit (0.15f, 0.7f, layout[3].getFloatValue()));
+    }
 
     std::unique_ptr<juce::AudioFormatReader> reader;
     if (! flac.isEmpty())

@@ -64,6 +64,22 @@ int main (int argc, char* argv[])
     {
         const juce::String setting (argv[i]);
         const auto id = setting.upToFirstOccurrenceOf ("=", false, false);
+        if (id == "size")   // size=WxH: the window
+        {
+            const auto value = setting.fromFirstOccurrenceOf ("=", false, false);
+            silt.editorWidth.store (value.upToFirstOccurrenceOf ("x", false, false).getIntValue());
+            silt.editorHeight.store (value.fromFirstOccurrenceOf ("x", false, false).getIntValue());
+            continue;
+        }
+        if (id == "layout")   // layout=well,rail,field,inset: the tiled sections' shares
+        {
+            const auto parts = juce::StringArray::fromTokens (setting.fromFirstOccurrenceOf ("=", false, false), ",", "");
+            silt.layoutWell.store (parts[0].getFloatValue());
+            silt.layoutRail.store (parts[1].getFloatValue());
+            silt.layoutField.store (parts[2].getFloatValue());
+            silt.layoutInset.store (parts[3].getFloatValue());
+            continue;
+        }
         if (id == "theme")   // theme=index (0 Cream, 1 Night, 2 Slate, 3 Moss)
         {
             SiltEditor::startTheme = setting.fromFirstOccurrenceOf ("=", false, false).getIntValue();

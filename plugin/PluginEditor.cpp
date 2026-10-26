@@ -1,6 +1,7 @@
 #include "PluginEditor.h"
 #include "ChainView.h"
 #include "GrainScreen.h"
+#include "Grip.h"
 #include "ModColours.h"
 #include "PanelLook.h"
 #include "Presets.h"
@@ -14,7 +15,7 @@ namespace layout = silt::layout;
 namespace
 {
 constexpr int defaultWidth = 1040, defaultHeight = 600;
-constexpr int slotsPerRow = 8, railWidth = 118;
+constexpr int slotsPerRow = 8;
 constexpr float degreesPerUnit = 300.0f;   // a knob's travel
 } // namespace
 
@@ -291,6 +292,11 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addAndMakeVisible (captureBars);
     captureBarsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "captureBars", captureBars);
     resampleButton.setClickingTogglesState (true);
+    for (auto* key : { &resampleButton, &learnButton })
+    {
+        key->getProperties().set ("led", true);   // switches: a light shows they're on
+        key->setColour (juce::TextButton::textColourOnId, ink);
+    }
     resampleButton.setTooltip ("RESAMPLE: ARM records what Silt itself is playing (from the next bar) as the new sample");
     addAndMakeVisible (resampleButton);
     resampleAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "captureFeed", resampleButton);
@@ -373,6 +379,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         monitorAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "monitor", monitorButton);
     }
 
+    makeGrips();
     setWantsKeyboardFocus (true);
     const int w = silt.editorWidth.load(), h = silt.editorHeight.load();   // before the limits resize us
     setResizable (true, true);
@@ -685,11 +692,15 @@ void SiltEditor::restyle()
 {
     look->applyColours();
     armButton.setColour (juce::TextButton::textColourOffId, onFrame);
+    for (auto* key : { &resampleButton, &learnButton })
+        key->setColour (juce::TextButton::textColourOnId, ink);
     for (auto& c : controls)
         if (c->slider != nullptr)
             styleValueBox (*c->slider);
     routeList->restyle();
     screen->setOverview (silt.getOverview());   // the waveform is cached in the old colours
+    backdrop = {};
+    screen->restyle();
     sendLookAndFeelChange();
     repaint();
 }
@@ -700,6 +711,68 @@ void SiltEditor::styleValueBox (juce::Slider& s)
     s.setColour (juce::Slider::textBoxBackgroundColourId, lcdGreen);
     s.setColour (juce::Slider::textBoxOutlineColourId, ink);
     s.setColour (juce::Slider::textBoxHighlightColourId, rust.withAlpha (0.4f));
+}
+
+// The tiled sections' grips. Each drag works from the shares at its start,
+// so the section follows the mouse; the processor keeps them for the session.
+void SiltEditor::makeGrips()
+{
+    const auto start = [this]
+    {
+        layoutAtDragStart = { silt.layoutWell.load(), silt.layoutRail.load(), silt.layoutField.load(), silt.layoutInset.load() };
+    };
+    const auto relayout = [this] { resized(); repaint(); };
+
+    screenGrip = std::make_unique<Grip> (Grip::Corner::bottomRight, juce::MouseCursor::UpDownResizeCursor, true);
+    screenGrip->setTooltip ("Drag to share the height between the screen and the knobs; double-click to reset");
+    screenGrip->onStart = start;
+    screenGrip->onDrag = [this, relayout] (juce::Point<int> d)
+    {
+        silt.layoutWell.store (juce::jlimit (0.1f, 0.9f, layoutAtDragStart.well - (float) d.y / (float) juce::jmax (1, flexibleHeight)));
+        relayout();
+    };
+    screenGrip->onReset = [this] { resetLayout (0); };
+
+    railGrip = std::make_unique<Grip> (Grip::Corner::bottomRight, juce::MouseCursor::LeftRightResizeCursor, false);
+    railGrip->setTooltip ("Drag to share the width between the modulators and the knobs; double-click to reset");
+    railGrip->onStart = start;
+    railGrip->onDrag = [this, relayout] (juce::Point<int> d)
+    {
+        silt.layoutRail.store (juce::jlimit (0.1f, 0.4f, layoutAtDragStart.rail + (float) d.x / (float) juce::jmax (1, contentWidth)));
+        relayout();
+    };
+    railGrip->onReset = [this] { resetLayout (1); };
+
+    insetGrip = std::make_unique<Grip> (Grip::Corner::topLeft, juce::MouseCursor::TopLeftCornerResizeCursor, true);
+    insetGrip->setTooltip ("Drag to size the corner picture and the grain field; double-click to reset");
+    insetGrip->onStart = start;
+    insetGrip->onDrag = [this, relayout] (juce::Point<int> d)
+    {
+        const float width = (float) juce::jmax (1, screen->getWidth() - 60), height = (float) juce::jmax (1, screen->getHeight() - 80);
+        silt.layoutInset.store (juce::jlimit (0.15f, 0.7f, layoutAtDragStart.inset - (float) d.x / width));
+        silt.layoutField.store (juce::jlimit (0.15f, 0.85f, layoutAtDragStart.field - (float) d.y / height));
+        relayout();
+    };
+    insetGrip->onReset = [this] { resetLayout (2); };
+
+    for (auto* grip : { screenGrip.get(), railGrip.get(), insetGrip.get() })
+        addAndMakeVisible (grip);
+}
+
+void SiltEditor::resetLayout (int grip)
+{
+    const auto d = SiltProcessor::defaultLayout();
+    if (grip == 0)
+        silt.layoutWell.store (d.well);
+    else if (grip == 1)
+        silt.layoutRail.store (d.rail);
+    else
+    {
+        silt.layoutField.store (d.field);
+        silt.layoutInset.store (d.inset);
+    }
+    resized();
+    repaint();
 }
 
 void SiltEditor::startTour()
@@ -1026,6 +1099,8 @@ void SiltEditor::showPage (int p)
     if (routeList->isVisible())
         routeList->onClose();   // choosing a page (tab or controller) goes to it
     chainView->setVisible (page == layout::chain);
+    if (insetGrip != nullptr)
+        insetGrip->setVisible (pageHasInset (page));   // only where there's a corner picture to size
     updateVisibility();
 }
 
@@ -1071,6 +1146,22 @@ juce::Slider* SiltEditor::findKnob (const juce::String& id)
         if (c->slider != nullptr && c->entry->id == id)
             return c->slider.get();
     return nullptr;
+}
+
+// A slot's label, knob (with its value box) and the small control under it,
+// kept together and centred in the column: the knob as big as the column's
+// width or the well's height allows, the text and value box their own size.
+SiltEditor::SlotParts SiltEditor::slotParts (int slot) const
+{
+    constexpr int labelHeight = 18, valueBox = 20, underRow = 24;
+    const auto column = slotBounds (slot);
+    const int knob = juce::jlimit (40, 170, juce::jmin (column.getWidth() - 16, column.getHeight() - labelHeight - valueBox - underRow - 8));
+    auto block = column.withSizeKeepingCentre (column.getWidth(), juce::jmin (column.getHeight(), labelHeight + knob + valueBox + underRow));
+    SlotParts parts;
+    parts.label = block.removeFromTop (labelHeight).translated (0, 2);
+    parts.under = block.removeFromBottom (underRow);
+    parts.control = block.reduced (juce::jmin (10, column.getWidth() / 12), 0);
+    return parts;
 }
 
 juce::Rectangle<int> SiltEditor::slotBounds (int slot) const
@@ -1322,78 +1413,123 @@ void SiltEditor::timerCallback()
     }
 }
 
-// Fixed bands top and bottom (header, strip, page panel); the screen takes
-// what's left, so the window can be resized.
+// One grid for the whole panel: a left column as wide as the mod rail, then
+// the 8 knob columns; every row (header, strip, knobs) sits on those edges.
+// Top to bottom: the header, the screen, the strip, the page keys' tray and
+// the knob well. The header, strip and tray keep their height; the screen and
+// the well share the rest, as their grip sets (text stays its size, knobs grow).
 void SiltEditor::resized()
 {
     silt.editorWidth.store (getWidth());
     silt.editorHeight.store (getHeight());
+    backdrop = {};
+    constexpr int gap = 8, stripHeight = 32, trayHeight = 36, minWell = 150, minScreen = 170, minRail = 150;
 
     auto r = getLocalBounds().reduced (14);
-    header = r.removeFromTop (44);
-    stripesArea = header.withTrimmedLeft (130).withWidth (180).withSizeKeepingCentre (180, 19);
-    lcdArea = header.withTrimmedLeft (header.getWidth() - juce::jmin (420, header.getWidth() * 2 / 5)).reduced (8, 7);
-    tourButton.setBounds (lcdArea.removeFromLeft (30).withSizeKeepingCentre (26, 26));
-    lcdArea.removeFromLeft (8);
-    presetBar->setBounds (juce::Rectangle<int>::leftTopRightBottom (stripesArea.getRight() + 16, header.getY(), tourButton.getX() - 10, header.getBottom())
-                              .withSizeKeepingCentre (juce::jmin (330, tourButton.getX() - 10 - stripesArea.getRight() - 16), 26));
-    r.removeFromTop (10);
+    contentWidth = r.getWidth();
+    const int railWidth = juce::jlimit (minRail, juce::jmax (minRail, contentWidth * 2 / 5), juce::roundToInt ((float) contentWidth * silt.layoutRail.load()));
+    const int columnsX = r.getX() + railWidth + gap;
+    const int columnWidth = (r.getRight() - columnsX) / slotsPerRow;
+    const auto column = [&] (juce::Rectangle<int> row, int first, int span = 1)
+    {
+        return row.withX (columnsX + first * columnWidth).withWidth (span * columnWidth);
+    };
 
-    pagePanel = r.removeFromBottom (192);
-    r.removeFromBottom (10);
-    strip = r.removeFromBottom (34);
-    r.removeFromBottom (10);
+    header = r.removeFromTop (44);
+    r.removeFromTop (gap);
+    flexibleHeight = r.getHeight() - stripHeight - trayHeight - 3 * gap;
+    const int wellHeight = juce::jlimit (minWell, juce::jmax (minWell, flexibleHeight - minScreen),
+                                         juce::roundToInt ((float) flexibleHeight * silt.layoutWell.load()));
+    wellArea = r.removeFromBottom (wellHeight);
+    r.removeFromBottom (gap);
+    tray = r.removeFromBottom (trayHeight);
+    r.removeFromBottom (gap);
+    strip = r.removeFromBottom (stripHeight);
+    r.removeFromBottom (gap);
+    screen->setSplit (silt.layoutField.load(), silt.layoutInset.load());
     screen->setBounds (r);
     chainView->setBounds (screen->rollArea().translated (r.getX(), r.getY()));
+    pagePanel = tray.getUnion (wellArea);
 
-    // The strip: left to right, then the right-hand group; everything narrows
-    // together when the window is small.
+    // Header: the name and stripes over the left column, presets over
+    // columns 1–4, ? and the LCD over 5–8.
+    stripesArea = header.withX (header.getX() + 70).withWidth (juce::jmax (40, railWidth - 82)).withSizeKeepingCentre (juce::jmax (40, railWidth - 82), 19);
+    presetBar->setBounds (column (header, 0, 4).reduced (4, 0).withSizeKeepingCentre (column (header, 0, 4).getWidth() - 8, 26));
+    lcdArea = column (header, 4, 4).reduced (4, 7);
+    tourButton.setBounds (lcdArea.removeFromLeft (30).withSizeKeepingCentre (28, 28));
+    lcdArea.removeFromLeft (8);
+    lcdArea.removeFromRight (4);
+
+    // The strip, on the grid: getting sound in over the left column, then a
+    // column (or two) per control. Keys sit 4 px in from their column's edges.
     {
-        struct Part { juce::Component* c; int width, gap; bool right; int trimY; };
-        std::vector<Part> parts { { &armButton, 100, 8, false, 0 }, { &captureBars, 100, 4, false, 4 }, { &resampleButton, 84, 8, false, 0 },
-                                  { &loadButton, 80, 8, false, 0 }, { &learnButton, 80, 8, false, 0 },
-                                  { &randomButton, 86, 4, false, 0 }, { randomAmountBox.get(), 52, 0, false, 0 } };
+        auto left = strip.withWidth (railWidth);
+        armButton.setBounds (left.removeFromLeft (juce::jmin (96, left.getWidth() * 45 / 100)).withTrimmedBottom (3));
+        left.removeFromLeft (6);
+        captureBars.setBounds (left.reduced (0, 3));
+        const auto key = [&] (juce::Component& c, int first, int span = 1) { c.setBounds (column (strip, first, span).reduced (4, 0).withTrimmedBottom (3)); };
+        key (resampleButton, 0);
+        key (loadButton, 1);
+        key (learnButton, 2);
+        auto random = column (strip, 3, 2).reduced (4, 0).withTrimmedBottom (3);
+        randomAmountBox->setBounds (random.removeFromRight (56).withTrimmedBottom (-3));
+        random.removeFromRight (6);
+        randomButton.setBounds (random);
+        auto undoRedo = column (strip, 5).reduced (4, 0).withTrimmedBottom (3);
+        undoButton.setBounds (undoRedo.removeFromLeft (undoRedo.getWidth() / 2 - 2));
+        undoRedo.removeFromLeft (4);
+        redoButton.setBounds (undoRedo);
+        key (routesButton, 6);
         if constexpr (SiltProcessor::isInstrument)
-            parts.push_back ({ &monitorButton, 104, 8, true, 4 });
-        parts.push_back ({ &routesButton, 112, 8, true, 0 });
-        parts.push_back ({ &redoButton, 60, 4, true, 0 });
-        parts.push_back ({ &undoButton, 60, 16, true, 0 });
-        int wanted = 0;
-        for (const auto& p : parts)
-            wanted += p.width + p.gap;
-        const float scale = juce::jmin (1.0f, (float) strip.getWidth() / (float) wanted);
-        auto row = strip;
-        for (const auto& p : parts)
+            monitorButton.setBounds (column (strip, 7).reduced (6, 4));
+    }
+
+    // The page keys, in their own tray across the full width, in three groups
+    // (sound, effects, movement): not on the knob columns, so a key never looks
+    // like a label for the knob under it.
+    {
+        auto keys = tray.reduced (8, 5).withTrimmedBottom (3);
+        constexpr int groupGap = 14, keyGap = 6;
+        const int sizes[] { 4, 4, 2 };
+        const int keyWidth = (keys.getWidth() - 2 * groupGap - ((int) pageTabs.size() - 3) * keyGap) / (int) pageTabs.size();
+        size_t t = 0;
+        for (int g = 0; g < 3; ++g)
         {
-            const int w = juce::roundToInt ((float) p.width * scale), gap = juce::roundToInt ((float) p.gap * scale);
-            auto area = p.right ? row.removeFromRight (w) : row.removeFromLeft (w);
-            p.c->setBounds (area.reduced (0, p.trimY));
-            p.right ? row.removeFromRight (gap) : row.removeFromLeft (gap);
+            for (int k = 0; k < sizes[g]; ++k, ++t)
+            {
+                pageTabs[t].setBounds (keys.removeFromLeft (keyWidth));
+                if (k + 1 < sizes[g])
+                    keys.removeFromLeft (keyGap);
+            }
+            keys.removeFromLeft (groupGap);
         }
     }
 
-    auto panel = pagePanel.reduced (2);
-    auto tabs = panel.removeFromTop (28);
-    const int tabWidth = tabs.getWidth() / (int) pageTabs.size();
-    for (auto& tab : pageTabs)
-        tab.setBounds (tabs.removeFromLeft (tabWidth).reduced (3, 3));
-    panel.removeFromTop (2);
-    railArea = panel.removeFromLeft (railWidth).reduced (6, 6);
+    // The well: the rail in the left column, the knobs one per column.
+    railArea = wellArea.withWidth (railWidth).reduced (8, 8);
     rail->setBounds (railArea);
-    controlRow = panel;
-    routeList->setBounds (controlRow.reduced (2, 0));
+    controlRow = wellArea.withX (columnsX).withWidth (columnWidth * slotsPerRow).withTrimmedTop (4).withTrimmedBottom (2);
+    routeList->setBounds (wellArea.withX (columnsX).withRight (wellArea.getRight()).reduced (2, 2));
     if (tour != nullptr && tour->isRunning())   // the first layout comes before the tour exists
         tour->setBounds (getLocalBounds());
+
+    // Grips: the screen's bottom-right corner (screen ↔ well), the rail's
+    // bottom-right corner (rail ↔ knob columns), the corner picture's top-left
+    // corner (picture and grain field ↔ the rest of the screen).
+    screenGrip->setBounds (juce::Rectangle<int> (16, 16).withPosition (screen->getRight() - 22, screen->getBottom() - 22));
+    railGrip->setBounds (juce::Rectangle<int> (16, 16).withPosition (wellArea.getX() + railWidth - 14, wellArea.getBottom() - 16));
+    insetGrip->setBounds (juce::Rectangle<int> (16, 16).withPosition (screen->getInsetTopLeft() + screen->getPosition()).translated (-2, -2));
 
     for (auto& c : controls)
     {
         const auto& e = *c->entry;
+        const auto slot = slotParts (e.slot);
         if (! e.inSlot())
         {
-            c->component().setBounds (slotBounds (e.slot).removeFromBottom (20).withSizeKeepingCentre (e.width, 18).translated (e.dx, 0));
+            c->component().setBounds (slot.under.withSizeKeepingCentre (e.width, 18).translated (e.dx, 0));
             continue;
         }
-        auto cell = slotBounds (e.slot).withTrimmedTop (18).withTrimmedBottom (22).reduced (juce::jmin (10, slotBounds (0).getWidth() / 12), 0);
+        const auto cell = slot.control;
         if (c->menu != nullptr)
             c->menu->setBounds (cell.withSizeKeepingCentre (cell.getWidth(), 24));
         else if (c->button != nullptr)
@@ -1403,6 +1539,27 @@ void SiltEditor::resized()
         else
             c->slider->setBounds (cell);
     }
+}
+
+// A recess: darker at the top where the rim shades it, a light lip below.
+void SiltEditor::drawRecess (juce::Graphics& g, juce::Rectangle<float> area, float corner)
+{
+    g.setGradientFill (juce::ColourGradient (chassis.darker (0.16f), 0.0f, area.getY(), chassis.darker (0.02f), 0.0f, area.getY() + area.getHeight() * 0.35f, false));
+    g.fillRoundedRectangle (area, corner);
+    juce::ColourGradient shade (juce::Colours::black.withAlpha (0.28f), 0.0f, area.getY(), juce::Colours::transparentBlack, 0.0f, area.getY() + 7.0f, false);
+    g.setGradientFill (shade);
+    g.fillRoundedRectangle (area.withHeight (8.0f), corner);
+    g.setColour (juce::Colours::white.withAlpha (0.45f));
+    g.drawHorizontalLine ((int) area.getBottom(), area.getX() + corner, area.getRight() - corner);
+}
+
+// A sunk display (the LCD, value boxes): shaded along its top edge.
+void SiltEditor::drawSunk (juce::Graphics& g, juce::Rectangle<float> area, juce::Colour face)
+{
+    g.setGradientFill (juce::ColourGradient (face.darker (0.12f), 0.0f, area.getY(), face.brighter (0.04f), 0.0f, area.getBottom(), false));
+    g.fillRect (area);
+    g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.35f), 0.0f, area.getY(), juce::Colours::transparentBlack, 0.0f, area.getY() + 4.0f, false));
+    g.fillRect (area.withHeight (4.0f));
 }
 
 void SiltEditor::paintPreview (juce::Graphics& g)
@@ -1496,41 +1653,48 @@ void SiltEditor::paintStripes (juce::Graphics& g)
 
 void SiltEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (chassis);
-
-    // Header band: name, stripes, LCD.
-    g.setColour (frame);
-    g.fillRect (header);
+    // What doesn't move (the lit chassis, the header band, the LCD's well, the
+    // tray and the knob well) is drawn once per size and theme.
+    if (backdrop.getWidth() != getWidth() || backdrop.getHeight() != getHeight())
+    {
+        backdrop = juce::Image (juce::Image::RGB, juce::jmax (1, getWidth()), juce::jmax (1, getHeight()), false);
+        juce::Graphics b (backdrop);
+        b.setGradientFill (juce::ColourGradient (chassis.brighter (0.06f), 0.0f, 0.0f, chassis.darker (0.08f), 0.0f, (float) getHeight(), false));
+        b.fillAll();
+        const auto band = header.toFloat();
+        b.setGradientFill (juce::ColourGradient (frame.brighter (0.2f), 0.0f, band.getY(), frame.darker (0.25f), 0.0f, band.getBottom(), false));
+        b.fillRoundedRectangle (band, 5.0f);
+        b.setColour (juce::Colours::white.withAlpha (0.1f));
+        b.drawHorizontalLine ((int) band.getY() + 1, band.getX() + 4.0f, band.getRight() - 4.0f);
+        b.setColour (juce::Colour (0xff0d0b0a));
+        b.fillRoundedRectangle (lcdArea.toFloat(), 3.0f);
+        drawSunk (b, lcdArea.reduced (3).toFloat(), lcdGreen);
+        drawRecess (b, tray.toFloat(), 6.0f);
+        drawRecess (b, wellArea.toFloat(), 8.0f);
+    }
+    g.drawImageAt (backdrop, 0, 0);
     g.setColour (onFrame);
     g.setFont (panelFont (20.0f));
     g.drawText (juce::String (JucePlugin_Name).toUpperCase(), header.withTrimmedLeft (16), juce::Justification::centredLeft);
     paintStripes (g);
 
     const auto lcd = lcdArea;
-    g.setColour (juce::Colour (0xff14110f));
-    g.fillRect (lcd);
-    g.setColour (lcdGreen);
-    g.fillRect (lcd.reduced (3));
     g.setColour (lcdText);
     g.setFont (monoFont (14.0f));
     g.drawFittedText (statusText(), lcd.reduced (12, 0), juce::Justification::centredLeft, 1, 0.8f);
 
-    // Page panel: a ruled grid of cells (UI inspiration: data sheets, diagnostics).
-    g.setColour (ink);
-    g.drawRect (pagePanel, 2);
-    g.drawHorizontalLine (pagePanel.getY() + 30, (float) pagePanel.getX(), (float) pagePanel.getRight());
-    g.setColour (ink.withAlpha (0.4f));
-    g.drawVerticalLine (controlRow.getX(), (float) controlRow.getY() + 4.0f, (float) controlRow.getBottom() - 4.0f);
-    g.setColour (ink.withAlpha (0.25f));
+    g.setColour (ink.withAlpha (0.18f));
+    g.drawVerticalLine (controlRow.getX() - 1, (float) wellArea.getY() + 10.0f, (float) wellArea.getBottom() - 10.0f);
+    g.setColour (ink.withAlpha (0.1f));
     for (int s = 1; s < slotsPerRow; ++s)
-        g.drawVerticalLine (slotBounds (s).getX(), (float) controlRow.getY() + 6.0f, (float) controlRow.getBottom() - 6.0f);
+        g.drawVerticalLine (slotBounds (s).getX(), (float) controlRow.getY() + 8.0f, (float) controlRow.getBottom() - 8.0f);
 
     g.setColour (ink);
     g.setFont (panelFont (10.5f));
     for (auto& c : controls)
         if (c->entry->inSlot() && c->component().isVisible())
         {
-            const auto labelArea = slotBounds (c->entry->slot).withHeight (18).translated (0, 2);
+            const auto labelArea = slotParts (c->entry->slot).label;
             g.drawText (c->entry->label, labelArea, juce::Justification::centred);
             if (silt.isRandomExcluded (c->entry->id))
             {

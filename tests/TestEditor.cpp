@@ -6,6 +6,7 @@
 
 #include "../plugin/Palette.h"
 #include "../plugin/PluginEditor.h"
+#include "../plugin/Grip.h"
 
 using Catch::Matchers::WithinAbs;
 
@@ -385,4 +386,35 @@ TEST_CASE ("The strip's controls fit without overlapping at the smallest size")
     for (size_t i = 0; i < boxes.size(); ++i)
         for (size_t j = i + 1; j < boxes.size(); ++j)
             CHECK_FALSE (boxes[i].intersects (boxes[j]));
+}
+
+TEST_CASE ("The screen's grip trades height with the knobs, is kept with the session, and double-click resets it")
+{
+    EditorRig rig;
+    rig.editor->setSize (1040, 520);   // short: the well's height, not the column's width, limits the knobs
+    auto* knob = rig.editor->findKnob ("pitch");
+    REQUIRE (knob != nullptr);
+    const int knobBefore = knob->getHeight();
+
+    // The grip at the screen's bottom-right corner: drag it up 80 px.
+    silt::ui::Grip* grip = nullptr;
+    for (auto* child : rig.editor->getChildren())
+        if (auto* g = dynamic_cast<silt::ui::Grip*> (child); g != nullptr && g->getMouseCursor() == juce::MouseCursor::UpDownResizeCursor)
+            grip = g;
+    REQUIRE (grip != nullptr);
+    const float before = rig.silt.layoutWell.load();
+    grip->onStart();
+    grip->onDrag ({ 0, -80 });
+    CHECK (rig.silt.layoutWell.load() > before);
+    CHECK (knob->getHeight() > knobBefore);   // the knobs grow with their well
+
+    // Kept with the session.
+    juce::MemoryBlock state;
+    rig.silt.getStateInformation (state);
+    SiltProcessor restored;
+    restored.setStateInformation (state.getData(), (int) state.getSize());
+    CHECK_THAT (restored.layoutWell.load(), WithinAbs (rig.silt.layoutWell.load(), 1.0e-4));
+
+    grip->onReset();
+    CHECK_THAT (rig.silt.layoutWell.load(), WithinAbs (SiltProcessor::defaultLayout().well, 1.0e-6));
 }
