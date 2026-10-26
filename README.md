@@ -132,6 +132,12 @@ Targets are the continuous and stepped parameters; switches (menus, buttons),
 the pattern seed and MACRO knobs aren't. Modulation updates every 64 samples (the
 knobs' own smoothing takes it from there); routes are saved with the set.
 
+**Sample gain** (GAIN on the screen's top bar): the sample's level, ±24 dB, for
+samples that come in too loud or too soft. Drag it up or down (Shift for fine),
+scroll, double-click for 0 dB, or right-click to normalise (peak at −1 dB). The
+waveform is drawn at the gain, with anything pushed past full scale in red. Saved
+with the set and undoable; not part of presets (it belongs to the sample).
+
 **Screen insets:** the screen's bottom-right corner draws the open page as a picture,
 from the modulated values, so it moves with modulation: FILTER the response curve
 (slope, morph, resonance, mix, cutoff line), RESONATOR the bands (across by pitch,

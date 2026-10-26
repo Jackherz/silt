@@ -231,6 +231,11 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     presetBar = std::make_unique<PresetBar> (silt);
     addAndMakeVisible (*presetBar);
     screen->drawInset = [this] (juce::Graphics& g, juce::Rectangle<float> area) { return drawPageInset (g, area, page, silt, *rail); };
+    if (auto* gain = dynamic_cast<juce::RangedAudioParameter*> (silt.params.getParameter ("sampleGain")))
+    {
+        sampleGainBox = std::make_unique<SampleGainBox> (*gain, [this] { return silt.normalisingGainDb(); });
+        screen->addAndMakeVisible (*sampleGainBox);
+    }
 
     for (const auto& entry : layout::entries (SiltProcessor::isInstrument))
         buildControl (entry);
@@ -845,6 +850,7 @@ void SiltEditor::timerCallback()
     const auto [regionStart, regionLength] = silt.shownRegion();
     screen->setRegion (regionStart, regionLength);
     screen->setTransientsShown (param ("snap") > 1.5f);
+    screen->setDisplayGain (juce::Decibels::decibelsToGain (param ("sampleGain")));
 
     // The grains: the screen only repaints while something is moving.
     auto& views = viewsScratch;

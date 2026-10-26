@@ -8,6 +8,7 @@ namespace silt::ui
 {
 class PanelLook;
 class GrainScreen;
+class SampleGainBox;
 }
 class PresetBar;
 
@@ -140,6 +141,7 @@ private:
     std::unique_ptr<silt::ui::ModRail> rail;
     std::unique_ptr<silt::ui::RouteList> routeList;
     std::unique_ptr<PresetBar> presetBar;
+    std::unique_ptr<silt::ui::SampleGainBox> sampleGainBox;
     juce::String presetShown;
     std::vector<float> insetSeen;
     juce::TooltipWindow tooltips { this, 600 };

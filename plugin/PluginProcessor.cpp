@@ -300,7 +300,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
     // Capture and output
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "captureBars", 1 }, "Capture length",
                                                               captureBarChoices, 1),
-                withUnit ("gain", "Output", Range (-48.0f, 12.0f, 0.1f), 0.0f, formatDb));
+                withUnit ("gain", "Output", Range (-48.0f, 12.0f, 0.1f), 0.0f, formatDb),
+                // The sample's own level, before the grains go anywhere: for samples
+                // that come in too loud or too soft (the screen's GAIN).
+                withUnit ("sampleGain", "Sample gain", Range (-24.0f, 24.0f, 0.1f), 0.0f, [] (float v, int)
+                {
+                    return (v > 0.04f ? "+" : "") + juce::String (v, 1) + " dB";
+                }));
 
     if constexpr (SiltProcessor::isInstrument)
         layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "monitor", 1 }, "Monitor input", false));
@@ -406,7 +412,7 @@ SiltProcessor::SiltProcessor()
             const bool macro = id.length() > 1 && id[0] == 'm' && juce::CharacterFunctions::isDigit (id[1]) && id.endsWith ("Macro");
             const bool switchLike = dynamic_cast<juce::AudioParameterChoice*> (ranged) != nullptr
                                  || dynamic_cast<juce::AudioParameterBool*> (ranged) != nullptr;
-            if (switchLike || macro || id == "patternSeed")
+            if (switchLike || macro || id == "patternSeed" || id == "sampleGain")
                 continue;
             if (targets.size() >= (size_t) maxTargets)
             {
@@ -444,6 +450,7 @@ SiltProcessor::SiltProcessor()
 
     for (auto* parameter : getParameters())
         parameter->addListener (this);
+    sampleGain = params.getRawParameterValue ("sampleGain");
 
     raw = std::make_unique<RawParams> ([this] (const char* id) -> std::atomic<float>*
     {
@@ -866,6 +873,15 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
                         noteEvents.data() + (first - noteEvents.begin()), (int) (last - first), grainParams);
         if (grainParams.live && ! grainParams.freeze)
             trackLivePeaks (liveWriteBefore, len);
+
+        // Sample gain, ramped across the chunk so moving it doesn't click.
+        {
+            const float target = juce::Decibels::decibelsToGain (sampleGain->load (std::memory_order_relaxed));
+            if (! juce::exactlyEqual (target, sampleGainNow) || ! juce::exactlyEqual (target, 1.0f))
+                for (int ch = 0; ch < 2; ++ch)
+                    wet.applyGainRamp (ch, 0, len, sampleGainNow, target);
+            sampleGainNow = target;
+        }
         resonator.process (wet.getWritePointer (0), wet.getWritePointer (1), len, resonatorParams);
         filter.process (wet.getWritePointer (0), wet.getWritePointer (1), len, filterParams);
         color.process (wet.getWritePointer (0), wet.getWritePointer (1), len, colorParams);
@@ -1402,7 +1418,8 @@ bool SiltProcessor::isModulatorPerVoice (int m) const noexcept
 namespace
 {
 // Session settings, not part of a sound.
-bool inPresets (const juce::String& id) { return id != "monitor" && id != "captureBars"; }
+// Session and sample settings, not part of a sound.
+bool inPresets (const juce::String& id) { return id != "monitor" && id != "captureBars" && id != "sampleGain"; }
 } // namespace
 
 std::unique_ptr<juce::XmlElement> SiltProcessor::capturePreset (const juce::String& name) const
@@ -1829,6 +1846,14 @@ std::pair<float, float> SiltProcessor::shownRegion() const
                                            (silt::Snap) juce::jlimit (0, 2, (int) params.getRawParameterValue ("snap")->load()),
                                            sampleZeroCrossings, sampleTransients);
     return { (float) (snapped.begin / frames), (float) ((snapped.end - snapped.begin) / frames) };
+}
+
+// The gain that puts the sample's peak at −1 dBFS (0 with no sample).
+float SiltProcessor::normalisingGainDb() const
+{
+    const juce::ScopedLock sl (sampleLock);
+    const float peak = sampleCopy.getNumSamples() > 0 ? sampleCopy.getMagnitude (0, sampleCopy.getNumSamples()) : 0.0f;
+    return peak > 1.0e-6f ? juce::jlimit (-24.0f, 24.0f, -1.0f - juce::Decibels::gainToDecibels (peak)) : 0.0f;
 }
 
 SiltProcessor::Overview SiltProcessor::getOverview() const

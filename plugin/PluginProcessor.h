@@ -94,6 +94,7 @@ public:
         std::vector<float> transients;   // shares of the sample
     };
     Overview getOverview() const;
+    float normalisingGainDb() const;               // the sample gain that peaks it at −1 dBFS
     std::pair<float, float> shownRegion() const;   // start and length as they'll play (snapped)
 
     // Sounding grains for the screen. The audio thread publishes a snapshot
@@ -218,6 +219,8 @@ private:
     silt::Space space;           // last: delay and reverb sends
     int lastNote = -1;           // the last note played, for FOLLOW and KEY (audio thread)
     bool lastLive = false;
+    std::atomic<float>* sampleGain = nullptr;
+    float sampleGainNow = 1.0f;   // audio thread: the gain ramped to
 
     // Modulation state.
     struct Target

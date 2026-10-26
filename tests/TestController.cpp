@@ -628,3 +628,34 @@ TEST_CASE ("Knob, menu and button changes undo; automation and preset loads don'
     rig.silt.applyPreset (*rig.silt.capturePreset ("x"), "x");
     CHECK_FALSE (rig.silt.canUndoRoutes());
 }
+
+TEST_CASE ("Sample gain scales the grains; normalise peaks the sample at -1 dB")
+{
+    const auto render = [] (float gainDb)
+    {
+        Rig rig;
+        loadSine (rig);
+        rig.set ("sampleGain", rig.silt.params.getParameter ("sampleGain")->convertTo0to1 (gainDb));
+        juce::MidiBuffer on;
+        on.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 512);
+        double sum = 0.0;
+        for (int i = 0; i < 60; ++i)
+        {
+            buffer.clear();
+            rig.silt.processBlock (buffer, on);
+            on.clear();
+            if (i >= 20)
+                sum += buffer.getRMSLevel (0, 0, 512);
+        }
+        return std::make_pair (sum, rig.silt.normalisingGainDb());
+    };
+    const auto [flat, normalise] = render (0.0f);
+    const auto [softer, unused] = render (-6.0206f);   // ×0.5 (turning up would meet the output's safety clip)
+    CHECK_THAT (softer / flat, WithinAbs (0.5, 0.005));
+    CHECK_THAT (normalise, WithinAbs (-1.0 - juce::Decibels::gainToDecibels (0.5), 0.05));   // the test sine peaks at 0.5
+
+    Rig rig;
+    CHECK (rig.silt.modulationTarget ("sampleGain") < 0);
+    CHECK_FALSE (rig.silt.capturePreset ("x")->getChildByName ("PARAMS")->hasAttribute ("sampleGain"));
+}

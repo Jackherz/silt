@@ -64,7 +64,26 @@ public:
         }
     }
 
-    void resized() override { waveCache = {}; }
+    void resized() override
+    {
+        waveCache = {};
+        // The top bar's controls: right-aligned, left of the length readout.
+        auto top = getLocalBounds().reduced (8 + 12 + 10, 8 + 8 + 6).removeFromTop (16);
+        top.removeFromRight (96);
+        for (auto* child : getChildren())
+            child->setBounds (top.removeFromRight (child->getWidth() > 0 ? child->getWidth() : 130).withSizeKeepingCentre (child->getWidth() > 0 ? child->getWidth() : 130, 16));
+    }
+
+    // The waveform is drawn at the sample's gain.
+    void setDisplayGain (float gain)
+    {
+        if (! juce::approximatelyEqual (gain, displayGain))
+        {
+            displayGain = gain;
+            waveCache = {};
+            repaint();
+        }
+    }
 
     // The open page's picture, in the bottom-right corner over the grain roll
     // (drawInset draws it and returns false when the page has none).
@@ -167,12 +186,15 @@ private:
             juce::Graphics c (waveCache);
             const float mid = (float) area.getHeight() * 0.5f, half = (float) area.getHeight() * 0.48f;
             const int cols = (int) overview.minimum.size();
-            c.setColour (screenPale);
+            // At the sample gain: columns pushed past full scale are drawn red.
             for (int x = 0; x < area.getWidth(); ++x)
             {
                 const auto i = (size_t) juce::jlimit (0, cols - 1, x * cols / juce::jmax (1, area.getWidth()));
-                const float top = mid - overview.maximum[i] * half;
-                const float bottom = mid - overview.minimum[i] * half;
+                const float hi = overview.maximum[i] * displayGain, lo = overview.minimum[i] * displayGain;
+                const bool clipped = hi > 1.0f || lo < -1.0f;
+                const float top = mid - juce::jmin (1.0f, hi) * half;
+                const float bottom = mid - juce::jmax (-1.0f, lo) * half;
+                c.setColour (clipped ? signalRed : screenPale);
                 c.fillRect ((float) x, top, 1.0f, juce::jmax (1.0f, bottom - top));
             }
         }
@@ -281,6 +303,7 @@ private:
 
     SiltProcessor::Overview overview;
     juce::Image waveCache;
+    float displayGain = 1.0f;
     bool live = false, frozen = false, transientsShown = false;
     float writeShare = 0.0f;
     std::array<float, SiltProcessor::liveColumns> livePeaks {};
@@ -289,6 +312,81 @@ private:
     int numViews = 0;
     std::array<float, silt::Engine::numVoices> heads {};
     juce::String hud;
+};
+
+// The screen's GAIN: the sample's level, as text on the screen. Drag up or
+// down (Shift: finer), scroll, double-click for 0 dB; right-click to
+// normalise (peak at −1 dB) or reset.
+class SampleGainBox final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    SampleGainBox (juce::RangedAudioParameter& p, std::function<float()> normalising)
+        : parameter (p), normalise (std::move (normalising)), attachment (p, [this] (float) { repaint(); })
+    {
+        attachment.sendInitialUpdate();
+        setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
+        setRepaintsOnMouseActivity (true);
+        setTooltip ("The sample's level: drag, scroll, double-click for 0 dB, right-click to normalise");
+        setSize (130, 16);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const float db = parameter.convertFrom0to1 (parameter.getValue());
+        if (isMouseOver (true))
+        {
+            g.setColour (screenLight.withAlpha (0.35f));
+            g.fillRect (getLocalBounds());
+        }
+        g.setColour (std::abs (db) < 0.05f ? juce::Colours::white : screenLime);
+        g.setFont (monoFont (12.0f));
+        g.drawText ("GAIN " + parameter.getText (parameter.getValue(), 0).toUpperCase(), getLocalBounds(), juce::Justification::centredRight);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu())
+        {
+            juce::PopupMenu menu;
+            menu.addItem (1, "Normalise (peak at -1 dB)");
+            menu.addItem (2, "Reset to 0 dB");
+            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this] (int chosen)
+            {
+                if (chosen == 1)
+                    attachment.setValueAsCompleteGesture (normalise());
+                else if (chosen == 2)
+                    attachment.setValueAsCompleteGesture (0.0f);
+            });
+            return;
+        }
+        dbAtStart = parameter.convertFrom0to1 (parameter.getValue());
+        attachment.beginGesture();
+        dragging = true;
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (dragging)
+            attachment.setValueAsPartOfGesture (juce::jlimit (-24.0f, 24.0f, dbAtStart - (float) e.getDistanceFromDragStartY() * (e.mods.isShiftDown() ? 0.02f : 0.15f)));
+    }
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        if (dragging)
+            attachment.endGesture();
+        dragging = false;
+    }
+    void mouseDoubleClick (const juce::MouseEvent&) override { attachment.setValueAsCompleteGesture (0.0f); }
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) override
+    {
+        const float db = parameter.convertFrom0to1 (parameter.getValue());
+        attachment.setValueAsCompleteGesture (juce::jlimit (-24.0f, 24.0f, db + (wheel.deltaY > 0.0f ? 0.5f : -0.5f)));
+    }
+
+private:
+    juce::RangedAudioParameter& parameter;
+    std::function<float()> normalise;
+    juce::ParameterAttachment attachment;
+    float dbAtStart = 0.0f;
+    bool dragging = false;
 };
 
 } // namespace silt::ui
