@@ -560,11 +560,14 @@ void SiltEditor::showKnobMenu (FineSlider& s)
 }
 
 // One step back or forward, with a word in the LCD about what changed.
-// COLOR: the scope taps the module, reads ~21 ms past the latest rising zero
+// RESONATOR, FILTER, COLOR: the scope taps the module, reads ~21 ms past the latest rising zero
 // crossing, and draws what goes in against what comes out.
 void SiltEditor::updateScope()
 {
-    const int module = page == layout::color ? SiltProcessor::moduleColor : -1;
+    const int module = page == layout::resonator ? SiltProcessor::moduleResonator
+                     : page == layout::filter    ? SiltProcessor::moduleFilter
+                     : page == layout::color     ? SiltProcessor::moduleColor
+                                                 : -1;
     silt.scopeModule.store (module);
     if (module < 0)
     {
