@@ -60,6 +60,16 @@ public:
         livePeaks = peaks;
     }
 
+    // SLICE: where each slice starts (shares), drawn and numbered on the waveform.
+    void setSlices (std::vector<float> marks)
+    {
+        if (marks != slices)
+        {
+            slices = std::move (marks);
+            repaint();
+        }
+    }
+
     void setTransientsShown (bool shown)
     {
         if (shown != transientsShown)
@@ -136,6 +146,14 @@ public:
             scopeShown = false;
             repaint (scopeArea());
         }
+    }
+
+    // Right-click on the screen: the sample's menu (the editor builds it).
+    std::function<void()> onMenu;
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu() && onMenu)
+            onMenu();
     }
 
     // How the grains are drawn below the waveform; each theme has its own.
@@ -351,6 +369,24 @@ private:
             }
         }
         drawRegion (g, waveArea, rollArea);
+        if (! slices.empty())
+        {
+            // The slices: a line at each start, numbered while there's room.
+            const float spacing = (float) waveArea.getWidth() * (slices.size() > 1 ? slices[1] - slices[0] : 1.0f);
+            g.setFont (monoFont (9.0f));
+            for (size_t i = 0; i < slices.size(); ++i)
+            {
+                const float x = (float) waveArea.getX() + slices[i] * (float) waveArea.getWidth();
+                g.setColour (screenLime.withAlpha (0.55f));
+                g.fillRect (x, (float) waveArea.getY(), 1.0f, (float) waveArea.getHeight());
+                if (spacing > 16.0f)
+                {
+                    g.setColour (screenLime);
+                    g.drawText (juce::String ((int) i + 1), juce::Rectangle<float> (x + 2.0f, (float) waveArea.getY() + 2.0f, 20.0f, 10.0f),
+                                juce::Justification::centredLeft);
+                }
+            }
+        }
         drawGrains (g, waveArea, rollArea);
 
         g.setColour (juce::Colours::white);
@@ -659,6 +695,7 @@ private:
     juce::Image waveCache;
     float displayGain = 1.0f;
     bool live = false, frozen = false, transientsShown = false, selfFeed = false;
+    std::vector<float> slices;
     float writeShare = 0.0f;
     std::array<float, SiltProcessor::liveColumns> livePeaks {};
     float start = 0.0f, length = 1.0f;
@@ -678,6 +715,47 @@ private:
     std::vector<float> scopeIn, scopeOut;
     float scopeScale = 1.0f;
     juce::String scopeTitle;
+};
+
+// The screen's DRAG: drag from it into a DAW to drop the sound in as audio
+// (the editor writes the file as the drag starts).
+class DragOutHandle final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    DragOutHandle()
+    {
+        setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+        setRepaintsOnMouseActivity (true);
+        setTooltip ("Drag into your DAW to drop the sample in as audio (in LIVE and FEED: the last 8 seconds)");
+        setSize (60, 16);
+    }
+
+    std::function<void()> onDragOut;
+
+    void paint (juce::Graphics& g) override
+    {
+        if (isMouseOver (true))
+        {
+            g.setColour (screenLight.withAlpha (0.35f));
+            g.fillRect (getLocalBounds());
+        }
+        g.setColour (screenPale);
+        g.setFont (monoFont (12.0f));
+        g.drawText (juce::String::charToString ((juce::juce_wchar) 0x21e9) + " DRAG", getLocalBounds(), juce::Justification::centred);
+    }
+
+    void mouseDown (const juce::MouseEvent&) override { started = false; }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (! started && e.getDistanceFromDragStart() > 4 && onDragOut)
+        {
+            started = true;
+            onDragOut();
+        }
+    }
+
+private:
+    bool started = false;
 };
 
 // The screen's GAIN: the sample's level, as text on the screen. Drag up or

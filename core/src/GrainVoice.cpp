@@ -60,12 +60,41 @@ GrainVoice::Region GrainVoice::computeRegion (const GrainParams& p, const Sample
     return { snapped.begin, snapped.end };
 }
 
+// Slice mode: the whole region cut into this voice's slice. Equal slices,
+// or from the region's start to its first transient, transient to transient,
+// the last to the region's end. Keys wrap round the slices.
+GrainVoice::Region GrainVoice::regionFor (const GrainParams& p, const SampleBuffer& buffer) const noexcept
+{
+    const auto whole = computeRegion (p, buffer);
+    if (slice < 0 || p.live)
+        return whole;
+
+    if (p.sliceTransients)
+    {
+        constexpr double minimum = 256.0;   // a hit this close to the last starts no new slice
+        std::array<double, 129> edges {};
+        int count = 0;
+        edges[(size_t) count++] = whole.begin;
+        for (const int t : buffer.getTransients())
+            if ((double) t > edges[(size_t) count - 1] + minimum && (double) t < whole.end - minimum && count < (int) edges.size() - 1)
+                edges[(size_t) count++] = (double) t;
+        const int i = ((slice % count) + count) % count;
+        return { edges[(size_t) i], i + 1 < count ? edges[(size_t) i + 1] : whole.end };
+    }
+
+    const int count = std::clamp (p.sliceCount, 1, 128);
+    const int i = ((slice % count) + count) % count;
+    const double each = (whole.end - whole.begin) / count;
+    return { whole.begin + each * i, whole.begin + each * (i + 1) };
+}
+
 void GrainVoice::noteOn (int note, float vel, const SampleBuffer& buffer, const GrainParams& p) noexcept
 {
-    const auto region = computeRegion (p, buffer);
+    slice = p.slice && ! p.live ? note - p.rootNote : -1;
+    const auto region = regionFor (p, buffer);
     currentNote = note;
     velocity = vel;
-    noteRatio = semitonesToRatio (note - p.rootNote);
+    noteRatio = slice >= 0 ? 1.0 : semitonesToRatio (note - p.rootNote);   // slices play at the sample's pitch
     playhead = p.scan < 0.0 ? region.end - 1.0 : region.begin;   // reverse scans start at the end
     samplesToNextGrain = 0.0;      // first grain on the note itself
     patternStep = 0;
@@ -87,7 +116,7 @@ double GrainVoice::pitchRatio (const GrainParams& p, const SampleBuffer& buffer)
 // parts are added first and snapped once, so intervals come out right).
 double GrainVoice::nextGrainSemitones (const GrainParams& p) noexcept
 {
-    double semitones = (currentNote - p.rootNote) + p.pitchSemitones;
+    double semitones = (slice >= 0 ? 0 : currentNote - p.rootNote) + p.pitchSemitones;
     if (p.randomPitch > 0.0)
         semitones += random.nextBipolar() * p.randomPitch;
     if (p.pattern != nullptr && p.patternSteps > 0)
@@ -413,7 +442,7 @@ void GrainVoice::render (float* left, float* right, int numSamples,
 
     regionBuffer = buffer;
     if (buffer != nullptr)
-        blockRegion = computeRegion (p, *buffer);
+        blockRegion = regionFor (p, *buffer);
 
     // Auto-gain (after Mutable Instruments Beads): whether overlapping grains add
     // in phase or like noise depends on the audio as much as the settings (a

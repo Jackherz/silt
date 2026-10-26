@@ -1049,3 +1049,45 @@ TEST_CASE ("FEED makes up what the grains lose: at default settings 100% holds a
     CHECK (lastSecond (1.0) > 0.1);
     CHECK (lastSecond (0.5) < 0.001);
 }
+
+TEST_CASE ("Slice mode: each key from the root plays its own slice, at the sample's pitch")
+{
+    // Where a note's grains read, as shares of the sample.
+    const auto readsFor = [] (int note, bool transients)
+    {
+        auto buffer = transients ? makeBursts ({ 0.0, 0.5, 1.2, 2.0 }) : makeSine (240.0, 2.0);
+        TestEngine engine (std::move (buffer));
+        GrainParams p;
+        p.slice = true;
+        p.sliceTransients = transients;
+        p.sliceCount = 4;
+        p.sizeMs = 40.0;
+        p.spray = 0.0;
+        p.scan = 0.0;   // the playhead stays at the slice's start
+        render (engine, p, (int) (0.3 * sampleRate), { { 0, note, true } });
+        std::array<GrainView, 256> views {};
+        const int n = engine.collectGrainViews (views.data(), (int) views.size());
+        float lo = 1.0f, hi = 0.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            lo = std::min (lo, views[(size_t) i].start);
+            hi = std::max (hi, views[(size_t) i].end);
+        }
+        return std::make_pair (lo, hi);
+    };
+
+    // Equal: four quarters; C3 the first, D3 the third, and keys wrap (C4 = 12 → the first again).
+    const auto first = readsFor (60, false);
+    CHECK (first.first >= 0.0f);
+    CHECK (first.second <= 0.26f);
+    const auto third = readsFor (62, false);
+    CHECK (third.first >= 0.49f);
+    CHECK (third.second <= 0.76f);
+    const auto wrapped = readsFor (72, false);
+    CHECK (wrapped.second <= 0.26f);
+
+    // At hits: the slices start at the bursts (0 s, 0.5 s, 1.2 s, 2.0 s of 3 s).
+    const auto second = readsFor (61, true);
+    CHECK (second.first >= 0.5f / 3.0f - 0.01f);
+    CHECK (second.second <= 1.2f / 3.0f + 0.01f);
+}

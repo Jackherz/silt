@@ -2,6 +2,7 @@
 #include "ChainView.h"
 #include "GrainScreen.h"
 #include "Grip.h"
+#include "Help.h"
 #include "ModColours.h"
 #include "PanelLook.h"
 #include "Presets.h"
@@ -246,6 +247,54 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         screen->addAndMakeVisible (*sampleGainBox);
     }
 
+    // DRAG: the sound out to the DAW, as a WAV kept in Music/Silt/Takes (a
+    // file that stays, so the clip it becomes doesn't lose its audio).
+    dragOut = std::make_unique<DragOutHandle>();
+    dragOut->onDragOut = [this]
+    {
+        const auto name = juce::File::createLegalFileName (silt.audioName());
+        const auto file = SiltProcessor::takesFolder().getNonexistentChildFile (name, ".wav", false);
+        if (silt.writeAudioFile (file))
+            juce::DragAndDropContainer::performExternalDragDropOfFiles ({ file.getFullPathName() }, false, dragOut.get());
+    };
+    screen->addAndMakeVisible (*dragOut);
+
+    // Right-click the screen: the sample tools.
+    screen->onMenu = [this]
+    {
+        const bool hasSample = silt.getOverview().seconds > 0.0;
+        const bool live = silt.liveMode.load();
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("SAMPLE");
+        menu.addItem (1, "Trim to the region", hasSample && ! live);
+        menu.addItem (2, "Reverse", hasSample && ! live);
+        menu.addItem (3, "Normalise to -1 dB", hasSample && ! live);
+        menu.addSeparator();
+        menu.addItem (4, live ? "Save the last 8 seconds as WAV..." : "Save as WAV...", hasSample || live);
+        menu.addItem (5, "Show the takes folder");
+        menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [this] (int chosen)
+        {
+            if (chosen >= 1 && chosen <= 3)
+                silt.editSample (chosen == 1 ? SiltProcessor::SampleEdit::trimToRegion
+                                 : chosen == 2 ? SiltProcessor::SampleEdit::reverse : SiltProcessor::SampleEdit::normalise);
+            else if (chosen == 4)
+            {
+                chooser = std::make_unique<juce::FileChooser> ("Save as WAV", SiltProcessor::takesFolder().getChildFile (juce::File::createLegalFileName (silt.audioName()) + ".wav"), "*.wav");
+                chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                                      [this] (const juce::FileChooser& fc)
+                                      {
+                                          if (fc.getResult() != juce::File())
+                                              silt.writeAudioFile (fc.getResult().withFileExtension ("wav"));
+                                      });
+            }
+            else if (chosen == 5)
+            {
+                SiltProcessor::takesFolder().createDirectory();
+                SiltProcessor::takesFolder().revealToUser();
+            }
+        });
+    };
+
     for (const auto& entry : layout::entries (SiltProcessor::isInstrument))
         buildControl (entry);
     shownNow.assign (controls.size(), false);
@@ -382,6 +431,36 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     }
 
     makeGrips();
+
+    // Hover help: every part says what it is; the LCD shows it under the mouse.
+    hoverHelpOn = settingsFile()->getBoolValue ("hoverHelp", true);
+    {
+        const std::initializer_list<std::pair<juce::Component*, const char*>> parts {
+            { &armButton, "!arm" }, { &captureBars, "!bars" }, { &resampleButton, "!resample" }, { &loadButton, "!load" },
+            { &learnButton, "!learn" }, { &randomButton, "!random" }, { randomAmountBox.get(), "!randomAmount" },
+            { &undoButton, "!undo" }, { &redoButton, "!redo" }, { &routesButton, "!routes" }, { &monitorButton, "!monitor" },
+            { &tourButton, "!tour" }, { screen.get(), "!screen" }, { dragOut.get(), "!drag" }, { rail.get(), "!chip" },
+            { presetBar.get(), "!preset" }, { screenGrip.get(), "!grip" }, { railGrip.get(), "!grip" }, { insetGrip.get(), "!grip" },
+        };
+        for (const auto& [part, id] : parts)
+            if (part != nullptr)
+                part->getProperties().set ("help", id);
+        if (sampleGainBox != nullptr)
+            sampleGainBox->getProperties().set ("help", "!gain");
+        for (auto& tab : pageTabs)
+            tab.getProperties().set ("help", "!tab");
+    }
+    helpWatcher.onHover = [this] (const juce::String& id)
+    {
+        const auto text = id.isEmpty() ? juce::String() : helpFor (id);
+        if (text != hoverHelp)
+        {
+            hoverHelp = text;
+            repaint (lcdArea);
+        }
+    };
+    addMouseListener (&helpWatcher, true);
+
     setWantsKeyboardFocus (true);
     const int w = silt.editorWidth.load(), h = silt.editorHeight.load();   // before the limits resize us
     setResizable (true, true);
@@ -402,6 +481,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         for (size_t i = 0; i < themes().size(); ++i)
             menu.addItem (10 + (int) i, themes()[i].name, true, (int) i == currentThemeIndex());
         static const char* looks[] { "Dots", "Stars", "Shore", "Film", "Clouds" };
+        menu.addItem (2, "Hover help in the display", true, hoverHelpOn);
         menu.addSectionHeader ("GRAIN VIEW");
         menu.addItem (30, "Match the theme", true, grainView < 0);
         for (int i = 0; i < (int) std::size (looks); ++i)
@@ -410,6 +490,14 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         {
             if (chosen == 1)
                 startTour();
+            else if (chosen == 2)
+            {
+                hoverHelpOn = ! hoverHelpOn;
+                auto file = settingsFile();
+                file->setValue ("hoverHelp", hoverHelpOn);
+                file->saveIfNeeded();
+                repaint (lcdArea);
+            }
             else if (chosen >= 30)
             {
                 grainView = chosen - 31;   // −1: match the theme
@@ -444,6 +532,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
 
 SiltEditor::~SiltEditor()
 {
+    removeMouseListener (&helpWatcher);
     setLookAndFeel (nullptr);
 }
 
@@ -506,6 +595,7 @@ void SiltEditor::buildControl (const layout::Entry& entry)
             break;
     }
 
+    c->component().getProperties().set ("help", entry.id);
     addChildComponent (c->component());
     controls.push_back (std::move (c));
 }
@@ -1267,6 +1357,9 @@ juce::String SiltEditor::statusText() const
     if (silt.lastLoadError.isNotEmpty())
         return silt.lastLoadError;
 
+    if (hoverHelpOn && hoverHelp.isNotEmpty())
+        return hoverHelp;
+
     juce::String source;
     switch (silt.captureSource.load())
     {
@@ -1292,6 +1385,7 @@ void SiltEditor::timerCallback()
     const auto [regionStart, regionLength] = silt.shownRegion();
     screen->setRegion (regionStart, regionLength);
     screen->setTransientsShown (param ("snap") > 1.5f);
+    screen->setSlices (silt.sliceMarks());
     screen->setDisplayGain (juce::Decibels::decibelsToGain (param ("sampleGain")));
 
     // The grains: the screen only repaints while something is moving.

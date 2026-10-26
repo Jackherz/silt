@@ -11,6 +11,7 @@ class PanelLook;
 class ChainView;
 class GrainScreen;
 class SampleGainBox;
+class DragOutHandle;
 class RandomAmountBox;
 class Grip;
 }
@@ -146,6 +147,7 @@ private:
     SiltProcessor& silt;
     std::unique_ptr<silt::ui::PanelLook> look;
     std::unique_ptr<silt::ui::GrainScreen> screen;
+    std::unique_ptr<silt::ui::DragOutHandle> dragOut;
     std::unique_ptr<silt::ui::ChainView> chainView;
     silt::ui::ModActions modActions;
     std::unique_ptr<silt::ui::ModRail> rail;
@@ -177,6 +179,31 @@ private:
     int pageBeforeTour = 0;
     void restyle();
     void applyGrainLook();
+
+    // Hover help: finds the part under the mouse (or its nearest parent) with
+    // a "help" property, and passes its id on.
+    struct HelpWatcher final : juce::MouseListener
+    {
+        std::function<void (const juce::String& id)> onHover;
+        void mouseEnter (const juce::MouseEvent& e) override
+        {
+            for (auto* c = e.eventComponent; c != nullptr; c = c->getParentComponent())
+                if (c->getProperties().contains ("help"))
+                {
+                    if (onHover)
+                        onHover (c->getProperties()["help"].toString());
+                    return;
+                }
+        }
+        void mouseExit (const juce::MouseEvent&) override
+        {
+            if (onHover)
+                onHover ({});
+        }
+    };
+    HelpWatcher helpWatcher;
+    juce::String hoverHelp;
+    bool hoverHelpOn = true;
     int grainView = -1;   // the ? menu's GRAIN VIEW: −1 matches the theme, else a GrainScreen::FieldLook
     static void styleValueBox (juce::Slider&);
     void randomise();        // the open page

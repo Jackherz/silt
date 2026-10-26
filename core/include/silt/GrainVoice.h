@@ -83,6 +83,12 @@ struct GrainParams
     double gridDivision = 0.25;    // quarter notes between grains
 
     // Playhead and region
+    // Slice: keys from the root up each play their own slice of the region
+    // (wrapping round), at the sample's own pitch: the region cut in equal
+    // parts, or at the sample's transients.
+    bool slice = false;
+    bool sliceTransients = false;
+    int sliceCount = 16;           // equal slices, 1…128
     double start = 0.0;            // 0…1: region start, where a note starts its playhead
     double length = 1.0;           // 0…1: region length as a share of the sample
     double scan = 1.0;             // playhead speed, −4…+4 (1 = real time, 0 = frozen)
@@ -187,11 +193,13 @@ private:
     double liveStart (const GrainParams&, const SampleBuffer& ring, int length, double ratio, double scatter) const noexcept;
     double scatterWithin (const Region&, double spanFrames, double scatter) const noexcept;
     static Region computeRegion (const GrainParams&, const SampleBuffer&) noexcept;
+    Region regionFor (const GrainParams&, const SampleBuffer&) const noexcept;   // this voice's: its slice, in Slice mode
     // The region, computed once per render call (snapping searches the analysis).
     Region regionOf (const GrainParams& p, const SampleBuffer& buffer) const noexcept
     {
-        return &buffer == regionBuffer ? blockRegion : computeRegion (p, buffer);
+        return &buffer == regionBuffer ? blockRegion : regionFor (p, buffer);
     }
+    int slice = -1;   // Slice mode: which slice this voice's note plays (−1: not slicing)
     Region blockRegion { 0.0, 0.0 };
     const SampleBuffer* regionBuffer = nullptr;
 

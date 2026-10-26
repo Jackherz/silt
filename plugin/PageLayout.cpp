@@ -76,17 +76,22 @@ std::vector<Entry> build (bool instrument)
     knob (pitch, 7, "headSpread", "SPREAD");
 
     // PLAY: the mode, then what it plays from. PITCH: a region of the sample and
-    // how the playhead moves through it. LIVE and FEED (a ring of the input, or
+    // how the playhead moves through it. SLICE: the region cut into slices, one
+    // per key (equal, or at its hits). LIVE and FEED (a ring of the input, or
     // of Silt's own output): how far back the grains read, feedback, freeze,
     // and what plays grains without notes.
-    const auto pitchMode = is ("keyMode", 0);
-    const Shown liveMode = [] (const Context& c) { return juce::roundToInt (c.v ("keyMode")) != 0; };
-    menu (play, 0, "keyMode", "MODE", { "PITCH", "LIVE", "FEED" });
-    knob (play, 1, "start", "START", pitchMode);
-    knob (play, 2, "length", "LENGTH", pitchMode);
+    const Shown sampleMode = [] (const Context& c) { const int m = juce::roundToInt (c.v ("keyMode")); return m == 0 || m == 3; };
+    const Shown liveMode = [] (const Context& c) { const int m = juce::roundToInt (c.v ("keyMode")); return m == 1 || m == 2; };
+    const auto pitchMode = is ("keyMode", 0), sliceMode = is ("keyMode", 3);
+    menu (play, 0, "keyMode", "MODE", { "PITCH", "LIVE", "FEED", "SLICE" });
+    knob (play, 1, "start", "START", sampleMode);
+    knob (play, 2, "length", "LENGTH", sampleMode);
     knob (play, 3, "scan", "SCAN", pitchMode);
-    menu (play, 4, "endMode", "AT THE END", { "LOOP", "HOLD", "STOP" }, pitchMode);
-    under (Kind::underMenu, play, 1, "snap", 104, { "SNAP OFF", "SNAP ZERO", "SNAP TRANS" }, {}, pitchMode);
+    knob (play, 3, "sliceCount", "SLICES", both (sliceMode, is ("sliceMode", 0)));
+    knob (play, 3, "scan", "SCAN", both (sliceMode, is ("sliceMode", 1)));   // cut at hits, the count is the sample's
+    under (Kind::underMenu, play, 3, "sliceMode", 92, { "EQUAL", "AT HITS" }, {}, sliceMode);
+    menu (play, 4, "endMode", "AT THE END", { "LOOP", "HOLD", "STOP" }, sampleMode);
+    under (Kind::underMenu, play, 1, "snap", 104, { "SNAP OFF", "SNAP ZERO", "SNAP TRANS" }, {}, sampleMode);
     knob (play, 1, "liveDelay", "DELAY", both (liveMode, off ("delaySync")));
     knob (play, 1, "delayDiv", "DELAY", both (liveMode, on ("delaySync")));
     knob (play, 2, "feedback", "FEEDBACK", liveMode);

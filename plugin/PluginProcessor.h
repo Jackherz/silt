@@ -82,6 +82,18 @@ public:
     // Message thread.
     void loadFile (const juce::File&);   // ROOT goes back to C3
 
+    // Sample tools (the waveform's menu), each an undo step: keep only the
+    // region as it plays (START and LENGTH then cover all of it), play it
+    // backwards, or bring its peak to −1 dBFS.
+    enum class SampleEdit { trimToRegion, reverse, normalise };
+    void editSample (SampleEdit);
+
+    // The sound as a 24-bit WAV, for dragging into a DAW or saving: the sample,
+    // or in LIVE and FEED the ring's last 8 s, oldest first. Message thread.
+    bool writeAudioFile (const juce::File&) const;
+    juce::String audioName() const;           // a name for that file
+    static juce::File takesFolder();          // Music/Silt/Takes
+
     // RANDOM: moves the controls in a page's slots (not the small mode
     // controls under them) to random values, as one undo step. randomAmount
     // (0–1) is how far: each knob goes that share of the way to a random
@@ -145,6 +157,7 @@ public:
     Overview getOverview() const;
     float normalisingGainDb() const;               // the sample gain that peaks it at −1 dBFS
     std::pair<float, float> shownRegion() const;   // start and length as they'll play (snapped)
+    std::vector<float> sliceMarks() const;         // SLICE: where each slice starts, as shares (empty in other modes)
 
     // Sounding grains for the screen. The audio thread publishes a snapshot
     // about 60 times a second; readGrainViews copies the latest (lock-free,

@@ -95,7 +95,7 @@ TEST_CASE ("Slots follow the modes: a knob moves whichever control is shown")
     CHECK (rig.silt.slotParameter (0, 1) == "grainSize");
 
     rig.silt.currentPage.store (3);
-    rig.set ("keyMode", 1.0f);    // LIVE
+    rig.set ("keyMode", rig.silt.params.getParameter ("keyMode")->convertTo0to1 (1.0f));    // LIVE
     CHECK (rig.silt.slotParameter (3, 3) == "freeze");
     rig.cc (73, 0);
     rig.cc (73, 127);
@@ -1097,4 +1097,42 @@ TEST_CASE ("Fuzz: every parameter at random, notes coming and going, odd block s
             CHECK (finite);
             CHECK (peak <= 1.0f);
         }
+}
+
+TEST_CASE ("Sample tools: trim to the region, reverse, normalise; each an undo step; and the sound written as a WAV")
+{
+    Rig rig;
+    loadSine (rig);   // 2 s at 48 kHz, peaking at 0.5
+    const auto name = rig.silt.getOverview().name;
+
+    // Trim to the middle second: START and LENGTH then cover all of it.
+    rig.set ("start", 0.25f);
+    rig.set ("length", 0.5f);
+    rig.silt.editSample (SiltProcessor::SampleEdit::trimToRegion);
+    REQUIRE (waitFor ([&] { return rig.silt.getOverview().name.endsWith ("TRIM"); }));
+    CHECK_THAT (rig.silt.getOverview().seconds, WithinAbs (1.0, 0.01));
+    CHECK_THAT (rig.value ("start"), WithinAbs (0.0, 1e-6));
+    CHECK_THAT (rig.value ("length"), WithinAbs (1.0, 1e-6));
+
+    // Undo puts the whole sample back.
+    rig.silt.undoRoutes();
+    REQUIRE (waitFor ([&] { return rig.silt.getOverview().name == name; }));
+    CHECK_THAT (rig.silt.getOverview().seconds, WithinAbs (2.0, 0.01));
+
+    // Normalise: the peak at −1 dB.
+    rig.silt.editSample (SiltProcessor::SampleEdit::normalise);
+    REQUIRE (waitFor ([&] { return rig.silt.getOverview().name.endsWith ("NORM"); }));
+    const auto overview = rig.silt.getOverview();
+    CHECK_THAT (*std::max_element (overview.maximum.begin(), overview.maximum.end()), WithinAbs (juce::Decibels::decibelsToGain (-1.0f), 0.01));
+
+    // Reverse, then written out: the file starts where the sample ended.
+    rig.silt.editSample (SiltProcessor::SampleEdit::reverse);
+    REQUIRE (waitFor ([&] { return rig.silt.getOverview().name.endsWith ("REV"); }));
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("silt-out", ".wav");
+    REQUIRE (rig.silt.writeAudioFile (file));
+    std::unique_ptr<juce::AudioFormatReader> reader (juce::WavAudioFormat().createReaderFor (file.createInputStream().release(), true));
+    REQUIRE (reader != nullptr);
+    CHECK (reader->lengthInSamples == 96000);
+    CHECK (reader->numChannels == 2);
+    file.deleteFile();
 }

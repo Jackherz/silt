@@ -7,6 +7,7 @@
 #include "../plugin/Palette.h"
 #include "../plugin/PluginEditor.h"
 #include "../plugin/Grip.h"
+#include "../plugin/Help.h"
 
 using Catch::Matchers::WithinAbs;
 
@@ -63,7 +64,7 @@ TEST_CASE ("Every slot's shown control is the one the controller moves, in every
             rig.set ("sizeSync", (float) sync);
             rig.checkAgreement ("rate mode / size sync");
         }
-    for (int keyMode = 0; keyMode < 3; ++keyMode)
+    for (int keyMode = 0; keyMode < 4; ++keyMode)
         for (int sync = 0; sync < 2; ++sync)
         {
             rig.set ("keyMode", (float) keyMode);
@@ -417,4 +418,16 @@ TEST_CASE ("The screen's grip trades height with the knobs, is kept with the ses
 
     grip->onReset();
     CHECK_THAT (rig.silt.layoutWell.load(), WithinAbs (SiltProcessor::defaultLayout().well, 1.0e-6));
+}
+
+TEST_CASE ("Every control on every page has a line of hover help, short enough for the display")
+{
+    for (const bool instrument : { true, false })
+        for (const auto& e : silt::layout::entries (instrument))
+        {
+            const auto text = silt::ui::helpFor (e.id);
+            INFO (e.id);
+            CHECK (text.isNotEmpty());
+            CHECK (text.length() <= 48);
+        }
 }

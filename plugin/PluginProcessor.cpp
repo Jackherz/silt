@@ -185,11 +185,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                     juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int n, int) { return juce::String (n) + (n == 1 ? " head" : " heads"); })),
                 percent ("headSpread", "Head spread", 50.0f));
 
+    // SLICE: keys play slices of the region, equal or cut at its transients.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "sliceMode", 1 }, "Slice by",
+                                                              juce::StringArray { "Equal", "Transients" }, 0),
+                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "sliceCount", 1 }, "Slices", 2, 64, 16));
+
     // Mode: the sample (PITCH), the live input (LIVE: a granular delay), or
     // Silt's own output (FEED: the same ring with no input, seeded from the
     // sample, so the grains keep re-granulating what they play).
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "keyMode", 1 }, "Mode",
-                                                              juce::StringArray { "Pitch", "Live", "Feed" },
+                                                              juce::StringArray { "Pitch", "Live", "Feed", "Slice" },
                                                               SiltProcessor::isInstrument ? 0 : 1),
                 withUnit ("liveDelay", "Delay", skewed (10.0f, 4000.0f, 300.0f), 250.0f, formatMs),
                 std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "delaySync", 1 }, "Delay sync", false),
@@ -430,6 +435,7 @@ struct SiltProcessor::RawParams
         start = p ("start"); length = p ("length"); scan = p ("scan"); endMode = p ("endMode"); snap = p ("snap");
         attack = p ("attack"); decay = p ("decay"); sustain = p ("sustain"); release = p ("release"); root = p ("root");
         captureBars = p ("captureBars"); gain = p ("gain");
+        sliceMode = p ("sliceMode"); sliceCount = p ("sliceCount");
         keyMode = p ("keyMode"); liveDelay = p ("liveDelay"); delaySync = p ("delaySync"); delayDiv = p ("delayDiv");
         feedback = p ("feedback"); freeze = p ("freeze"); liveRun = p ("liveRun");
         randPitch = p ("randPitch"); scale = p ("scale"); key = p ("key"); patternDepth = p ("patternDepth");
@@ -454,7 +460,7 @@ struct SiltProcessor::RawParams
     std::atomic<float>* start, *length, *scan, *endMode, *snap;
     std::atomic<float>* attack, *decay, *sustain, *release, *root;
     std::atomic<float>* captureBars, *gain, *monitor, *mix, *chainOrder;
-    std::atomic<float>* keyMode, *liveDelay, *delaySync, *delayDiv, *feedback, *freeze, *liveRun;
+    std::atomic<float>* keyMode, *liveDelay, *delaySync, *delayDiv, *feedback, *freeze, *liveRun, *sliceMode, *sliceCount;
     std::atomic<float>* randPitch, *scale, *key, *patternDepth, *patternSteps, *patternSeed, *heads, *headSpread;
     std::atomic<float>* resTune, *resNotes, *resRange, *resDecay, *resBright, *resWidth, *resFollow, *resMix;
     std::atomic<float>* resReso, *resBands, *resDrift, *resDriftRate, *resSpread, *resOddEven, *resDrive, *resDamp;
@@ -684,8 +690,12 @@ silt::GrainParams SiltProcessor::readParams (const float* voiceValues) const noe
     p.heads = juce::jlimit (1, 8, (int) v (raw->heads));
     p.headSpread = v (raw->headSpread) * 0.01;
 
-    p.live = (int) v (raw->keyMode) != 0;      // LIVE or FEED
-    p.selfFeed = (int) v (raw->keyMode) == 2;
+    const int mode = (int) v (raw->keyMode);   // PITCH, LIVE, FEED, SLICE
+    p.live = mode == 1 || mode == 2;
+    p.selfFeed = mode == 2;
+    p.slice = mode == 3;
+    p.sliceTransients = (int) v (raw->sliceMode) == 1;
+    p.sliceCount = (int) v (raw->sliceCount);
     p.feedback = v (raw->feedback) * 0.01;
     p.freeze = v (raw->freeze) > 0.5;
     p.liveTrigger = (silt::LiveTrigger) juce::jlimit (0, 2, (int) v (raw->liveRun));
@@ -2054,6 +2064,107 @@ unsigned SiltProcessor::readScope (float* in, float* out, int count) const
     return end;
 }
 
+void SiltProcessor::editSample (SampleEdit edit)
+{
+    juce::AudioBuffer<float> audio;
+    double rate = 0.0;
+    juce::String name;
+    {
+        const juce::ScopedLock sl (sampleLock);
+        if (sampleCopy.getNumSamples() == 0)
+            return;
+        audio = sampleCopy;
+        rate = sampleCopyRate;
+        name = sampleName;
+    }
+    const int frames = audio.getNumSamples();
+    switch (edit)
+    {
+        case SampleEdit::trimToRegion:
+        {
+            const auto [start, length] = shownRegion();
+            const int from = juce::jlimit (0, frames - 1, juce::roundToInt (start * (float) frames));
+            const int count = juce::jlimit (64, frames - from, juce::roundToInt (length * (float) frames));
+            juce::AudioBuffer<float> kept (audio.getNumChannels(), count);
+            for (int ch = 0; ch < audio.getNumChannels(); ++ch)
+                kept.copyFrom (ch, 0, audio, ch, from, count);
+            audio = std::move (kept);
+            name += " TRIM";
+            // The region was the whole point: now it's the whole sample.
+            for (const auto& [id, value] : { std::pair<const char*, float> { "start", 0.0f }, { "length", 100.0f } })
+                if (auto* p = params.getParameter (id))
+                    p->setValueNotifyingHost (p->convertTo0to1 (value));
+            break;
+        }
+        case SampleEdit::reverse:
+            audio.reverse (0, frames);
+            name += " REV";
+            break;
+        case SampleEdit::normalise:
+        {
+            const float peak = audio.getMagnitude (0, frames);
+            if (peak < 1.0e-6f)
+                return;
+            audio.applyGain (juce::Decibels::decibelsToGain (-1.0f) / peak);
+            name += " NORM";
+            break;
+        }
+    }
+    analyseThenInstall (makeBuffer (audio, rate), name, -1, -1.0f, true);
+}
+
+juce::String SiltProcessor::audioName() const
+{
+    if (liveMode.load())
+        return juce::String (juce::roundToInt (params.getRawParameterValue ("keyMode")->load()) == 2 ? "FEED " : "LIVE ")
+             + juce::Time::getCurrentTime().formatted ("%H-%M-%S");
+    const juce::ScopedLock sl (sampleLock);
+    return sampleName.isEmpty() ? juce::String ("SILT") : sampleName;
+}
+
+juce::File SiltProcessor::takesFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("Silt").getChildFile ("Takes");
+}
+
+bool SiltProcessor::writeAudioFile (const juce::File& file) const
+{
+    juce::AudioBuffer<float> audio;
+    double rate = 0.0;
+    if (liveMode.load())
+    {
+        // The ring, oldest first: from the write head round to just behind it.
+        // It's still being written as we copy; at worst the newest few ms tear.
+        const auto* ring = engine.getLiveBuffer();
+        if (ring == nullptr)
+            return false;
+        const int frames = ring->getNumFrames(), head = juce::jlimit (0, frames - 1, engine.getLiveWritePosition());
+        audio.setSize (2, frames);
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            audio.copyFrom (ch, 0, ring->getReadPointer (ch) + head, frames - head);
+            audio.copyFrom (ch, frames - head, ring->getReadPointer (ch), head);
+        }
+        rate = ring->getSampleRate();
+    }
+    else
+    {
+        const juce::ScopedLock sl (sampleLock);
+        if (sampleCopy.getNumSamples() == 0)
+            return false;
+        audio = sampleCopy;
+        rate = sampleCopyRate;
+    }
+
+    file.getParentDirectory().createDirectory();
+    file.deleteFile();
+    std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
+    if (stream == nullptr)
+        return false;
+    auto writer = juce::WavAudioFormat().createWriterFor (stream, juce::AudioFormatWriterOptions {}.withSampleRate (rate).withNumChannels (2).withBitsPerSample (24));
+    return writer != nullptr && writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples());
+}
+
 void SiltProcessor::loadFile (const juce::File& file)
 {
     loadInBackground ([this, file] { return std::unique_ptr<juce::AudioFormatReader> (formats.createReaderFor (file)); },
@@ -2335,6 +2446,35 @@ std::pair<float, float> SiltProcessor::shownRegion() const
                                            (silt::Snap) juce::jlimit (0, 2, (int) params.getRawParameterValue ("snap")->load()),
                                            sampleZeroCrossings, sampleTransients);
     return { (float) (snapped.begin / frames), (float) ((snapped.end - snapped.begin) / frames) };
+}
+
+// SLICE: where each slice starts, as the engine cuts them (GrainVoice::regionFor).
+std::vector<float> SiltProcessor::sliceMarks() const
+{
+    if (juce::roundToInt (raw->keyMode->load()) != 3)
+        return {};
+    const auto [start, length] = shownRegion();
+    std::vector<float> marks;
+    if (juce::roundToInt (raw->sliceMode->load()) == 1)
+    {
+        const juce::ScopedLock sl (sampleLock);
+        const int frames = sampleCopy.getNumSamples();
+        if (frames == 0)
+            return {};
+        const float minimum = 256.0f / (float) frames, end = start + length;
+        marks.push_back (start);
+        for (const int t : sampleTransients)
+        {
+            const float at = (float) t / (float) frames;
+            if (at > marks.back() + minimum && at < end - minimum && marks.size() < 128)
+                marks.push_back (at);
+        }
+        return marks;
+    }
+    const int count = juce::jlimit (1, 128, juce::roundToInt (raw->sliceCount->load()));
+    for (int i = 0; i < count; ++i)
+        marks.push_back (start + length * (float) i / (float) count);
+    return marks;
 }
 
 // The gain that puts the sample's peak at −1 dBFS (0 with no sample).
