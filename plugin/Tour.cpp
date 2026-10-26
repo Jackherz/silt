@@ -1,21 +1,12 @@
 #include "Tour.h"
 #include "Palette.h"
+#include "Settings.h"
 
 using namespace silt::ui;
 
 namespace
 {
 constexpr int cardWidth = 380, pad = 18, buttonRow = 30;
-
-std::unique_ptr<juce::PropertiesFile> settings()
-{
-    juce::PropertiesFile::Options options;
-    options.applicationName = "Silt";
-    options.folderName = "Silt Audio";
-    options.filenameSuffix = "settings";
-    options.osxLibrarySubFolder = "Application Support";
-    return std::make_unique<juce::PropertiesFile> (options);
-}
 } // namespace
 
 Tour::Tour()
@@ -28,13 +19,13 @@ Tour::Tour()
         addAndMakeVisible (b);
 }
 
-bool Tour::seen() { return settings()->getBoolValue ("tourSeen", false); }
+bool Tour::seen() { return settingsFile()->getBoolValue ("tourSeen", false); }
 
 void Tour::markSeen()
 {
     if (! remember)
         return;
-    auto file = settings();
+    auto file = settingsFile();
     file->setValue ("tourSeen", true);
     file->saveIfNeeded();
 }
@@ -55,6 +46,7 @@ void Tour::go (int index)
 {
     if (index >= (int) steps.size())
     {
+        stopTimer();
         setVisible (false);
         markSeen();
         if (onFinish)
@@ -64,54 +56,96 @@ void Tour::go (int index)
     step = juce::jmax (0, index);
     if (steps[(size_t) step].page >= 0 && showPage)
         showPage (steps[(size_t) step].page);
+    doneShown = false;
     back.setEnabled (step > 0);
     next.setButtonText (step + 1 == (int) steps.size() ? "DONE" : "NEXT");
     skip.setVisible (step + 1 < (int) steps.size());
     resized();
     repaint();
     grabKeyboardFocus();
+    startTimerHz (10);
 }
 
-juce::Rectangle<int> Tour::spotArea() const
+// Ticks the card once its TRY IT has been done.
+void Tour::timerCallback()
 {
-    if (step >= (int) steps.size() || steps[(size_t) step].spot == nullptr)
-        return {};
-    return steps[(size_t) step].spot().expanded (6);
+    if (step >= (int) steps.size() || doneShown)
+        return;
+    if (const auto& done = steps[(size_t) step].done; done != nullptr && done())
+    {
+        doneShown = true;
+        repaint();
+    }
+}
+
+juce::RectangleList<int> Tour::spotAreas() const
+{
+    juce::RectangleList<int> out;
+    if (step < (int) steps.size() && steps[(size_t) step].spots != nullptr)
+        for (const auto& r : steps[(size_t) step].spots())
+            out.add (r.expanded (6));
+    return out;
+}
+
+bool Tour::hitTest (int x, int y)
+{
+    return ! spotAreas().containsPoint ({ x, y });
 }
 
 juce::TextLayout Tour::bodyLayout (float width) const
 {
     juce::AttributedString text;
-    text.append (step < (int) steps.size() ? steps[(size_t) step].body : juce::String(), panelFont (13.5f).withStyle (juce::Font::plain), ink);
     text.setLineSpacing (3.0f);
+    if (step < (int) steps.size())
+    {
+        const auto& s = steps[(size_t) step];
+        text.append (s.body, panelFont (13.5f).withStyle (juce::Font::plain), ink);
+        if (s.tryIt.isNotEmpty())
+        {
+            text.append ("\n\n", panelFont (8.0f), ink);
+            if (doneShown)
+                text.append (juce::String::charToString ((juce::juce_wchar) 0x2713) + "  NICE. PRESS NEXT WHEN YOU'RE READY.", panelFont (13.0f), juce::Colour (0xff4f7a2c));
+            else
+            {
+                text.append ("TRY IT   ", panelFont (13.0f), rust);
+                text.append (s.tryIt, panelFont (13.5f).withStyle (juce::Font::plain), ink);
+            }
+        }
+    }
     juce::TextLayout layout;
     layout.createLayout (text, width);
     return layout;
 }
 
-// Below the spot if it fits, else above, else beside; centred with no spot.
+// Somewhere it covers none of the lit parts: below, above or beside one of
+// them, else in a corner, else centred.
 juce::Rectangle<int> Tour::cardArea() const
 {
     const auto bounds = getLocalBounds().reduced (12);
     const int w = juce::jmin (cardWidth, bounds.getWidth());
     const int h = pad + 24 + juce::roundToInt (bodyLayout ((float) (w - 2 * pad)).getHeight()) + 14 + buttonRow + pad;
-    const auto spot = spotArea();
-    if (spot.isEmpty())
+    const auto spots = spotAreas();
+    if (spots.isEmpty())
         return bounds.withSizeKeepingCentre (w, h);
 
-    juce::Rectangle<int> card (w, h);
-    const int x = juce::jlimit (bounds.getX(), bounds.getRight() - w, spot.getCentreX() - w / 2);
-    if (bounds.getBottom() - spot.getBottom() >= h + 12)
-        card.setPosition (x, spot.getBottom() + 12);
-    else if (spot.getY() - bounds.getY() >= h + 12)
-        card.setPosition (x, spot.getY() - 12 - h);
-    else if (bounds.getRight() - spot.getRight() >= w + 12)
-        card.setPosition (spot.getRight() + 12, juce::jlimit (bounds.getY(), bounds.getBottom() - h, spot.getCentreY() - h / 2));
-    else if (spot.getX() - bounds.getX() >= w + 12)
-        card.setPosition (spot.getX() - 12 - w, juce::jlimit (bounds.getY(), bounds.getBottom() - h, spot.getCentreY() - h / 2));
-    else
-        card = bounds.withSizeKeepingCentre (w, h);
-    return card;
+    std::vector<juce::Rectangle<int>> candidates;
+    for (const auto& r : spots)
+    {
+        const int x = r.getCentreX() - w / 2, y = r.getCentreY() - h / 2;
+        candidates.push_back ({ x, r.getBottom() + 12, w, h });
+        candidates.push_back ({ x, r.getY() - 12 - h, w, h });
+        candidates.push_back ({ r.getRight() + 12, y, w, h });
+        candidates.push_back ({ r.getX() - 12 - w, y, w, h });
+    }
+    for (const auto corner : { bounds.getBottomRight(), bounds.getBottomLeft(), bounds.getTopRight(), bounds.getTopLeft() })
+        candidates.push_back (juce::Rectangle<int> (w, h).withCentre (corner));
+    for (auto card : candidates)
+    {
+        card = card.constrainedWithin (bounds);
+        if (! spots.intersectsRectangle (card))
+            return card;
+    }
+    return bounds.withSizeKeepingCentre (w, h);
 }
 
 void Tour::resized()
@@ -125,20 +159,18 @@ void Tour::resized()
 
 void Tour::paint (juce::Graphics& g)
 {
-    // Dim everything but the spot.
-    const auto spot = spotArea().toFloat();
+    // Dim everything but the lit parts.
+    const auto spots = spotAreas();
     juce::Path shade;
     shade.addRectangle (getLocalBounds().toFloat());
-    if (! spot.isEmpty())
-        shade.addRoundedRectangle (spot, 8.0f);
+    for (const auto& r : spots)
+        shade.addRoundedRectangle (r.toFloat(), 8.0f);
     shade.setUsingNonZeroWinding (false);
-    g.setColour (ink.withAlpha (0.72f));
+    g.setColour (frame.withAlpha (0.72f));
     g.fillPath (shade);
-    if (! spot.isEmpty())
-    {
-        g.setColour (lcdGreen);
-        g.drawRoundedRectangle (spot, 8.0f, 2.5f);
-    }
+    g.setColour (lcdGreen);
+    for (const auto& r : spots)
+        g.drawRoundedRectangle (r.toFloat(), 8.0f, 2.5f);
 
     const auto card = cardArea().toFloat();
     g.setColour (juce::Colours::black.withAlpha (0.25f));
@@ -161,7 +193,7 @@ void Tour::paint (juce::Graphics& g)
 
 bool Tour::keyPressed (const juce::KeyPress& key)
 {
-    if (key == juce::KeyPress::rightKey || key == juce::KeyPress::returnKey || key == juce::KeyPress::spaceKey)
+    if (key == juce::KeyPress::rightKey || key == juce::KeyPress::returnKey)
         go (step + 1);
     else if (key == juce::KeyPress::leftKey)
         go (step - 1);

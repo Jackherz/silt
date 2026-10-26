@@ -5,6 +5,7 @@
 #include "PanelLook.h"
 #include "Presets.h"
 #include "RandomAmountBox.h"
+#include "Settings.h"
 #include "ScreenInsets.h"
 
 using namespace silt::ui;
@@ -206,6 +207,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     : AudioProcessorEditor (p), silt (p),
       look (std::make_unique<PanelLook>()), screen (std::make_unique<GrainScreen>())
 {
+    applyTheme (startTheme >= 0 ? startTheme : settingsFile()->getIntValue ("theme", 0));
+    look->applyColours();
     setLookAndFeel (look.get());
     look->drawModulation = [this] (juce::Graphics& g, juce::Slider& s, juce::Point<float> c, float r, float pos) { drawModulation (g, s, c, r, pos); };
     addAndMakeVisible (*screen);
@@ -233,6 +236,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     presetBar = std::make_unique<PresetBar> (silt);
     addAndMakeVisible (*presetBar);
     screen->drawInset = [this] (juce::Graphics& g, juce::Rectangle<float> area) { return drawPageInset (g, area, page, silt, *rail); };
+    screen->drawStrip = [this] (juce::Graphics& g, juce::Rectangle<float> area) { return page == layout::space && drawSpaceTimeline (g, area, silt); };
     if (auto* gain = dynamic_cast<juce::RangedAudioParameter*> (silt.params.getParameter ("sampleGain")))
     {
         sampleGainBox = std::make_unique<SampleGainBox> (*gain, [this] { return silt.normalisingGainDb(); });
@@ -270,10 +274,15 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         {
             if (pageTabs[i].getToggleState())
             {
+                // RESONATOR again: its other half.
+                if ((int) i == layout::resonator && page == layout::resonator)
+                    silt.resonatorHalf.store (1 - silt.resonatorHalf.load());
                 silt.currentPage.store ((int) i);   // the controller's knobs follow the page
                 showPage ((int) i);
             }
         };
+        if ((int) i == layout::resonator)
+            tab.setTooltip ("RESONATOR has two pages of controls: click the tab again for the other");
         addAndMakeVisible (tab);
     }
 
@@ -283,7 +292,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     captureBarsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "captureBars", captureBars);
 
     armButton.getProperties().set ("red", true);
-    armButton.setColour (juce::TextButton::textColourOffId, bone);
+    armButton.setColour (juce::TextButton::textColourOffId, onFrame);
     armButton.onClick = [this]
     {
         if (silt.captureState.load() == SiltProcessor::CaptureState::idle)
@@ -371,8 +380,22 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     showPage (startPage);
 
     // The tour: ? in the header, and once by itself the first time.
-    tourButton.setTooltip ("A quick tour of Silt");
-    tourButton.onClick = [this] { startTour(); };
+    tourButton.setTooltip ("The tour, and the colour theme");
+    tourButton.onClick = [this]
+    {
+        juce::PopupMenu menu;
+        menu.addItem (1, "Take the tour");
+        menu.addSectionHeader ("THEME");
+        for (size_t i = 0; i < themes().size(); ++i)
+            menu.addItem (10 + (int) i, themes()[i].name, true, (int) i == currentThemeIndex());
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&tourButton), [this] (int chosen)
+        {
+            if (chosen == 1)
+                startTour();
+            else if (chosen >= 10)
+                setTheme (chosen - 10);
+        });
+    };
     addAndMakeVisible (tourButton);
     tour = std::make_unique<Tour>();
     tour->showPage = [this] (int target)
@@ -417,10 +440,7 @@ void SiltEditor::buildControl (const layout::Entry& entry)
             s.setComponentID (entry.id);   // seeds this knob's wear
             // Set on the slider itself: its text box is made before it joins the
             // editor, so it never sees the panel look's colours.
-            s.setColour (juce::Slider::textBoxTextColourId, lcdText);
-            s.setColour (juce::Slider::textBoxBackgroundColourId, lcdGreen);
-            s.setColour (juce::Slider::textBoxOutlineColourId, ink);
-            s.setColour (juce::Slider::textBoxHighlightColourId, rust.withAlpha (0.4f));
+            styleValueBox (s);
             c->sliderAttachment = std::make_unique<APVTS::SliderAttachment> (silt.params, entry.id, s);
             if (auto* parameter = silt.params.getParameter (entry.id))
                 s.setDoubleClickReturnValue (true, s.proportionOfLengthToValue (parameter->getDefaultValue()));
@@ -645,6 +665,39 @@ void SiltEditor::chooseFile()
                           });
 }
 
+void SiltEditor::setTheme (int index)
+{
+    applyTheme (index);
+    {
+        auto file = settingsFile();
+        file->setValue ("theme", currentThemeIndex());
+        file->saveIfNeeded();
+    }
+    restyle();
+}
+
+// Colours set on parts when they were made: set again for the current theme.
+void SiltEditor::restyle()
+{
+    look->applyColours();
+    armButton.setColour (juce::TextButton::textColourOffId, onFrame);
+    for (auto& c : controls)
+        if (c->slider != nullptr)
+            styleValueBox (*c->slider);
+    routeList->restyle();
+    screen->setOverview (silt.getOverview());   // the waveform is cached in the old colours
+    sendLookAndFeelChange();
+    repaint();
+}
+
+void SiltEditor::styleValueBox (juce::Slider& s)
+{
+    s.setColour (juce::Slider::textBoxTextColourId, lcdText);
+    s.setColour (juce::Slider::textBoxBackgroundColourId, lcdGreen);
+    s.setColour (juce::Slider::textBoxOutlineColourId, ink);
+    s.setColour (juce::Slider::textBoxHighlightColourId, rust.withAlpha (0.4f));
+}
+
 void SiltEditor::startTour()
 {
     if (routeList->isVisible())
@@ -653,68 +706,96 @@ void SiltEditor::startTour()
     tour->start (tourSteps());
 }
 
-// What the tour says, and where it points.
+// What the tour says, where it points, and what it asks you to try. The
+// TRY IT checks compare with how things were when the tour began.
 std::vector<Tour::Step> SiltEditor::tourSteps()
 {
-    const auto bounds = [] (std::initializer_list<const juce::Component*> parts)
+    using Spots = juce::RectangleList<int>;
+    const auto boundsOf = [] (std::initializer_list<const juce::Component*> parts)
     {
         juce::Rectangle<int> r;
         for (const auto* c : parts)
             r = r.isEmpty() ? c->getBounds() : r.getUnion (c->getBounds());
         return r;
     };
+    const int generation = silt.getSampleGeneration();
+    const float spray = param ("spray"), bits = param ("colorBits"), order = param ("chainOrder");
+    const auto routes = silt.allRoutes().size();
+    const auto preset = silt.presetName;
+
     std::vector<Tour::Step> steps;
     steps.push_back ({ "Welcome to Silt",
-                       "Silt is a granular sampler. It plays a sound as a cloud of tiny overlapping slices called grains. "
-                       "Change how long they are, how often they start and where in the sound they come from, and one sample "
-                       "becomes pads, textures, rhythms or drones.\n\nThis tour takes about a minute.", {} });
+                       "Silt cuts a sound into tiny pieces, called grains, and plays lots of them at once, overlapping. "
+                       "Change how long the grains are, how many there are and where in the sound they come from, and one "
+                       "sample turns into pads, textures, rhythms or drones.\n\nThis tour takes a minute or two. The lit part "
+                       "of each step is live, so try things as you go.", {}, -1, {}, {} });
     steps.push_back ({ "The screen",
-                       "The waveform is your sample. Each white line is a grain playing right now, and the shaded band is the "
-                       "part of the sample grains come from. The strip below spreads the grains out by where they sit in the stereo field.",
-                       [this] { return screen->getBounds(); } });
+                       "This is your sample. While you play, each white line is a grain sounding right now, and the shaded "
+                       "band is the part of the sample grains are taken from.",
+                       [this] { return Spots (screen->getBounds()); }, -1,
+                       "Play a note or a chord on your keyboard (or a MIDI clip) and watch the grains appear.",
+                       [this] { return silt.activeGrains.load() > 0; } });
     if constexpr (SiltProcessor::isInstrument)
-        steps.push_back ({ "Getting sound in",
-                           "LOAD opens an audio file or one of the built-in samples, or drop a file on the screen. ARM records from "
-                           "your DAW's sidechain input for the length beside it. Then play notes: each note plays the sample at its pitch.",
-                           [this, bounds] { return bounds ({ &armButton, &loadButton }); } });
+        steps.push_back ({ "Your own sounds",
+                           "LOAD opens an audio file, or one of the built-in samples. You can also drop a file on the screen, "
+                           "or press ARM to record from your DAW's sidechain input (for the number of bars beside it).",
+                           [this, boundsOf] { return Spots (boundsOf ({ &armButton, &loadButton })); }, -1,
+                           "Click LOAD and pick a different factory sample.",
+                           [this, generation] { return silt.getSampleGeneration() != generation; } });
     else
-        steps.push_back ({ "Getting sound in",
+        steps.push_back ({ "Your own sounds",
                            "Silt FX turns the audio on its track into grains as it plays (MODE: LIVE on the PLAY page). "
-                           "For a sample instead, LOAD one or drop a file on the screen, set MODE to PITCH and play notes.",
-                           [this, bounds] { return bounds ({ &armButton, &loadButton }); } });
+                           "To play a sample instead, LOAD one or drop a file on the screen, set MODE to PITCH and play notes.",
+                           [this, boundsOf] { return Spots (boundsOf ({ &armButton, &loadButton })); }, -1,
+                           "Click LOAD and pick a factory sample.",
+                           [this, generation] { return silt.getSampleGeneration() != generation; } });
     steps.push_back ({ "Pages",
-                       "Each tab is a page of up to eight controls. GRAIN and SHAPE make the grains, PITCH and PLAY decide how notes "
-                       "play them, then come the effects. Drag a knob to turn it (Shift: finer), double-click to reset. "
-                       "With an 8-knob MIDI controller, press LEARN once and its knobs follow whichever page is open.",
-                       [this, bounds] { return bounds ({ &pageTabs.front(), &pageTabs.back() }); } });
-    steps.push_back ({ "Start with these",
-                       "SIZE is how long each grain is, RATE how often they start, and SPRAY how far they scatter through the sample. "
-                       "Short and fast sounds glassy; long and slow smears into a pad.",
-                       [this] { return controlRow; }, layout::grain });
-    steps.push_back ({ "Effects",
-                       "RESONATOR, FILTER, COLOR and SPACE shape the sound after the grains. On the first three, the screen shows "
-                       "the sound going in (faint) and coming out (bright), so you can see what a knob does while you hear it.",
-                       [this] { return screen->scopeArea().translated (screen->getX(), screen->getY()); }, layout::color });
+                       "Each tab is a page of up to eight controls, the same eight your MIDI controller's knobs move. GRAIN and "
+                       "SHAPE make the grains, PITCH and PLAY decide how notes play them, and the rest are effects and movement.",
+                       [this, boundsOf] { return Spots (boundsOf ({ &pageTabs.front(), &pageTabs.back() })); }, layout::grain,
+                       "Click another tab to look around.",
+                       [this] { return page != layout::grain; } });
+    steps.push_back ({ "Spray",
+                       "SPRAY scatters each grain to a random spot near where it would play, so the sound blurs and shimmers. "
+                       "Drag a knob up or down to turn it, hold Shift for fine moves, and double-click to put it back.",
+                       [this] { Spots s (screen->getBounds()); s.add (slotBounds (3)); return s; }, layout::grain,
+                       "Drag SPRAY up while you play, and watch the grains spread out across the waveform.",
+                       [this, spray] { return std::abs (param ("spray") - spray) > 5.0f; } });
+    steps.push_back ({ "See what you hear",
+                       "RESONATOR, FILTER, COLOR and SPACE shape the sound after the grains. On the first three, the strip on "
+                       "the screen shows the sound going in (faint) and coming out (bright).",
+                       [this] { Spots s (screen->scopeArea().translated (screen->getX(), screen->getY())); s.add (slotBounds (2)); return s; },
+                       layout::color,
+                       "Play a note and turn BITS down: the bright line breaks into steps as the sound gets crunchier.",
+                       [this, bits] { return param ("colorBits") < bits - 1.0f; } });
     steps.push_back ({ "Chain",
-                       "CHAIN sets the order the effects run in. Drag a block to move it: COLOR after SPACE sounds quite "
-                       "different from COLOR before it.",
-                       [this] { return chainView->getBounds(); }, layout::chain });
+                       "The effects run in this order. Moving one changes the sound: grit added after the reverb is harsher "
+                       "than grit the reverb smooths over.",
+                       [this] { return Spots (chainView->getBounds()); }, layout::chain,
+                       "Drag COLOR to the end of the chain. Click a block to open its page.",
+                       [this, order] { return ! juce::approximatelyEqual (param ("chainOrder"), order); } });
     steps.push_back ({ "Movement",
-                       "These four are modulators: waves, random, envelopes and more. Drag one onto a knob to make it move, or "
-                       "hold Alt and drag a knob. Rings round a knob show what's moving it, and MOD ROUTES lists everything.",
-                       [this] { return railArea; }, layout::mod });
+                       "These four are modulators: waves, random, envelopes and more. Connect one to a knob and the knob moves "
+                       "by itself. Rings round a knob show what's moving it, and MOD ROUTES lists every connection.",
+                       [this] { Spots s (railArea); s.add (controlRow); return s; }, layout::mod,
+                       "Drag MOD 1 from the left onto any knob.",
+                       [this, routes] { return silt.allRoutes().size() > routes; } });
     steps.push_back ({ "Happy accidents",
-                       "RANDOM shakes up the open page. The box beside it sets how far, from a nudge to anything goes. "
-                       "Right-click a knob to leave it out. UNDO takes a step back if you don't like it.",
-                       [this, bounds] { return bounds ({ &randomButton, randomAmountBox.get() }); } });
+                       "RANDOM shakes up the page that's open. The box beside it sets how far, from a nudge to anything goes. "
+                       "Right-click a knob to keep RANDOM away from it.",
+                       [this, boundsOf] { return Spots (boundsOf ({ &randomButton, randomAmountBox.get(), &undoButton, &redoButton })); }, -1,
+                       "Press RANDOM, listen, then press UNDO to go back.",
+                       [this] { return silt.canRedoRoutes() || silt.undoDescription().startsWith ("RANDOM"); } });
     steps.push_back ({ "Sounds",
-                       "Step through the factory presets with the arrows, or SAVE your own. A preset keeps every setting and "
-                       "the modulation, but not the sample.",
-                       [this] { return presetBar->getBounds(); } });
+                       "Step through the factory presets with the arrows, or SAVE your own. A preset keeps every setting and the "
+                       "modulation, but not the sample, so the same preset sounds new on each sample.",
+                       [this] { return Spots (presetBar->getBounds()); }, -1,
+                       "Click the right arrow to hear the next preset.",
+                       [this, preset] { return silt.presetName != preset; } });
     steps.push_back ({ "That's the tour",
-                       "Try this: pick a preset, play a chord, then press RANDOM on a page at 25% and keep what you like.\n\n"
-                       "Press ? any time to see this again.",
-                       [this] { return tourButton.getBounds(); } });
+                       "A good way in: pick a preset, play a chord, then press RANDOM at 25% on a page and keep what you like.\n\n"
+                       "This ? button brings the tour back any time, and changes the colour theme.",
+                       [this] { return Spots (tourButton.getBounds()); }, -1, {}, {} });
     return steps;
 }
 
@@ -1120,8 +1201,28 @@ void SiltEditor::timerCallback()
 
     // The live scope, on pages whose module it shows: only redrawn when new audio arrived.
     updateScope();
+    if (page == layout::space)
+    {
+        // SPACE's timeline: redrawn as the trace grows (and when the settings move, below).
+        const unsigned trace = silt.spaceTraceCount.load();
+        if (trace != spaceTraceSeen || page != spacePageSeen)
+            screen->repaintStrip();
+        spaceTraceSeen = trace;
+    }
+    if (page != spacePageSeen)
+        screen->repaintStrip();
+    spacePageSeen = page;
     if (chainView->isVisible())
         chainView->update();
+
+    // RESONATOR's tab says which half is showing.
+    if (const int half = silt.resonatorHalf.load(); half != resonatorHalfSeen)
+    {
+        resonatorHalfSeen = half;
+        pageTabs[(size_t) layout::resonator].setButtonText (juce::String (layout::pageName (layout::resonator)) + (half == 0 ? " 1/2" : " 2/2"));
+        if (page == layout::resonator)
+            screen->repaintInset();
+    }
 
     // The controller can change page; learning shows its progress.
     if (const int controllerPage = silt.currentPage.load(); controllerPage != page)
@@ -1176,6 +1277,8 @@ void SiltEditor::timerCallback()
     {
         insetSeen = std::move (key);
         screen->repaintInset();
+        if (page == layout::space)
+            screen->repaintStrip();
     }
 
     std::array<float, SiltProcessor::numModulators> stripes {};
@@ -1389,9 +1492,9 @@ void SiltEditor::paint (juce::Graphics& g)
     g.fillAll (chassis);
 
     // Header band: name, stripes, LCD.
-    g.setColour (ink);
+    g.setColour (frame);
     g.fillRect (header);
-    g.setColour (bone);
+    g.setColour (onFrame);
     g.setFont (panelFont (20.0f));
     g.drawText (juce::String (JucePlugin_Name).toUpperCase(), header.withTrimmedLeft (16), juce::Justification::centredLeft);
     paintStripes (g);

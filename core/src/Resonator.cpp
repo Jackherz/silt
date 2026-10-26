@@ -61,7 +61,7 @@ int Resonator::bandRatios (const ResonatorParams& p, std::array<double, maxBands
     }
 
     // More than fit: an even pick from lowest to highest.
-    const int n = std::min (count, maxBands);
+    const int n = std::min ({ count, maxBands, std::max (1, p.bandCount) });
     for (int i = 0; i < n; ++i)
     {
         const int from = n < 2 ? 0 : (int) std::lround ((double) i * (count - 1) / (n - 1));
@@ -101,6 +101,14 @@ void Resonator::updateCoefficients (const ResonatorParams& target, bool snap) no
     glideTo (smoothed.bright, target.bright);
     glideTo (smoothed.width, target.width);
     glideTo (smoothed.rangeOctaves, target.rangeOctaves);
+    glideTo (smoothed.resonance, target.resonance);
+    glideTo (smoothed.drift, target.drift);
+    glideTo (smoothed.spread, target.spread);
+    glideTo (smoothed.oddEven, target.oddEven);
+    glideTo (smoothed.drive, target.drive);
+    glideTo (smoothed.damp, target.damp);
+    smoothed.driftRate = target.driftRate;
+    smoothed.bandCount = target.bandCount;
     smoothed.rootNote = target.rootNote;   // the band frequencies glide instead
     smoothed.notes = target.notes;
     smoothed.scale = target.scale;
@@ -115,6 +123,10 @@ void Resonator::updateCoefficients (const ResonatorParams& target, bool snap) no
     const double gainGlide = blockCoefficient (0.02);
     const double tilt = 1.0 - std::clamp ((double) p.bright, 0.0, 1.0);
     const double width = std::clamp ((double) p.width, 0.0, 1.0);
+    const double resonanceQ = 8.0 * std::pow (15.0, std::clamp ((double) p.resonance, 0.0, 1.0));
+    const double drift = std::clamp ((double) p.drift, 0.0, 1.0);
+    const double driftStep = (double) controlInterval * std::clamp ((double) p.driftRate, 0.01, 20.0) / sampleRate;
+    const double oddEven = std::clamp ((double) p.oddEven, -1.0, 1.0);
 
     int n = 0;
     while (n < count && rootHz * ratios[(size_t) n] < nyquistLimit)
@@ -129,7 +141,20 @@ void Resonator::updateCoefficients (const ResonatorParams& target, bool snap) no
         if (i < n)
         {
             const double ratio = ratios[(size_t) i];
-            const double to = rootHz * ratio;
+
+            // DRIFT: each band glides to a new random level every 1/RATE s.
+            b.driftPhase += driftStep;
+            if (b.driftPhase >= 1.0)
+            {
+                b.driftPhase -= std::floor (b.driftPhase);
+                b.driftFrom = b.driftTo;
+                b.driftTo = nextRandom();
+            }
+            const double eased = b.driftFrom + (b.driftTo - b.driftFrom) * (0.5 - 0.5 * std::cos (pi * b.driftPhase));
+            const double wander = 1.0 - drift * (1.0 - eased);    // 1 at no drift; down to 0 at full
+            const double cents = 35.0 * (double) p.spread * std::sin ((double) i * 2.4 + 0.7)   // SPREAD: fixed per band
+                               + 12.0 * drift * (eased - 0.5);                                     // DRIFT: a little tuning too
+            const double to = rootHz * ratio * std::pow (2.0, cents / 1200.0);
             if (b.frequency <= 0.0)
                 b.gainLeft = b.gainRight = 0.0;   // a new band fades in
             b.frequency = (snap || b.frequency <= 0.0) ? to : b.frequency * std::pow (to / b.frequency, frequencyGlide);
@@ -138,7 +163,7 @@ void Resonator::updateCoefficients (const ResonatorParams& target, bool snap) no
             // While sound comes in the bands stay at least resonanceQ narrow, so
             // they sound pitched even at short decays; once it stops they're
             // choked to the decay time (the S-4's split of RESONANCE and DECAY).
-            const double t60 = std::max (0.01, (double) p.decaySeconds) * std::pow (ratio, -0.7 * tilt);
+            const double t60 = std::max (0.01, (double) p.decaySeconds) * std::pow (ratio, -0.7 * tilt - 1.5 * (double) p.damp);
             const double ringWidth = std::log (1000.0) / (pi * t60);
             const double heldWidth = std::min (ringWidth, b.frequency / resonanceQ);
             b.k = std::min (2.0, (heldWidth + (ringWidth - heldWidth) * choke) / b.frequency);
@@ -150,7 +175,8 @@ void Resonator::updateCoefficients (const ResonatorParams& target, bool snap) no
             // Each band peaks at unity; narrow bands get some of their lost energy
             // back, shared across the bank, so long rings stay as loud as short ones.
             const double makeup = std::pow (sampleRate / (pi * heldWidth * n), 0.375);
-            const double level = makeup * std::pow (ratio, -0.75 * tilt);
+            const double against = i % 2 == 0 ? std::max (0.0, oddEven) : std::max (0.0, -oddEven);   // ODD/EVEN turns the other set down
+            const double level = makeup * std::pow (ratio, -0.75 * tilt) * wander * (1.0 - against);
             const double pan = (i % 2 == 0 ? -1.0 : 1.0) * width * (n > 1 ? 1.0 : 0.0);
             const double angle = (pan + 1.0) * pi / 4.0;
             // k scales the band-pass output to unity peak: part of the gain, so
@@ -173,6 +199,12 @@ void Resonator::updateCoefficients (const ResonatorParams& target, bool snap) no
             b.gainLeft = b.nextLeft, b.gainRight = b.nextRight;
     }
     numBands = sounding;
+}
+
+double Resonator::nextRandom() noexcept
+{
+    randomState = randomState * 1664525u + 1013904223u;
+    return (double) (randomState >> 8) / 16777216.0;
 }
 
 void Resonator::process (float* left, float* right, int numSamples, const ResonatorParams& p) noexcept
@@ -199,6 +231,10 @@ void Resonator::process (float* left, float* right, int numSamples, const Resona
     const double gainDown = coefficient (0.005), gainUp = coefficient (0.3);
     const double chokeGlide = 1.0 - std::exp (-(double) controlInterval / (0.01 * sampleRate));
     constexpr double headroom = 1.0;   // power: the input's own level
+    // DRIVE: up to 20 dB into a soft clip, so loud parts flatten and add
+    // harmonics that ring more bands; the level match keeps the result in line.
+    const double drive = std::clamp ((double) smoothed.drive, 0.0, 1.0);
+    const double driveGain = 1.0 + 9.0 * drive, driveMakeup = 1.0 + 2.0 * drive;
 
     for (int start = 0; start < numSamples; start += controlInterval)
     {
@@ -216,7 +252,8 @@ void Resonator::process (float* left, float* right, int numSamples, const Resona
         for (int i = start; i < start + len; ++i)
         {
             const float inLeft = left[i], inRight = right[i];
-            const double x = 0.5 * ((double) inLeft + (double) inRight);
+            const double dry = 0.5 * ((double) inLeft + (double) inRight);
+            const double x = drive > 0.0 ? std::tanh (dry * driveGain) / driveGain * driveMakeup : dry;
             const double along = (double) (i - start + 1) * rampScale;
             double wetLeft = 0.0, wetRight = 0.0;
             for (int bi = 0; bi < numBands; ++bi)
@@ -230,7 +267,7 @@ void Resonator::process (float* left, float* right, int numSamples, const Resona
                 wetLeft += v1 * (b.gainLeft + (b.nextLeft - b.gainLeft) * along);
                 wetRight += v1 * (b.gainRight + (b.nextRight - b.gainRight) * along);
             }
-            inMean += meanSmoothing * (x * x - inMean);   // averaged first, so the hold follows level, not peaks
+            inMean += meanSmoothing * (dry * dry - inMean);   // averaged first, so the hold follows level, not peaks
             inPower += (inMean > inPower ? inAttack : inRelease) * (inMean - inPower);
             inSlow += (inMean > inSlow ? inAttack : slowRelease) * (inMean - inSlow);
             wetPower += meanSmoothing * (0.5 * (wetLeft * wetLeft + wetRight * wetRight) - wetPower);

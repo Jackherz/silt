@@ -916,3 +916,53 @@ TEST_CASE ("RANDOM on the MOD page leaves the modulator types alone by default")
         rig.silt.randomisePage (silt::layout::mod);
     CHECK (rig.value ("m1Type") == 0.0f);
 }
+
+TEST_CASE ("The controller's page buttons step through both halves of RESONATOR")
+{
+    Rig rig;
+    rig.silt.currentPage.store (silt::layout::play);
+    const auto next = [&] { rig.cc (rig.silt.nextPageCC.load(), 127); rig.cc (rig.silt.nextPageCC.load(), 0); };
+    const auto previous = [&] { rig.cc (rig.silt.previousPageCC.load(), 127); rig.cc (rig.silt.previousPageCC.load(), 0); };
+    next();
+    CHECK (rig.silt.currentPage.load() == silt::layout::resonator);
+    CHECK (rig.silt.resonatorHalf.load() == 0);
+    CHECK (rig.silt.slotParameter (silt::layout::resonator, 0) == "resTune");
+    next();
+    CHECK (rig.silt.currentPage.load() == silt::layout::resonator);
+    CHECK (rig.silt.resonatorHalf.load() == 1);
+    CHECK (rig.silt.slotParameter (silt::layout::resonator, 0) == "resReso");
+    next();
+    CHECK (rig.silt.currentPage.load() == silt::layout::filter);
+    previous();
+    CHECK (rig.silt.currentPage.load() == silt::layout::resonator);
+    CHECK (rig.silt.resonatorHalf.load() == 1);   // back in: its second half
+    previous();
+    CHECK (rig.silt.resonatorHalf.load() == 0);
+}
+
+TEST_CASE ("SPACE's live trace restarts at each note and shows what SPACE adds")
+{
+    Rig rig;
+    loadSine (rig);
+    rig.set ("spaceReverb", 0.5f);
+    rig.set ("spaceDecay", rig.silt.params.getParameter ("spaceDecay")->convertTo0to1 (2.0f));
+    runBlocks (rig, 20);
+    REQUIRE (rig.silt.spaceTraceCount.load() > 100u);   // counting with no note yet
+
+    juce::MidiBuffer on;
+    on.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+    juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 512);
+    buffer.clear();
+    rig.silt.processBlock (buffer, on);
+    CHECK (rig.silt.spaceTraceCount.load() == 8u);   // 512 samples since the note: 8 steps of 64
+    juce::MidiBuffer none;
+    float loudest = 0.0f;
+    for (int b = 0; b < 40; ++b)
+    {
+        buffer.clear();
+        rig.silt.processBlock (buffer, none);
+    }
+    for (unsigned i = 0; i < rig.silt.spaceTraceCount.load(); ++i)
+        loudest = std::max (loudest, rig.silt.spaceTraceAt (i));
+    CHECK (loudest > 0.001f);
+}

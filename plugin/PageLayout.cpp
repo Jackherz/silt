@@ -98,14 +98,25 @@ std::vector<Entry> build (bool instrument)
 
     // RESONATOR: a bank of ringing bands on the grains. SCALE notes come from the
     // PITCH page's scale and key; FOLLOW tunes the bank to the note played.
-    knob (resonator, 0, "resTune", "TUNE");
-    menu (resonator, 1, "resNotes", "NOTES", { "SCALE", "HARMONICS", "BELL" });
-    knob (resonator, 2, "resRange", "RANGE");
-    knob (resonator, 3, "resDecay", "DECAY");
-    knob (resonator, 4, "resBright", "BRIGHT");
-    knob (resonator, 5, "resWidth", "WIDTH");
-    button (resonator, 6, "resFollow", "FOLLOW", "FOLLOW");
-    knob (resonator, 7, "resMix", "MIX");
+    // RESONATOR, in two halves (the tab, or the controller's page buttons, step between them).
+    const Shown firstHalf = [] (const Context& c) { return c.resonatorHalf == 0; };
+    const Shown secondHalf = [] (const Context& c) { return c.resonatorHalf == 1; };
+    knob (resonator, 0, "resTune", "TUNE", firstHalf);
+    menu (resonator, 1, "resNotes", "NOTES", { "SCALE", "HARMONICS", "BELL" }, firstHalf);
+    knob (resonator, 2, "resRange", "RANGE", firstHalf);
+    knob (resonator, 3, "resDecay", "DECAY", firstHalf);
+    knob (resonator, 4, "resBright", "BRIGHT", firstHalf);
+    knob (resonator, 5, "resWidth", "WIDTH", firstHalf);
+    button (resonator, 6, "resFollow", "FOLLOW", "FOLLOW", firstHalf);
+    knob (resonator, 7, "resMix", "MIX", firstHalf);
+    knob (resonator, 0, "resReso", "RESONANCE", secondHalf);
+    knob (resonator, 1, "resBands", "BANDS", secondHalf);
+    knob (resonator, 2, "resDrift", "DRIFT", secondHalf);
+    knob (resonator, 3, "resDriftRate", "DRIFT RATE", secondHalf);
+    knob (resonator, 4, "resSpread", "SPREAD", secondHalf);
+    knob (resonator, 5, "resOddEven", "ODD/EVEN", secondHalf);
+    knob (resonator, 6, "resDrive", "DRIVE", secondHalf);
+    knob (resonator, 7, "resDamp", "DAMP", secondHalf);
 
     // FILTER: after the resonator. MORPH blends low, band and high pass; ENV lets
     // the level move the cutoff; KEY follows the notes played.

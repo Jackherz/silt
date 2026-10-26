@@ -65,6 +65,7 @@ public:
     // A knob takes over a parameter only once it reaches the parameter's value
     // (pickup), so switching pages never makes values jump.
     static constexpr int numPages = silt::layout::numPages, slotsPerPage = 8, modPage = silt::layout::mod;
+    std::atomic<int> resonatorHalf { 0 };   // which of RESONATOR's two pages of controls is shown
     std::atomic<int> currentPage { 0 };
     std::array<std::atomic<int>, slotsPerPage> knobCCs {};
     std::atomic<int> previousPageCC { 78 }, nextPageCC { 79 };
@@ -101,6 +102,14 @@ public:
     static int chainOrderIndex (const std::array<int, numModules>&);
     static juce::String moduleName (int module);
     static juce::String chainOrderName (int index);   // "R>F>C>S"
+
+    // SPACE's live trace: the level SPACE adds (its echoes and reverb, not
+    // the sound going through), one peak per 64 samples, counted from the
+    // latest note-on. spaceTraceCount keeps counting; the ring holds the last
+    // spaceTraceSize values.
+    static constexpr int spaceTraceSize = 8192, spaceTraceStep = 64;
+    std::atomic<unsigned> spaceTraceCount { 0 };
+    float spaceTraceAt (unsigned index) const noexcept { return spaceTrace[index & (spaceTraceSize - 1)].load (std::memory_order_relaxed); }
 
     // The live scope: the sound going into one module and coming out of it,
     // mono, as rendered. The editor picks the module (−1: none) and reads the
@@ -267,6 +276,10 @@ private:
     float chainFade = 1.0f;
     std::array<std::atomic<float>, scopeSize> scopeIn {}, scopeOut {};
     std::atomic<unsigned> scopeWrite { 0 };
+    std::array<std::atomic<float>, spaceTraceSize> spaceTrace {};
+    int spaceTraceFill = 0;        // audio thread: samples into the current step
+    float spaceTracePeak = 0.0f;
+    bool spaceNoteStarted = false;   // a note began since SPACE last ran: restart the trace
     void writeScope (std::array<std::atomic<float>, scopeSize>&, const float* l, const float* r, int count) noexcept;
     float sampleGainNow = 1.0f;   // audio thread: the gain ramped to
 

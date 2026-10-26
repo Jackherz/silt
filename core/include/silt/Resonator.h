@@ -22,6 +22,16 @@ struct ResonatorParams
     float bright = 0.5f;            // 0: high bands quieter and shorter; 1: all equal
     float width = 0.5f;             // bands alternate left and right by this much
     float mix = 0.0f;               // 0 passes the input through untouched
+
+    // Page 2.
+    float resonance = 0.5f;         // how narrow the bands are while sound comes in (Q 8…120; 0.5 ≈ 31)
+    int bandCount = 12;             // how many bands, 1…maxBands (an even pick across the range)
+    float drift = 0.0f;             // each band's level (and a little of its tuning) wanders on its own
+    float driftRate = 0.5f;         // Hz: how often each band picks a new place to wander to
+    float spread = 0.0f;            // detunes the bands from their notes, each its own way (up to ±35 cents)
+    float oddEven = 0.0f;           // −1: only the 1st, 3rd, 5th… bands; +1: only the 2nd, 4th…
+    float drive = 0.0f;             // saturates the sound going in, so it excites more of the bank
+    float damp = 0.0f;              // high bands ring shorter (on top of BRIGHT)
 };
 
 // A bank of up to 12 ringing band-pass filters (TPT state-variable, in double
@@ -57,12 +67,14 @@ private:
         double frequency = 0.0;                // 0: not sounding
         double gainLeft = 0.0, gainRight = 0.0;  // at the start of this block
         double nextLeft = 0.0, nextRight = 0.0;  // at its end
+        double driftFrom = 1.0, driftTo = 1.0, driftPhase = 1.0;   // DRIFT: wandering between random targets
     };
+
+    double nextRandom() noexcept;   // 0…1
 
     void updateCoefficients (const ResonatorParams&, bool snap) noexcept;
 
     static constexpr int controlInterval = 32;
-    static constexpr double resonanceQ = 30.0;   // the narrowest the bands get while sound comes in
     double sampleRate = 44100.0;
     std::array<Band, maxBands> bands {};
     int numBands = 0;
@@ -71,6 +83,7 @@ private:
     double inMean = 0.0, inPower = 0.0, wetPower = 0.0, ringGain = 1.0;   // level match
     double inSlow = 0.0, choke = 0.0;   // choke: 1 once the input has dropped away
     bool active = false;   // false: bands are silent and the input passes through
+    unsigned randomState = 0x5117u;
 };
 
 } // namespace silt

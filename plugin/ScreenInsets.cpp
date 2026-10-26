@@ -17,8 +17,6 @@ namespace
 namespace layout = silt::layout;
 using Complex = std::complex<double>;
 
-const juce::Colour insetBack { 0xff1b2152 };
-
 // A parameter's value as the sound has it now: modulated where it's a target.
 float live (const SiltProcessor& silt, const char* id)
 {
@@ -153,10 +151,17 @@ void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltPr
     p.rangeOctaves = live (silt, "resRange");
     p.decaySeconds = live (silt, "resDecay");
     p.bright = live (silt, "resBright") * 0.01f;
+    p.bandCount = juce::roundToInt (live (silt, "resBands"));
     const float mix = live (silt, "resMix") * 0.01f;
+    const float spread = live (silt, "resSpread") * 0.01f, oddEven = live (silt, "resOddEven") * 0.01f;
+    const float drift = live (silt, "resDrift") * 0.01f, damp = live (silt, "resDamp") * 0.01f;
+    const float resonance = live (silt, "resReso") * 0.01f;
     const char* notes[] { "SCALE", "HARMONICS", "BELL" };
-    auto plot = frame (g, area, "RESONATOR - " + juce::String (notes[(int) p.notes]) + " " + juce::String (p.rangeOctaves, 1) + " OCT "
-                                    + text (silt, "resDecay", p.decaySeconds) + "  MIX " + juce::String (juce::roundToInt (mix * 100.0f)) + "%");
+    const bool secondHalf = silt.resonatorHalf.load() == 1;
+    auto plot = frame (g, area, secondHalf ? "RESONATOR 2/2 - " + juce::String (p.bandCount) + " BANDS  Q " + juce::String (juce::roundToInt (8.0 * std::pow (15.0, (double) resonance)))
+                                                 + (drift > 0.0f ? "  DRIFT " + juce::String (juce::roundToInt (drift * 100.0f)) + "%" : juce::String())
+                                           : "RESONATOR - " + juce::String (notes[(int) p.notes]) + " " + juce::String (p.rangeOctaves, 1) + " OCT "
+                                                 + text (silt, "resDecay", p.decaySeconds) + "  MIX " + juce::String (juce::roundToInt (mix * 100.0f)) + "%");
     g.setColour (screenLight.withAlpha (0.35f));
     g.drawHorizontalLine ((int) plot.getBottom() - 1, plot.getX(), plot.getRight());
     if (mix <= 0.0f)
@@ -173,15 +178,24 @@ void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltPr
     const auto bars = plot.reduced (6.0f, 0.0f);
     for (int i = 0; i < n; ++i)
     {
-        const double ratio = ratios[(size_t) i];
+        // As the engine has it: SPREAD's detune, ODD/EVEN's set turned down,
+        // DAMP shortening the high rings; DRIFT as the range a level wanders over.
+        const double cents = 35.0 * spread * std::sin ((double) i * 2.4 + 0.7);
+        const double ratio = ratios[(size_t) i] * std::pow (2.0, cents / 1200.0);
         const float x = bars.getX() + bars.getWidth() * (float) (std::log2 (ratio / lo) / std::log2 (hi / lo));
-        const float level = (float) std::pow (ratio, -0.75 * tilt);
-        const float ring = (float) std::pow (ratio, -0.7 * tilt);
+        const float against = i % 2 == 0 ? std::max (0.0f, oddEven) : std::max (0.0f, -oddEven);
+        const float level = (float) std::pow (ratio, -0.75 * tilt) * (1.0f - against);
+        const float ring = (float) std::pow (ratio, -0.7 * tilt - 1.5 * damp);
         const float width = 2.0f + 5.0f * juce::jlimit (0.0f, 1.0f, ring);
         const float h = (bars.getHeight() - 2.0f) * juce::jlimit (0.0f, 1.0f, level);
+        const float cx = juce::jlimit (bars.getX() + width * 0.5f, bars.getRight() - width * 0.5f, x);
         g.setColour (screenLime.withAlpha (mix));
-        g.fillRect (juce::Rectangle<float> (width, h).withCentre ({ juce::jlimit (bars.getX() + width * 0.5f, bars.getRight() - width * 0.5f, x),
-                                                                     bars.getBottom() - 1.0f - h * 0.5f }));
+        g.fillRect (juce::Rectangle<float> (width, h * (1.0f - drift)).withCentre ({ cx, bars.getBottom() - 1.0f - h * (1.0f - drift) * 0.5f }));
+        if (drift > 0.0f && h > 0.0f)
+        {
+            g.setColour (screenLime.withAlpha (mix * 0.6f));
+            g.drawRect (juce::Rectangle<float> (width, h).withCentre ({ cx, bars.getBottom() - 1.0f - h * 0.5f }), 1.0f);
+        }
     }
 }
 
@@ -289,95 +303,277 @@ void drawColor (juce::Graphics& g, juce::Rectangle<float> area, const SiltProces
 
 // --- SPACE -------------------------------------------------------------------------------
 
-// The delay's taps and, since the repeats feed the reverb, a tail after the dry
-// sound and after each repeat. DELAY and REVERB fade them in (gone at 0); TONE
-// tints the tails, SHIMMER sparkles above them, FREEZE holds them.
+// SPACE as the engine runs it (silt::Space): the delay's repeats, and the
+// reverb after the dry sound and after each repeat (the delay feeds it). The
+// reverb waits PRE-DELAY (35 ms at full SIZE), builds over its early
+// reflections (25–150 ms with SIZE), then falls 60 dB over DECAY; its highs
+// fall over a TONE share of that.
+struct SpaceView
+{
+    bool synced, frozen, pingPong;
+    float delay, feedback, delayLevel, reverbLevel, decay, size, tone, shimmer;
+    float preDelay, early, highDecay;
+    std::vector<float> taps;   // each repeat's level, before DELAY
+
+    explicit SpaceView (const SiltProcessor& silt)
+    {
+        synced = live (silt, "spaceSync") > 0.5f;
+        const float ms = synced ? (float) (SiltProcessor::divisionQuarters (juce::roundToInt (live (silt, "spaceDiv")))
+                                           * 60000.0 / juce::jlimit (20.0, 400.0, silt.hostBpm.load()))
+                                : live (silt, "spaceTime");
+        delay = ms / 1000.0f;
+        feedback = live (silt, "spaceFeedback") * 0.01f;
+        delayLevel = live (silt, "spaceDelay") * 0.01f;
+        reverbLevel = live (silt, "spaceReverb") * 0.01f;
+        decay = std::max (0.1f, live (silt, "spaceDecay"));
+        size = live (silt, "spaceSize") * 0.01f;
+        tone = live (silt, "spaceTone") * 0.01f;
+        shimmer = live (silt, "spaceShimmer") * 0.01f;
+        frozen = live (silt, "spaceFreeze") > 0.5f;
+        pingPong = juce::roundToInt (live (silt, "spaceMode")) == 0;
+        preDelay = 0.035f * size;
+        early = 0.025f + 0.125f * size;
+        highDecay = std::max (0.05f, (0.15f + 0.75f * tone) * decay);
+        for (float level = 1.0f; level > 0.03f && taps.size() < 24; level *= feedback)
+            taps.push_back (level);
+    }
+
+    // How much time the picture spans: the repeats, and the tail to −60 dB.
+    float window() const
+    {
+        float w = delayLevel > 0.0f ? delay * ((float) std::min<size_t> (taps.size(), 8) + 0.6f) : 0.0f;
+        if (reverbLevel > 0.0f)
+            w = std::max (w, frozen ? 3.0f : preDelay + early * 0.5f + decay);
+        return juce::jlimit (0.4f, 10.0f, std::max (w, 0.5f));
+    }
+
+    // The reverb's level t seconds after a hit: silent through the pre-delay,
+    // building over the early reflections, then falling 60 dB over `fall`.
+    float reverbAfter (float t, float fall) const
+    {
+        const float start = preDelay, peak = preDelay + early * 0.5f;
+        if (t <= start)
+            return 0.0f;
+        if (t < peak)
+            return (t - start) / (peak - start);
+        return frozen ? 1.0f : std::pow (10.0f, -3.0f * (t - peak) / fall);
+    }
+
+    // What SPACE adds t seconds after a note, as a level: the repeats' and
+    // the tails' energies added.
+    float tailLevel (float t, float fall) const
+    {
+        if (reverbLevel <= 0.0f)
+            return 0.0f;
+        float energy = juce::square (reverbAfter (t, fall));
+        for (size_t n = 0; n < taps.size() && delayLevel > 0.0f; ++n)
+        {
+            const float at = delay * (float) (n + 1);
+            if (at < t)
+                energy += juce::square (delayLevel * taps[n] * reverbAfter (t - at, fall));
+        }
+        return reverbLevel * std::sqrt (energy);
+    }
+};
+
+// The readout beside the timeline: the numbers behind the picture.
 void drawSpace (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcessor& silt)
 {
-    const bool synced = live (silt, "spaceSync") > 0.5f;
-    const float delayMs = synced ? (float) (SiltProcessor::divisionQuarters (juce::roundToInt (live (silt, "spaceDiv")))
-                                            * 60000.0 / juce::jlimit (20.0, 400.0, silt.hostBpm.load()))
-                                 : live (silt, "spaceTime");
-    const float feedback = live (silt, "spaceFeedback") * 0.01f, delayLevel = live (silt, "spaceDelay") * 0.01f;
-    const float reverbLevel = live (silt, "spaceReverb") * 0.01f, decay = std::max (0.1f, live (silt, "spaceDecay")), size = live (silt, "spaceSize") * 0.01f;
-    const float tone = live (silt, "spaceTone") * 0.01f, shimmer = live (silt, "spaceShimmer") * 0.01f;
-    const bool frozen = live (silt, "spaceFreeze") > 0.5f, pingPong = juce::roundToInt (live (silt, "spaceMode")) == 0;
-    auto plot = frame (g, area, "SPACE - DELAY " + (synced ? text (silt, "spaceDiv", live (silt, "spaceDiv")) : text (silt, "spaceTime", delayMs))
-                                    + "  FB " + juce::String (juce::roundToInt (feedback * 100.0f)) + "%  DECAY " + text (silt, "spaceDecay", decay)
-                                    + (frozen ? "  FROZEN" : ""));
+    const SpaceView s (silt);
+    auto plot = frame (g, area, juce::String ("SPACE") + (s.frozen ? "  - FROZEN" : ""));
+    const bool delayOn = s.delayLevel > 0.0f, reverbOn = s.reverbLevel > 0.0f;
+    const auto ms = [] (float seconds) { return seconds < 1.0f ? juce::String (juce::roundToInt (seconds * 1000.0f)) + " MS"
+                                                               : juce::String (seconds, 2) + " S"; };
+    const int repeats = s.feedback <= 0.0f ? 1 : (int) s.taps.size();
+    const struct Row { const char* label; juce::String value; bool on; } rows[] {
+        { "DELAY", delayOn ? (s.synced ? text (silt, "spaceDiv", live (silt, "spaceDiv")) : ms (s.delay)) : juce::String ("OFF"), delayOn },
+        { "REPEATS", juce::String (repeats) + (s.pingPong ? "  PING-PONG" : "  STEREO"), delayOn },
+        { "PRE-DELAY", ms (s.preDelay), reverbOn },
+        { "EARLY", ms (s.early), reverbOn },
+        { "DECAY", s.frozen ? juce::String ("HOLD") : text (silt, "spaceDecay", s.decay), reverbOn },
+        { "HIGHS FADE", s.frozen ? juce::String ("HOLD") : juce::String (s.highDecay, 2) + " S", reverbOn },
+        { "SHIMMER", s.shimmer > 0.0f ? juce::String (juce::roundToInt (s.shimmer * 100.0f)) + "%" : juce::String ("OFF"), reverbOn && s.shimmer > 0.0f },
+        { "REVERB", reverbOn ? juce::String (juce::roundToInt (s.reverbLevel * 100.0f)) + "%" : juce::String ("OFF"), reverbOn },
+    };
+    const int columns = plot.getWidth() > 260.0f ? 2 : 1;
+    const int perColumn = (int) std::ceil ((float) std::size (rows) / (float) columns);
+    const float rowH = std::min (13.0f, plot.getHeight() / (float) perColumn), colW = plot.getWidth() / (float) columns;
+    g.setFont (monoFont (9.5f));
+    for (size_t i = 0; i < std::size (rows); ++i)
+    {
+        const int column = (int) i / perColumn, row = (int) i % perColumn;
+        auto cell = juce::Rectangle<float> (plot.getX() + colW * (float) column, plot.getY() + rowH * (float) row, colW - 8.0f, rowH);
+        g.setColour (screenPale.withAlpha (rows[i].on ? 0.75f : 0.35f));
+        g.drawText (rows[i].label, cell, juce::Justification::centredLeft);
+        g.setColour (rows[i].on ? juce::Colours::white : screenPale.withAlpha (0.35f));
+        g.drawText (rows[i].value, cell, juce::Justification::centredRight);
+    }
+}
 
-    // The repeats worth showing: until they're 5% of the first, at most eight.
-    const float delay = delayMs / 1000.0f;
-    std::vector<float> taps;
-    for (float level = 1.0f; level > 0.05f && taps.size() < 8; level *= feedback)
-        taps.push_back (level);
-    const float window = juce::jlimit (0.4f, 8.0f, std::max (delay * ((float) std::min<size_t> (taps.size(), 5) + 0.7f), std::min (decay * 0.8f, 8.0f)));
+// The timeline across the screen's lower strip: from a note (at the left) on,
+// what SPACE adds, on a decibel scale. The repeats are bars, the reverb a
+// filled shape (its highs, fading sooner, a brighter one inside), SHIMMER a
+// glitter above. Over it, the level SPACE is really adding since the last note.
+void drawSpaceTimelineImpl (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcessor& silt)
+{
+    const SpaceView s (silt);
+    g.setColour (screenBlue);
+    g.fillRect (area.expanded (0.0f, 2.0f));
+    g.setColour (screenLight.withAlpha (0.6f));
+    g.drawRect (area, 1.0f);
+
+    auto inner = area.reduced (6.0f, 3.0f);
+    auto title = inner.removeFromTop (12.0f);
+    g.setFont (monoFont (10.0f));
+    g.setColour (screenLime);
+    g.drawText ("SPACE", title, juce::Justification::centredLeft);
+    g.setColour (screenPale.withAlpha (0.7f));
+    g.drawText ("SINCE THE LAST NOTE", title, juce::Justification::centredRight);
+    inner.removeFromTop (2.0f);
+    auto plot = inner.withTrimmedBottom (1.0f);
+
+    const float window = s.window();
     const auto xFor = [&] (float seconds) { return plot.getX() + plot.getWidth() * seconds / window; };
-    const float mid = plot.getCentreY(), half = plot.getHeight() * 0.5f - 1.0f;
-    g.setColour (screenLight.withAlpha (0.5f));
-    g.drawHorizontalLine ((int) mid, plot.getX(), plot.getRight());
+    const auto yFor = [&] (float level)   // −60…0 dB
+    {
+        const float db = juce::jlimit (-60.0f, 0.0f, juce::Decibels::gainToDecibels (level, -60.0f));
+        return plot.getBottom() - plot.getHeight() * (db + 60.0f) / 60.0f;
+    };
+
+    // Grid: −20 and −40 dB; beats when synced, else even steps of time.
+    g.setColour (screenLight.withAlpha (0.18f));
+    for (const float db : { -20.0f, -40.0f })
+        g.drawHorizontalLine ((int) yFor (juce::Decibels::decibelsToGain (db)), plot.getX(), plot.getRight());
+    float step = s.synced ? (float) (60.0 / juce::jlimit (20.0, 400.0, silt.hostBpm.load())) : 0.05f;
+    if (! s.synced)
+        for (const float candidate : { 0.05f, 0.1f, 0.25f, 0.5f, 1.0f, 2.0f })
+            if (window / candidate <= 12.0f) { step = candidate; break; }
+    while (window / step > 16.0f)
+        step *= 4.0f;   // a bar of beats
+    g.setColour (screenLight.withAlpha (0.25f));
+    for (float t = step; t < window; t += step)
+        g.drawVerticalLine ((int) xFor (t), plot.getY(), plot.getBottom());
     g.setFont (monoFont (8.5f));
     g.setColour (screenPale.withAlpha (0.6f));
-    g.drawText (juce::String (window, window < 1.0f ? 2 : 1) + " S", plot.removeFromBottom (10.0f).removeFromRight (40.0f), juce::Justification::centredRight);
+    g.drawText ((window < 1.0f ? juce::String (juce::roundToInt (window * 1000.0f)) + " MS" : juce::String (window, 1) + " S"),
+                plot.withTrimmedTop (plot.getHeight() - 10.0f).removeFromRight (44.0f), juce::Justification::centredRight);
 
-    // Tails: from the pre-delay, falling 60 dB over DECAY (or held, frozen).
-    const auto tailColour = screenLight.interpolatedWith (juce::Colours::white, tone);
-    const float preDelay = 0.035f * size;
-    const auto drawTail = [&] (float start, float amount)
+    // The reverb: all of it, then its highs.
+    float predictedPeak = 0.0f;
+    const auto layer = [&] (float fall, juce::Colour colour)
     {
-        if (amount <= 0.0f || start + preDelay >= window)
-            return;
-        juce::Path tail;
-        const float t0 = start + preDelay;
-        const auto envelope = [&] (float t) { return frozen ? 1.0f : std::pow (10.0f, -3.0f * (t - t0) / decay); };
-        tail.startNewSubPath (xFor (t0), mid);
-        for (int i = 0; i <= 60; ++i)
+        juce::Path shape;
+        shape.startNewSubPath (plot.getX(), plot.getBottom());
+        constexpr int points = 220;
+        for (int i = 0; i <= points; ++i)
         {
-            const float t = t0 + (window - t0) * (float) i / 60.0f;
-            tail.lineTo (xFor (t), mid - half * amount * envelope (t));
+            const float t = window * (float) i / points;
+            const float level = s.tailLevel (t, fall);
+            predictedPeak = std::max (predictedPeak, level);
+            shape.lineTo (xFor (t), yFor (level));
         }
-        for (int i = 60; i >= 0; --i)
-        {
-            const float t = t0 + (window - t0) * (float) i / 60.0f;
-            tail.lineTo (xFor (t), mid + half * amount * envelope (t));
-        }
-        tail.closeSubPath();
-        g.setColour (tailColour.withAlpha (0.18f + 0.5f * reverbLevel));
-        g.fillPath (tail);
+        shape.lineTo (plot.getRight(), plot.getBottom());
+        shape.closeSubPath();
+        g.setColour (colour);
+        g.fillPath (shape);
     };
-    if (reverbLevel > 0.0f)
+    const auto tailColour = screenLight.interpolatedWith (screenPale, 0.4f);
+    if (s.reverbLevel > 0.0f)
     {
-        drawTail (0.0f, reverbLevel);
-        for (size_t n = 0; n < taps.size(); ++n)
-            drawTail (delay * (float) (n + 1), reverbLevel * delayLevel * taps[n]);
+        layer (s.decay, tailColour.withAlpha (0.55f));
+        layer (s.highDecay, juce::Colours::white.withAlpha (0.12f + 0.25f * s.tone));
 
-        // SHIMMER: sparks above the first tail, an octave's glitter.
-        if (shimmer > 0.0f)
+        // SHIMMER: glitter that gathers as the octave-up feedback builds.
+        if (s.shimmer > 0.0f)
         {
-            juce::Random r (5);
-            g.setColour (juce::Colours::white.withAlpha (0.3f + 0.6f * shimmer));
-            for (int i = 0; i < (int) (40.0f * shimmer); ++i)
+            juce::Random r (11);
+            g.setColour (juce::Colours::white.withAlpha (0.35f + 0.6f * s.shimmer));
+            for (int i = 0; i < (int) (90.0f * s.shimmer); ++i)
             {
-                const float t = preDelay + r.nextFloat() * std::min (window, decay);
-                const float top = half * reverbLevel * (frozen ? 1.0f : std::pow (10.0f, -3.0f * t / decay));
-                g.fillRect (xFor (t), mid - top - 2.0f - r.nextFloat() * half * 0.35f * shimmer, 1.5f, 1.5f);
+                const float t = s.preDelay + r.nextFloat() * (window - s.preDelay);
+                const float build = 1.0f - std::exp (-(t - s.preDelay) / (0.25f + 0.15f * s.decay));
+                const float level = s.tailLevel (t, s.decay) * (0.4f + 0.6f * s.shimmer) * build * (0.6f + 0.8f * r.nextFloat());
+                if (level > 0.001f)
+                    g.fillRect (xFor (t), yFor (level) - 3.0f, 1.5f, 1.5f);
             }
         }
     }
 
-    // Taps: each repeat FEEDBACK quieter; ping-pong alternates sides.
-    if (delayLevel > 0.0f)
+    // The repeats: each FEEDBACK quieter and, with TONE dark, duller.
+    if (s.delayLevel > 0.0f)
     {
-        g.setColour (juce::Colour (0xffd8693f).withAlpha (delayLevel));
-        for (size_t n = 0; n < taps.size(); ++n)
+        const juce::Colour bright (0xffe0784a), dull (0xff7a4a52);
+        g.setFont (monoFont (8.0f));
+        for (size_t n = 0; n < s.taps.size(); ++n)
         {
-            const float t = delay * (float) (n + 1);
+            const float t = s.delay * (float) (n + 1);
             if (t > window)
                 break;
-            const float h = half * taps[n];
-            const bool left = ! pingPong || n % 2 == 0, right = ! pingPong || n % 2 == 1;
-            g.fillRect (juce::Rectangle<float>::leftTopRightBottom (xFor (t) - 1.5f, left ? mid - h : mid, xFor (t) + 1.5f, right ? mid + h : mid));
+            const float level = s.delayLevel * s.taps[n];
+            predictedPeak = std::max (predictedPeak, level);
+            const float x = xFor (t), top = yFor (level);
+            const auto colour = bright.interpolatedWith (dull, std::min (1.0f, (1.0f - s.tone) * (float) n / 6.0f));
+            g.setColour (colour);
+            g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x - 1.5f, top, x + 1.5f, plot.getBottom()));
+            if (s.pingPong && s.delay / window * plot.getWidth() > 14.0f && top - 10.0f > plot.getY())
+            {
+                g.setColour (colour.withAlpha (0.9f));
+                g.drawText (n % 2 == 0 ? "L" : "R", juce::Rectangle<float> (x - 5.0f, top - 10.0f, 10.0f, 9.0f), juce::Justification::centred);
+            }
         }
+    }
+
+    // The note, at the left.
+    g.setColour (screenLime.withAlpha (0.7f));
+    g.fillRect (plot.getX(), plot.getY(), 1.5f, plot.getHeight());
+
+    if (predictedPeak <= 0.0f)
+    {
+        g.setColour (screenPale.withAlpha (0.8f));
+        g.drawText ("TURN UP DELAY OR REVERB", plot, juce::Justification::centred);
+        return;
+    }
+
+    // What SPACE is really adding: aligned to the latest note while it's in
+    // view, scrolling once the note is older than the picture. Scaled so its
+    // loudest moment meets the picture's.
+    const double rate = silt.getSampleRate() > 0.0 ? silt.getSampleRate() : 48000.0;
+    const float stepSeconds = (float) (SiltProcessor::spaceTraceStep / rate);
+    const unsigned count = silt.spaceTraceCount.load (std::memory_order_acquire);
+    const unsigned shown = (unsigned) std::min<double> (window / stepSeconds, SiltProcessor::spaceTraceSize - 1);
+    const bool aligned = count <= shown;
+    const unsigned first = aligned ? 0u : count - shown, last = count;
+    float loudest = 0.0f;
+    for (unsigned i = first; i < last; ++i)
+        loudest = std::max (loudest, silt.spaceTraceAt (i));
+    if (loudest < 1.0e-5f)
+        return;
+    const float scale = predictedPeak / loudest;
+    juce::Path trace;
+    const float perPixel = window / stepSeconds / plot.getWidth();   // trace values per pixel
+    const int columns = juce::roundToInt ((float) (last - first) / std::max (perPixel, 1.0e-3f));
+    for (int c = 0; c < std::max (columns, 1); ++c)
+    {
+        // The loudest value in each pixel's share, so peaks survive.
+        const unsigned from = first + (unsigned) ((float) c * perPixel);
+        const unsigned to = std::min (last, std::max (from + 1, first + (unsigned) ((float) (c + 1) * perPixel)));
+        float level = 0.0f;
+        for (unsigned i = from; i < to; ++i)
+            level = std::max (level, silt.spaceTraceAt (i));
+        const float x = plot.getX() + (float) (from - first) * stepSeconds / window * plot.getWidth();
+        const float y = yFor (level * scale);
+        if (c == 0)
+            trace.startNewSubPath (x, y);
+        else
+            trace.lineTo (x, y);
+    }
+    g.setColour (juce::Colours::white);
+    g.strokePath (trace, juce::PathStrokeType (1.3f));
+    if (aligned)
+    {
+        const float x = plot.getX() + (float) count * stepSeconds / window * plot.getWidth();
+        g.setColour (playheadCyan);
+        g.fillRect (x - 0.5f, plot.getY(), 1.5f, plot.getHeight());
     }
 }
 
@@ -561,6 +757,12 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
 }
 } // namespace
 
+bool drawSpaceTimeline (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcessor& silt)
+{
+    drawSpaceTimelineImpl (g, area, silt);
+    return true;
+}
+
 bool pageHasInset (int page)
 {
     return page == layout::filter || page == layout::resonator || page == layout::color || page == layout::space
@@ -592,7 +794,11 @@ std::vector<float> insetKey (int page, const SiltProcessor& silt, const ModRail&
     switch (page)
     {
         case layout::filter:    add ({ "filterMode", "filterCutoff", "filterReso", "filterMorph", "filterMix", "filterEnv" }); break;
-        case layout::resonator: add ({ "resTune", "resNotes", "resRange", "resDecay", "resBright", "resMix", "scale", "key" }); break;
+        case layout::resonator:
+            add ({ "resTune", "resNotes", "resRange", "resDecay", "resBright", "resMix", "scale", "key",
+                   "resReso", "resBands", "resDrift", "resSpread", "resOddEven", "resDamp" });
+            key.push_back ((float) silt.resonatorHalf.load());
+            break;
         case layout::color:     add ({ "colorDrive", "colorBits", "colorTone", "colorRate", "colorNoise", "colorComp", "colorWow" }); break;
         case layout::space:     add ({ "spaceTime", "spaceSync", "spaceDiv", "spaceFeedback", "spaceDelay", "spaceReverb", "spaceDecay", "spaceSize", "spaceMode", "spaceTone", "spaceShimmer", "spaceFreeze" }); break;
         case layout::pitch:     add ({ "scale", "key", "randPitch", "patternDepth", "patternSteps", "patternSeed" }); break;

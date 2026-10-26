@@ -6,6 +6,7 @@
 #include <silt/Resonator.h>
 
 #include <cmath>
+#include <functional>
 #include <vector>
 
 using namespace silt;
@@ -697,4 +698,106 @@ TEST_CASE ("Color: sweeping drive, tone, comp and wow doesn't zipper")
         INFO (names[which] << ": swept " << swept << ", still " << still);
         CHECK (swept < still * 4.0);
     }
+}
+
+TEST_CASE ("Resonator page 2: BANDS, ODD/EVEN, DRIFT and DRIVE")
+{
+    std::array<double, Resonator::maxBands> r {};
+    ResonatorParams p;
+    p.notes = ResonatorNotes::harmonics;
+    p.rangeOctaves = 4.0f;
+    REQUIRE (Resonator::bandRatios (p, r) == Resonator::maxBands);
+    p.bandCount = 3;
+    REQUIRE (Resonator::bandRatios (p, r) == 3);
+    CHECK (r[0] == 1.0);   // still from the lowest…
+    CHECK (r[2] == 16.0);  // …to the highest
+
+    // Every variant stays finite and no louder than the input allows.
+    const auto peakWith = [] (const std::function<void (ResonatorParams&)>& set)
+    {
+        Resonator res;
+        res.prepare (rate);
+        ResonatorParams q;
+        q.notes = ResonatorNotes::harmonics;
+        q.rootNote = 45.0f;
+        q.mix = 1.0f;
+        set (q);
+        auto s = noise ((int) rate * 2, 0.5f);
+        run (res, s, q);
+        float peak = 0.0f;
+        for (const float v : s.left)
+        {
+            REQUIRE (std::isfinite (v));
+            peak = std::max (peak, std::abs (v));
+        }
+        return peak;
+    };
+    for (const auto& set : std::vector<std::function<void (ResonatorParams&)>> {
+             [] (ResonatorParams& q) { q.resonance = 0.0f; },
+             [] (ResonatorParams& q) { q.resonance = 1.0f; },
+             [] (ResonatorParams& q) { q.drift = 1.0f; q.driftRate = 8.0f; },
+             [] (ResonatorParams& q) { q.spread = 1.0f; },
+             [] (ResonatorParams& q) { q.oddEven = -1.0f; },
+             [] (ResonatorParams& q) { q.drive = 1.0f; },
+             [] (ResonatorParams& q) { q.damp = 1.0f; } })
+        CHECK (peakWith (set) < 1.5f);
+}
+
+TEST_CASE ("Resonator: ODD/EVEN at its ends silences the other set of bands")
+{
+    // A tone on the 2nd harmonic rings with EVEN bands kept, and barely with only ODD.
+    const auto ringOn2nd = [] (float oddEven)
+    {
+        Resonator res;
+        res.prepare (rate);
+        ResonatorParams p;
+        p.notes = ResonatorNotes::harmonics;
+        p.rootNote = 45.0f;   // 110 Hz: the 2nd band at 220 Hz
+        p.rangeOctaves = 2.0f;
+        p.decaySeconds = 2.0f;
+        p.mix = 1.0f;
+        p.oddEven = oddEven;
+        Stereo s ((int) rate);
+        for (size_t i = 0; i < s.left.size(); ++i)
+            s.left[i] = s.right[i] = 0.3f * (float) std::sin (2.0 * 3.141592653589793 * 220.0 * (double) i / rate);
+        run (res, s, p);
+        double energy = 0.0;
+        for (size_t i = s.left.size() / 2; i < s.left.size(); ++i)
+            energy += (double) s.left[i] * s.left[i];
+        return energy;
+    };
+    CHECK (ringOn2nd (1.0f) > ringOn2nd (-1.0f) * 4.0);
+}
+
+TEST_CASE ("Resonator: DRIFT makes each band's level wander over time")
+{
+    // With DRIFT, a steady input's ring level moves around; without, it holds.
+    const auto spread = [] (float drift)
+    {
+        Resonator res;
+        res.prepare (rate);
+        ResonatorParams p;
+        p.notes = ResonatorNotes::harmonics;
+        p.rootNote = 45.0f;
+        p.mix = 1.0f;
+        p.drift = drift;
+        p.driftRate = 4.0f;
+        Stereo s ((int) rate * 3);
+        for (size_t i = 0; i < s.left.size(); ++i)
+            s.left[i] = s.right[i] = 0.3f * (float) std::sin (2.0 * 3.141592653589793 * 110.0 * (double) i / rate);
+        run (res, s, p);
+        float lo = 1.0e9f, hi = 0.0f;
+        for (size_t start = s.left.size() / 3; start + 2400 <= s.left.size(); start += 2400)
+        {
+            double sum = 0.0;
+            for (size_t i = start; i < start + 2400; ++i)
+                sum += (double) s.left[i] * s.left[i];
+            const float level = (float) std::sqrt (sum / 2400.0);
+            lo = std::min (lo, level);
+            hi = std::max (hi, level);
+        }
+        return hi / std::max (lo, 1.0e-9f);
+    };
+    CHECK (spread (0.0f) < 1.1f);
+    CHECK (spread (1.0f) > 1.5f);
 }

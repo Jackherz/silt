@@ -12,7 +12,10 @@ namespace silt::ui
 class PanelLook final : public juce::LookAndFeel_V4
 {
 public:
-    PanelLook()
+    PanelLook() { applyColours(); }
+
+    // The palette's colours for JUCE's own parts; again after a theme change.
+    void applyColours()
     {
         setColour (juce::ComboBox::backgroundColourId, lcdGreen);
         setColour (juce::ComboBox::textColourId, lcdText);

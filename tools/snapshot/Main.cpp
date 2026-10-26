@@ -4,7 +4,7 @@
 //   silt_snapshot sample.wav out-folder [param=value ...] [route=mod:param:amount ...]
 //
 // Loads the sample, holds a note so grains are sounding, then writes one PNG
-// per page (grain.png, shape.png, pitch.png, play.png, resonator.png, filter.png, color.png, space.png, mod.png, chain.png, then routes.png with the route list open). Parameter values are in the
+// per page (grain.png, shape.png, pitch.png, play.png, resonator.png, resonator2.png, filter.png, color.png, space.png, mod.png, chain.png, then routes.png with the route list open). Parameter values are in the
 // parameter's own units (ms, %, st...).
 
 #include "../../plugin/PluginEditor.h"
@@ -64,6 +64,11 @@ int main (int argc, char* argv[])
     {
         const juce::String setting (argv[i]);
         const auto id = setting.upToFirstOccurrenceOf ("=", false, false);
+        if (id == "theme")   // theme=index (0 Cream, 1 Night, 2 Slate, 3 Moss)
+        {
+            SiltEditor::startTheme = setting.fromFirstOccurrenceOf ("=", false, false).getIntValue();
+            continue;
+        }
         if (id == "armed")   // armed=modulator (1–4)
         {
             silt.armedMod.store (setting.fromFirstOccurrenceOf ("=", false, false).getIntValue() - 1);
@@ -109,11 +114,12 @@ int main (int argc, char* argv[])
     editor->setVisible (true);
     runMessageLoop (100);
 
-    for (const auto* name : { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER", "COLOR", "SPACE", "MOD", "CHAIN" })
+    for (const auto* name : { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "RESONATOR2", "FILTER", "COLOR", "SPACE", "MOD", "CHAIN" })
     {
         for (auto* child : editor->getChildren())
-            if (auto* tab = dynamic_cast<juce::TextButton*> (child); tab != nullptr && tab->getButtonText() == name)
-                tab->triggerClick();
+            if (auto* tab = dynamic_cast<juce::TextButton*> (child);
+                tab != nullptr && tab->getButtonText().upToFirstOccurrenceOf (" ", false, false) == juce::String (name).removeCharacters ("2"))
+                tab->triggerClick();   // RESONATOR2: the tab again, for its second half
 
         play (silt, 0.05, false);
         runMessageLoop (60);
@@ -136,7 +142,7 @@ int main (int argc, char* argv[])
         for (auto* child : editor->getChildren())
             if (auto* t = dynamic_cast<silt::ui::Tour*> (child))
                 tour = t;
-        for (const int step : { 0, 2, 5, 7, 8 })
+        for (const int step : { 0, 1, 4, 5, 7, 8 })
         {
             tour->go (step);
             play (silt, 0.05, false);

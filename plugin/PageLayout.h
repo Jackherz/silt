@@ -28,6 +28,7 @@ struct Context
 {
     std::function<float (const juce::String& id)> value;
     int modShown = 0;
+    int resonatorHalf = 0;   // RESONATOR has two pages of controls: 0 or 1
     float v (const juce::String& id) const { return value (id); }
 };
 

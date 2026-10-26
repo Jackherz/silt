@@ -33,6 +33,7 @@ class SiltEditor final : public juce::AudioProcessorEditor,
 public:
     explicit SiltEditor (SiltProcessor&);
     static inline bool tourOnFirstOpen = true;   // tests and the snapshot tool turn it off
+    static inline int startTheme = -1;           // ≥ 0: this theme, not the saved one (the snapshot tool)
     ~SiltEditor() override;
 
     void paint (juce::Graphics&) override;
@@ -49,6 +50,7 @@ public:
     void refreshLayout();                          // re-reads which alternatives each slot shows
     void showRoutes (int modulatorFilter = -1);    // the route list; −1 shows every modulator
     void startTour();                              // from the ? button, and once on a first open
+    void setTheme (int index);                     // one of themes(), kept for this computer
     bool routesShown() const;
     juce::String visibleParameterId (int page, int slot) const;   // for tests: what the slot shows
     juce::Slider* findKnob (const juce::String& parameterId);     // for tests
@@ -164,10 +166,15 @@ private:
     void stepUndo (bool redo);
     void chooseFile();   // LOAD's file chooser
     void updateScope();
+    unsigned spaceTraceSeen = 0;
+    int resonatorHalfSeen = -1;
+    int spacePageSeen = -1;
     std::vector<silt::ui::Tour::Step> tourSteps();
     std::unique_ptr<silt::ui::Tour> tour;
     juce::TextButton tourButton { "?" };
     int pageBeforeTour = 0;
+    void restyle();
+    static void styleValueBox (juce::Slider&);
     void randomise();        // the open page
     void showRandomMenu();
     juce::TextButton randomButton { "RANDOM" };

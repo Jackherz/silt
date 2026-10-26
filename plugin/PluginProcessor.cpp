@@ -219,6 +219,22 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "resFollow", 1 }, "Resonator follows notes", false),
                 percent ("resMix", "Resonator mix", 0.0f));
 
+    // Resonator, page 2: the bank's character.
+    layout.add (percent ("resReso", "Resonator resonance", 50.0f),
+                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "resBands", 1 }, "Resonator bands", 1, silt::Resonator::maxBands,
+                                                           silt::Resonator::maxBands),
+                percent ("resDrift", "Resonator drift", 0.0f),
+                withUnit ("resDriftRate", "Resonator drift rate", skewed (0.05f, 10.0f, 0.7f), 0.5f,
+                          [] (float v, int) { return juce::String (v, v < 1.0f ? 2 : 1) + " Hz"; }),
+                percent ("resSpread", "Resonator spread", 0.0f),
+                withUnit ("resOddEven", "Resonator odd/even", Range (-100.0f, 100.0f, 0.1f), 0.0f, [] (float v, int)
+                {
+                    const int n = juce::roundToInt (v);
+                    return n < 0 ? "ODD " + juce::String (-n) + "%" : n > 0 ? "EVEN " + juce::String (n) + "%" : juce::String ("ALL");
+                }),
+                percent ("resDrive", "Resonator drive", 0.0f),
+                percent ("resDamp", "Resonator damp", 0.0f));
+
     // Filter: after the resonator.
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "filterMode", 1 }, "Filter",
                                                               juce::StringArray { "Off", "12 dB", "24 dB" }, 0),
@@ -408,6 +424,8 @@ struct SiltProcessor::RawParams
         patternSteps = p ("patternSteps"); patternSeed = p ("patternSeed"); heads = p ("heads"); headSpread = p ("headSpread");
         resTune = p ("resTune"); resNotes = p ("resNotes"); resRange = p ("resRange"); resDecay = p ("resDecay");
         resBright = p ("resBright"); resWidth = p ("resWidth"); resFollow = p ("resFollow"); resMix = p ("resMix");
+        resReso = p ("resReso"); resBands = p ("resBands"); resDrift = p ("resDrift"); resDriftRate = p ("resDriftRate");
+        resSpread = p ("resSpread"); resOddEven = p ("resOddEven"); resDrive = p ("resDrive"); resDamp = p ("resDamp");
         filterMode = p ("filterMode"); filterCutoff = p ("filterCutoff"); filterReso = p ("filterReso"); filterMorph = p ("filterMorph");
         filterDrive = p ("filterDrive"); filterEnv = p ("filterEnv"); filterKey = p ("filterKey"); filterMix = p ("filterMix");
         colorDrive = p ("colorDrive"); colorTone = p ("colorTone"); colorBits = p ("colorBits"); colorRate = p ("colorRate");
@@ -427,6 +445,7 @@ struct SiltProcessor::RawParams
     std::atomic<float>* keyMode, *liveDelay, *delaySync, *delayDiv, *feedback, *freeze, *liveRun;
     std::atomic<float>* randPitch, *scale, *key, *patternDepth, *patternSteps, *patternSeed, *heads, *headSpread;
     std::atomic<float>* resTune, *resNotes, *resRange, *resDecay, *resBright, *resWidth, *resFollow, *resMix;
+    std::atomic<float>* resReso, *resBands, *resDrift, *resDriftRate, *resSpread, *resOddEven, *resDrive, *resDamp;
     std::atomic<float>* filterMode, *filterCutoff, *filterReso, *filterMorph, *filterDrive, *filterEnv, *filterKey, *filterMix;
     std::atomic<float>* colorDrive, *colorTone, *colorBits, *colorRate, *colorComp, *colorNoise, *colorWow, *colorMix;
     std::atomic<float>* spaceTime, *spaceSync, *spaceDiv, *spaceFeedback, *spaceMode, *spaceDelay, *spaceSize, *spaceDecay;
@@ -693,6 +712,14 @@ silt::ResonatorParams SiltProcessor::readResonatorParams (const silt::GrainParam
     p.bright = v (raw->resBright) * 0.01f;
     p.width = v (raw->resWidth) * 0.01f;
     p.mix = v (raw->resMix) * 0.01f;
+    p.resonance = v (raw->resReso) * 0.01f;
+    p.bandCount = juce::roundToInt (v (raw->resBands));
+    p.drift = v (raw->resDrift) * 0.01f;
+    p.driftRate = v (raw->resDriftRate);
+    p.spread = v (raw->resSpread) * 0.01f;
+    p.oddEven = v (raw->resOddEven) * 0.01f;
+    p.drive = v (raw->resDrive) * 0.01f;
+    p.damp = v (raw->resDamp) * 0.01f;
     return p;
 }
 
@@ -890,6 +917,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
             {
                 lastNote = it->note;
                 modContext.noteStarted = true;
+                spaceNoteStarted = true;
                 modContext.note = it->note;
                 modContext.velocity = it->velocity;
                 if (! held)
@@ -972,7 +1000,34 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
                 case moduleResonator: resonator.process (l, r, len, resonatorParams); break;
                 case moduleFilter:    filter.process (l, r, len, filterParams); break;
                 case moduleColor:     color.process (l, r, len, colorParams); break;
-                default:              space.process (l, r, len, spaceParams); break;
+                default:
+                {
+                    // Measure what SPACE adds: its output less what went in.
+                    std::array<float, modulationInterval> inL {}, inR {};
+                    std::copy (l, l + len, inL.begin());
+                    std::copy (r, r + len, inR.begin());
+                    space.process (l, r, len, spaceParams);
+                    if (spaceNoteStarted)
+                    {
+                        spaceTraceCount.store (0, std::memory_order_relaxed);
+                        spaceTraceFill = 0;
+                        spaceTracePeak = 0.0f;
+                        spaceNoteStarted = false;
+                    }
+                    for (int i = 0; i < len; ++i)
+                    {
+                        spaceTracePeak = std::max ({ spaceTracePeak, std::abs (l[i] - inL[(size_t) i]), std::abs (r[i] - inR[(size_t) i]) });
+                        if (++spaceTraceFill == spaceTraceStep)
+                        {
+                            const unsigned at = spaceTraceCount.load (std::memory_order_relaxed);
+                            spaceTrace[at & (spaceTraceSize - 1)].store (spaceTracePeak, std::memory_order_relaxed);
+                            spaceTraceCount.store (at + 1, std::memory_order_release);
+                            spaceTraceFill = 0;
+                            spaceTracePeak = 0.0f;
+                        }
+                    }
+                    break;
+                }
             }
             if (module == tapped)
             {
@@ -1658,7 +1713,21 @@ void SiltProcessor::handleController (int number, int value) noexcept
     {
         const int which = number == nextPageCC.load() ? 1 : 0;
         if (value > 63 && pageButtonLast[(size_t) which] <= 63)
-            currentPage.store ((currentPage.load() + (which == 1 ? 1 : numPages - 1)) % numPages);
+        {
+            // RESONATOR's two halves are two stops.
+            const int pageNow = currentPage.load(), half = resonatorHalf.load();
+            if (pageNow == silt::layout::resonator && half == 0 && which == 1)
+                resonatorHalf.store (1);
+            else if (pageNow == silt::layout::resonator && half == 1 && which == 0)
+                resonatorHalf.store (0);
+            else
+            {
+                const int to = (pageNow + (which == 1 ? 1 : numPages - 1)) % numPages;
+                if (to == silt::layout::resonator)
+                    resonatorHalf.store (which == 1 ? 0 : 1);
+                currentPage.store (to);
+            }
+        }
         pageButtonLast[(size_t) which] = value;
         return;
     }
@@ -1692,6 +1761,7 @@ silt::layout::Context SiltProcessor::layoutContext() const
         return value != nullptr ? value->load() : 0.0f;
     };
     c.modShown = modShown.load();
+    c.resonatorHalf = resonatorHalf.load();
     return c;
 }
 
@@ -2144,6 +2214,7 @@ void SiltProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("knobCCs", ccs.joinIntoString (","), nullptr);
     state.setProperty ("pageCCs", juce::String (previousPageCC.load()) + "," + juce::String (nextPageCC.load()), nullptr);
     state.setProperty ("page", currentPage.load(), nullptr);
+    state.setProperty ("resonatorHalf", resonatorHalf.load(), nullptr);
     state.setProperty ("modRoutes", routesToString(), nullptr);
     state.setProperty ("modShown", modShown.load(), nullptr);
     state.setProperty ("presetName", presetName, nullptr);
@@ -2230,6 +2301,7 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
         nextPageCC.store (juce::jlimit (0, 127, pages[1].getIntValue()));
     }
     currentPage.store (juce::jlimit (0, numPages - 1, (int) tree.getProperty ("page", 0)));
+    resonatorHalf.store (juce::jlimit (0, 1, (int) tree.getProperty ("resonatorHalf", 0)));
     routesFromString (tree.getProperty ("modRoutes").toString());
     modShown.store (juce::jlimit (0, numModulators - 1, (int) tree.getProperty ("modShown", 0)));
     routeUndo.clearUndoHistory();   // a loaded set starts its own history

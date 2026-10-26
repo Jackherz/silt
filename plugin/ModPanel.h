@@ -95,6 +95,7 @@ public:
     void setFilter (int modulator) { filterModulator = modulator; rebuild(); }
     void setCurrentPage (const juce::String& name) { currentPage = name; rebuild(); }
     void update();   // from the editor's timer while shown
+    void restyle() { rebuild(); }   // after a theme change
     std::function<void()> onClose;
 
     void paint (juce::Graphics&) override;

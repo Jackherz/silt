@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "../plugin/Palette.h"
 #include "../plugin/PluginEditor.h"
 
 using Catch::Matchers::WithinAbs;
@@ -70,6 +71,9 @@ TEST_CASE ("Every slot's shown control is the one the controller moves, in every
         }
     rig.set ("spaceSync", 1.0f);
     rig.checkAgreement ("space sync");
+    rig.silt.resonatorHalf.store (1);
+    rig.checkAgreement ("resonator, second half");
+    rig.silt.resonatorHalf.store (0);
 
     for (int m = 0; m < SiltProcessor::numModulators; ++m)
     {
@@ -322,4 +326,40 @@ TEST_CASE ("Dragging a route's depth through 0 in MOD ROUTES keeps the row and c
     CHECK (rig.silt.routeAmount (0, t) == 0.0f);
     list->update();
     CHECK (rig.silt.allRoutes().empty());
+}
+
+TEST_CASE ("The tour lets clicks through to the parts it lights, and nowhere else")
+{
+    EditorRig rig;
+    rig.editor->setSize (1100, 700);
+    rig.editor->startTour();
+    silt::ui::Tour* tour = nullptr;
+    for (auto* child : rig.editor->getChildren())
+        if (auto* t = dynamic_cast<silt::ui::Tour*> (child))
+            tour = t;
+    REQUIRE (tour != nullptr);
+    REQUIRE (tour->isRunning());
+
+    tour->go (4);   // SPRAY: its knob and the screen are lit
+    auto* spray = rig.editor->findKnob ("spray");
+    REQUIRE (spray != nullptr);
+    const auto knob = spray->getBounds().getCentre();
+    CHECK_FALSE (tour->hitTest (knob.x, knob.y));
+    auto* pitch = rig.editor->findKnob ("pitch");
+    const auto other = pitch->getBounds().getCentre();
+    CHECK (tour->hitTest (other.x, other.y));
+
+    tour->go (99);
+    CHECK_FALSE (tour->isRunning());
+}
+
+TEST_CASE ("A theme changes the palette, and Cream puts it back")
+{
+    const auto cream = silt::ui::chassis;
+    silt::ui::applyTheme (1);
+    CHECK (silt::ui::currentThemeIndex() == 1);
+    CHECK (silt::ui::chassis != cream);
+    CHECK (silt::ui::frame.getPerceivedBrightness() < 0.3f);   // the header stays dark in every theme
+    silt::ui::applyTheme (0);
+    CHECK (silt::ui::chassis == cream);
 }

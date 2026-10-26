@@ -148,11 +148,22 @@ public:
         return area.withRight (juce::jmin (area.getRight(), insetArea().getX() - 10));
     }
 
+    // A page's own picture in the strip where the scope goes (SPACE's
+    // timeline); returns false when the page has none.
+    std::function<bool (juce::Graphics&, juce::Rectangle<float>)> drawStrip;
+    void repaintStrip() { repaint (scopeArea().expanded (0, 2)); }
+
     void paint (juce::Graphics& g) override
     {
         paintScreen (g);
         if (scopeShown)
             drawScope (g, scopeArea());
+        else if (drawStrip != nullptr)
+        {
+            juce::Graphics::ScopedSaveState state (g);
+            g.reduceClipRegion (scopeArea().expanded (0, 2));
+            drawStrip (g, scopeArea().toFloat());
+        }
         if (drawInset != nullptr)
         {
             const auto area = insetArea().toFloat();
@@ -222,7 +233,7 @@ private:
     void paintScreen (juce::Graphics& g)
     {
         auto r = getLocalBounds();
-        g.setColour (ink);
+        g.setColour (frame);
         g.fillRoundedRectangle (r.toFloat(), 8.0f);
         r.reduce (8, 8);
         g.setColour (screenLight);
