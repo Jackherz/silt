@@ -371,3 +371,26 @@ TEST_CASE ("Space: closing the sends goes back to bypass, without an old tail la
     for (const float x : silent.left)
         REQUIRE (x == 0.0f);
 }
+
+TEST_CASE ("Space: DUCK dips the repeats and tail while sound comes in, and lets them bloom after")
+{
+    // A loud second of noise, then silence. What SPACE adds, during and after.
+    const auto added = [] (float duck)
+    {
+        SpaceParams p = reverbOnly (3.0f);
+        p.duck = duck;
+        auto s = noise ((int) rate * 2, 0.5f);
+        for (size_t i = (size_t) rate; i < s.left.size(); ++i)
+            s.left[i] = s.right[i] = 0.0f;
+        const auto dry = s;
+        const auto out = processed (s, p);
+        std::vector<float> wet (out.left.size());
+        for (size_t i = 0; i < wet.size(); ++i)
+            wet[i] = out.left[i] - dry.left[i];
+        return std::make_pair (rms (wet, (int) (0.5 * rate), (int) rate), rms (wet, (int) (1.6 * rate), (int) (1.9 * rate)));
+    };
+    const auto [playingOff, afterOff] = added (0.0f);
+    const auto [playingOn, afterOn] = added (1.0f);
+    CHECK (db (playingOn) < db (playingOff) - 15.0);      // ducked hard while it plays
+    CHECK (db (afterOn) > db (afterOff) - 3.0);           // and back once it stops
+}

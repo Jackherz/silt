@@ -39,6 +39,7 @@ add_library(silt_core STATIC
     core/src/LevelMeter.cpp
     core/src/Modulator.cpp
     core/src/Onsets.cpp
+    core/src/Pitches.cpp
     core/src/Resonator.cpp
     core/src/SampleBuffer.cpp
     core/src/Snap.cpp

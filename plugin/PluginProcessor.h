@@ -109,6 +109,10 @@ public:
     // spaceTraceSize values.
     static constexpr int spaceTraceSize = 8192, spaceTraceStep = 64;
     std::atomic<unsigned> spaceTraceCount { 0 };
+
+    // The sample's strongest pitches (Hz, low to high), for the resonator's NOTES: SAMPLE.
+    std::array<std::atomic<float>, 12> samplePitchHz {};
+    std::atomic<int> samplePitchCount { 0 };
     float spaceTraceAt (unsigned index) const noexcept { return spaceTrace[index & (spaceTraceSize - 1)].load (std::memory_order_relaxed); }
 
     // The live scope: the sound going into one module and coming out of it,
@@ -279,6 +283,9 @@ private:
     std::array<std::atomic<float>, spaceTraceSize> spaceTrace {};
     int spaceTraceFill = 0;        // audio thread: samples into the current step
     float spaceTracePeak = 0.0f;
+    int followRoot = -1;   // audio thread: FOLLOW's lowest held note and the chord above it
+    std::array<float, 8> followChord {};
+    int followChordSize = 0;
     bool spaceNoteStarted = false;   // a note began since SPACE last ran: restart the trace
     void writeScope (std::array<std::atomic<float>, scopeSize>&, const float* l, const float* r, int count) noexcept;
     float sampleGainNow = 1.0f;   // audio thread: the gain ramped to

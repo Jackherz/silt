@@ -3,6 +3,7 @@
 
 #include <silt/Color.h>
 #include <silt/Filter.h>
+#include <silt/Pitches.h>
 #include <silt/Resonator.h>
 
 #include <cmath>
@@ -800,4 +801,40 @@ TEST_CASE ("Resonator: DRIFT makes each band's level wander over time")
     };
     CHECK (spread (0.0f) < 1.1f);
     CHECK (spread (1.0f) > 1.5f);
+}
+
+TEST_CASE ("Resonator: NOTES SAMPLE rings the sample's pitches; FOLLOW with a chord rings each note")
+{
+    // The pitch finder hears a three-note chord.
+    std::vector<float> chord ((size_t) rate * 2);
+    for (size_t i = 0; i < chord.size(); ++i)
+        for (const double hz : { 220.0, 277.18, 329.63 })
+            chord[i] += 0.2f * (float) std::sin (2.0 * 3.141592653589793 * hz * (double) i / rate);
+    const auto found = findPitches (chord, rate, 12);
+    REQUIRE (found.size() == 3);
+    CHECK (std::abs (found[0] - 220.0) < 1.5);
+    CHECK (std::abs (found[1] - 277.18) < 1.5);
+    CHECK (std::abs (found[2] - 329.63) < 1.5);
+
+    // SAMPLE: bands at those pitches, over the root.
+    ResonatorParams p;
+    p.notes = ResonatorNotes::sample;
+    p.rootNote = 57.0f;   // A3, 220 Hz
+    p.sampleCount = 3;
+    for (size_t i = 0; i < 3; ++i)
+        p.sampleHz[i] = (float) found[i];
+    std::array<double, Resonator::maxBands> r {};
+    REQUIRE (Resonator::bandRatios (p, r) == 3);
+    CHECK (std::abs (r[1] * 220.0 - 277.18) < 2.0);
+
+    // A chord under FOLLOW (SCALE notes): the chord's notes, in octaves.
+    ResonatorParams c;
+    c.rootNote = 48.0f;
+    c.rangeOctaves = 1.0f;
+    c.chord = { 4.0f, 7.0f };
+    c.chordSize = 2;
+    const int n = Resonator::bandRatios (c, r);
+    REQUIRE (n == 6);   // C, E, G and each an octave up: every note gets RANGE above itself
+    CHECK (std::abs (r[1] - std::pow (2.0, 4.0 / 12.0)) < 1.0e-6);
+    CHECK (std::abs (r[2] - std::pow (2.0, 7.0 / 12.0)) < 1.0e-6);
 }

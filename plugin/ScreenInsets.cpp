@@ -145,7 +145,10 @@ void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltPr
 {
     silt::ResonatorParams p;
     p.rootNote = live (silt, "resTune");
-    p.notes = (silt::ResonatorNotes) juce::jlimit (0, 2, juce::roundToInt (live (silt, "resNotes")));
+    p.notes = (silt::ResonatorNotes) juce::jlimit (0, 3, juce::roundToInt (live (silt, "resNotes")));
+    p.sampleCount = juce::jlimit (0, (int) p.sampleHz.size(), silt.samplePitchCount.load());
+    for (int i = 0; i < p.sampleCount; ++i)
+        p.sampleHz[(size_t) i] = silt.samplePitchHz[(size_t) i].load() * std::pow (2.0f, (p.rootNote - 48.0f) / 12.0f);
     p.scale = (silt::Scale) juce::jlimit (0, silt::scaleCount - 1, juce::roundToInt (live (silt, "scale")));
     p.key = juce::roundToInt (live (silt, "key"));
     p.rangeOctaves = live (silt, "resRange");
@@ -156,7 +159,7 @@ void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltPr
     const float spread = live (silt, "resSpread") * 0.01f, oddEven = live (silt, "resOddEven") * 0.01f;
     const float drift = live (silt, "resDrift") * 0.01f, damp = live (silt, "resDamp") * 0.01f;
     const float resonance = live (silt, "resReso") * 0.01f;
-    const char* notes[] { "SCALE", "HARMONICS", "BELL" };
+    const char* notes[] { "SCALE", "HARMONICS", "BELL", "SAMPLE" };
     const bool secondHalf = silt.resonatorHalf.load() == 1;
     auto plot = frame (g, area, secondHalf ? "RESONATOR 2/2 - " + juce::String (p.bandCount) + " BANDS  Q " + juce::String (juce::roundToInt (8.0 * std::pow (15.0, (double) resonance)))
                                                  + (drift > 0.0f ? "  DRIFT " + juce::String (juce::roundToInt (drift * 100.0f)) + "%" : juce::String())
@@ -311,6 +314,7 @@ void drawColor (juce::Graphics& g, juce::Rectangle<float> area, const SiltProces
 struct SpaceView
 {
     bool synced, frozen, pingPong;
+    int duck;   // 0 off … 3 heavy
     float delay, feedback, delayLevel, reverbLevel, decay, size, tone, shimmer;
     float preDelay, early, highDecay;
     std::vector<float> taps;   // each repeat's level, before DELAY
@@ -331,6 +335,7 @@ struct SpaceView
         shimmer = live (silt, "spaceShimmer") * 0.01f;
         frozen = live (silt, "spaceFreeze") > 0.5f;
         pingPong = juce::roundToInt (live (silt, "spaceMode")) == 0;
+        duck = juce::roundToInt (live (silt, "spaceDuck"));
         preDelay = 0.035f * size;
         early = 0.025f + 0.125f * size;
         highDecay = std::max (0.05f, (0.15f + 0.75f * tone) * decay);
@@ -394,6 +399,7 @@ void drawSpace (juce::Graphics& g, juce::Rectangle<float> area, const SiltProces
         { "HIGHS FADE", s.frozen ? juce::String ("HOLD") : juce::String (s.highDecay, 2) + " S", reverbOn },
         { "SHIMMER", s.shimmer > 0.0f ? juce::String (juce::roundToInt (s.shimmer * 100.0f)) + "%" : juce::String ("OFF"), reverbOn && s.shimmer > 0.0f },
         { "REVERB", reverbOn ? juce::String (juce::roundToInt (s.reverbLevel * 100.0f)) + "%" : juce::String ("OFF"), reverbOn },
+        { "DUCK", s.duck > 0 ? text (silt, "spaceDuck", (float) s.duck) : juce::String ("OFF"), (delayOn || reverbOn) && s.duck > 0 },
     };
     const int columns = plot.getWidth() > 260.0f ? 2 : 1;
     const int perColumn = (int) std::ceil ((float) std::size (rows) / (float) columns);
@@ -800,7 +806,7 @@ std::vector<float> insetKey (int page, const SiltProcessor& silt, const ModRail&
             key.push_back ((float) silt.resonatorHalf.load());
             break;
         case layout::color:     add ({ "colorDrive", "colorBits", "colorTone", "colorRate", "colorNoise", "colorComp", "colorWow" }); break;
-        case layout::space:     add ({ "spaceTime", "spaceSync", "spaceDiv", "spaceFeedback", "spaceDelay", "spaceReverb", "spaceDecay", "spaceSize", "spaceMode", "spaceTone", "spaceShimmer", "spaceFreeze" }); break;
+        case layout::space:     add ({ "spaceTime", "spaceSync", "spaceDiv", "spaceFeedback", "spaceDelay", "spaceReverb", "spaceDecay", "spaceSize", "spaceMode", "spaceTone", "spaceShimmer", "spaceFreeze", "spaceDuck" }); break;
         case layout::pitch:     add ({ "scale", "key", "randPitch", "patternDepth", "patternSteps", "patternSeed" }); break;
         case layout::mod:
         {

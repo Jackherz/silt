@@ -8,8 +8,8 @@ namespace silt
 {
 
 // Where the bands sit: on the PITCH page's scale and key, on the harmonic
-// series, or on inharmonic bell partials.
-enum class ResonatorNotes { scale, harmonics, bell };
+// series, on inharmonic bell partials, or on the sample's own strongest pitches.
+enum class ResonatorNotes { scale, harmonics, bell, sample };
 
 struct ResonatorParams
 {
@@ -32,6 +32,16 @@ struct ResonatorParams
     float oddEven = 0.0f;           // −1: only the 1st, 3rd, 5th… bands; +1: only the 2nd, 4th…
     float drive = 0.0f;             // saturates the sound going in, so it excites more of the bank
     float damp = 0.0f;              // high bands ring shorter (on top of BRIGHT)
+
+    // SAMPLE: the sample's pitches (Hz, low to high), already moved by TUNE
+    // or the note FOLLOW plays; RANGE keeps those within its octaves of the lowest.
+    std::array<float, 12> sampleHz {};
+    int sampleCount = 0;
+
+    // FOLLOW with a chord held: each held note above the lowest (rootNote), in
+    // semitones over it. Every note gets its own set of bands, shared out.
+    std::array<float, 8> chord {};
+    int chordSize = 0;
 };
 
 // A bank of up to 12 ringing band-pass filters (TPT state-variable, in double

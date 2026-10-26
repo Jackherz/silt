@@ -209,7 +209,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                          + (cents == 0 ? juce::String() : (cents > 0 ? " +" : " ") + juce::String (cents) + "c");
                 }),
                 std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "resNotes", 1 }, "Resonator notes",
-                                                              juce::StringArray { "Scale", "Harmonics", "Bell" }, 0),
+                                                              juce::StringArray { "Scale", "Harmonics", "Bell", "Sample" }, 0),
                 withUnit ("resRange", "Resonator range", Range (1.0f, 4.0f, 0.01f), 2.0f,
                           [] (float v, int) { return juce::String (v, 1) + " oct"; }),
                 withUnit ("resDecay", "Resonator decay", skewed (0.05f, 20.0f, 1.5f), 1.5f,
@@ -305,7 +305,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 }),
                 percent ("spaceShimmer", "Reverb shimmer", 0.0f),
                 percent ("spaceReverb", "Reverb level", 0.0f),
-                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "spaceFreeze", 1 }, "Space freeze", false));
+                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "spaceFreeze", 1 }, "Space freeze", false),
+                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "spaceDuck", 1 }, "Space duck",
+                                                              juce::StringArray { "Off", "Light", "Medium", "Heavy" }, 0));
 
     // CHAIN: the order the four modules run in, one of the 24.
     {
@@ -432,7 +434,7 @@ struct SiltProcessor::RawParams
         colorComp = p ("colorComp"); colorNoise = p ("colorNoise"); colorWow = p ("colorWow"); colorMix = p ("colorMix");
         spaceTime = p ("spaceTime"); spaceSync = p ("spaceSync"); spaceDiv = p ("spaceDiv"); spaceFeedback = p ("spaceFeedback");
         spaceMode = p ("spaceMode"); spaceDelay = p ("spaceDelay"); spaceSize = p ("spaceSize"); spaceDecay = p ("spaceDecay");
-        spaceTone = p ("spaceTone"); spaceShimmer = p ("spaceShimmer"); spaceReverb = p ("spaceReverb"); spaceFreeze = p ("spaceFreeze");
+        spaceTone = p ("spaceTone"); spaceShimmer = p ("spaceShimmer"); spaceReverb = p ("spaceReverb"); spaceFreeze = p ("spaceFreeze"); spaceDuck = p ("spaceDuck");
         monitor = p ("monitor"); mix = p ("mix");   // one of these is null, per build
         chainOrder = p ("chainOrder");
     }
@@ -449,7 +451,7 @@ struct SiltProcessor::RawParams
     std::atomic<float>* filterMode, *filterCutoff, *filterReso, *filterMorph, *filterDrive, *filterEnv, *filterKey, *filterMix;
     std::atomic<float>* colorDrive, *colorTone, *colorBits, *colorRate, *colorComp, *colorNoise, *colorWow, *colorMix;
     std::atomic<float>* spaceTime, *spaceSync, *spaceDiv, *spaceFeedback, *spaceMode, *spaceDelay, *spaceSize, *spaceDecay;
-    std::atomic<float>* spaceTone, *spaceShimmer, *spaceReverb, *spaceFreeze;
+    std::atomic<float>* spaceTone, *spaceShimmer, *spaceReverb, *spaceFreeze, *spaceDuck;
 };
 
 juce::AudioProcessor::BusesProperties SiltProcessor::makeBuses()
@@ -576,6 +578,8 @@ void SiltProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamples
         modulators[m].reset (0x5117 + m);
     modContext = {};
     lastNote = -1;
+    followRoot = -1;
+    followChordSize = 0;
     liveColumn = -1;
     liveColumnPeak = 0.0f;
     for (auto& c : livePeaks)
@@ -703,8 +707,22 @@ silt::ResonatorParams SiltProcessor::readResonatorParams (const silt::GrainParam
 {
     const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
     silt::ResonatorParams p;
-    p.rootNote = v (raw->resFollow) > 0.5f && lastNote >= 0 ? (float) lastNote : v (raw->resTune);
-    p.notes = (silt::ResonatorNotes) juce::jlimit (0, 2, (int) v (raw->resNotes));
+    const bool follow = v (raw->resFollow) > 0.5f && followRoot >= 0;
+    p.rootNote = follow ? (float) followRoot : v (raw->resTune);
+    p.notes = (silt::ResonatorNotes) juce::jlimit (0, 3, (int) v (raw->resNotes));
+    if (follow)
+    {
+        p.chord = followChord;
+        p.chordSize = followChordSize;
+    }
+
+    // SAMPLE: the sample's pitches, moved by TUNE from its default (C2), or
+    // with FOLLOW by the note played against ROOT (as the grains are).
+    const float shift = follow ? (float) followRoot - v (raw->root) : v (raw->resTune) - 48.0f;
+    const float ratio = std::pow (2.0f, shift / 12.0f);
+    p.sampleCount = juce::jlimit (0, (int) p.sampleHz.size(), samplePitchCount.load (std::memory_order_relaxed));
+    for (int i = 0; i < p.sampleCount; ++i)
+        p.sampleHz[(size_t) i] = samplePitchHz[(size_t) i].load (std::memory_order_relaxed) * ratio;
     p.scale = grain.scale;
     p.key = grain.key;
     p.rangeOctaves = v (raw->resRange);
@@ -772,6 +790,8 @@ silt::SpaceParams SiltProcessor::readSpaceParams() const noexcept
     p.shimmer = v (raw->spaceShimmer) * 0.01f;
     p.reverbLevel = v (raw->spaceReverb) * 0.01f;
     p.freeze = v (raw->spaceFreeze) > 0.5f;
+    static constexpr float duckAmounts[] { 0.0f, 0.35f, 0.65f, 1.0f };
+    p.duck = duckAmounts[juce::jlimit (0, 3, juce::roundToInt (v (raw->spaceDuck)))];
     return p;
 }
 
@@ -929,6 +949,20 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
                 held = false;
                 modContext.heldNotes = juce::jmax (0, modContext.heldNotes - 1);
             }
+        }
+        if (first != last && modContext.heldNotes > 0)
+        {
+            // FOLLOW's chord: the held notes, lowest first (kept after release, so the bands ring out).
+            followRoot = -1;
+            followChordSize = 0;
+            for (int note = 0; note < 128; ++note)
+                if (heldKeys[(size_t) note])
+                {
+                    if (followRoot < 0)
+                        followRoot = note;
+                    else if (followChordSize < (int) followChord.size())
+                        followChord[(size_t) followChordSize++] = (float) (note - followRoot);
+                }
         }
         float peak = 0.0f;
         for (int ch = 0; ch < capture.getNumChannels(); ++ch)
@@ -2082,6 +2116,11 @@ void SiltProcessor::installBuffer (std::unique_ptr<silt::SampleBuffer> buffer, c
     {
         const juce::ScopedLock sl (sampleLock);
         sampleZeroCrossings = buffer->getZeroCrossings();
+        const auto& pitches = buffer->getPitches();
+        const int count = juce::jmin ((int) pitches.size(), (int) samplePitchHz.size());
+        for (int i = 0; i < count; ++i)
+            samplePitchHz[(size_t) i].store ((float) pitches[(size_t) i], std::memory_order_relaxed);
+        samplePitchCount.store (count, std::memory_order_release);
         sampleTransients = buffer->getTransients();
         sampleCopy.setSize (2, frames);
         for (int ch = 0; ch < 2; ++ch)

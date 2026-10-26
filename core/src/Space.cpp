@@ -219,6 +219,7 @@ void Space::process (float* left, float* right, int numSamples, const SpaceParam
 
     const auto coefficient = [fs] (float seconds) { return 1.0f - std::exp (-1.0f / (seconds * fs)); };
     const float fast = coefficient (0.02f), timeGlide = coefficient (0.08f), slow = coefficient (0.3f), medium = coefficient (0.05f);
+    const float duckAttack = coefficient (0.01f), duckRelease = coefficient (0.12f);   // back within about half a second
     const float shimmerHighCoefficient = onePole (300.0, sampleRate), shimmerLowCoefficient = onePole (8000.0, sampleRate);
     const float energyCoefficient = coefficient (0.05f);
     const float inputHighCoefficient = onePole (80.0, sampleRate);
@@ -346,8 +347,24 @@ void Space::process (float* left, float* right, int numSamples, const SpaceParam
         const float guard = std::min (1.0f, 0.3f / std::sqrt (tankEnergy + 1.0e-12f));
         shimmerInject = softClip (0.8f * now.shimmer * guard * open * shimmerLow);
 
-        left[i] = inLeft + now.delayLevel * delayed[0] + now.reverbLevel * outputTrim * tankLeft;
-        right[i] = inRight + now.delayLevel * delayed[1] + now.reverbLevel * outputTrim * tankRight;
+        // DUCK: the sends' output dips by up to 30 dB as the input rises
+        // from −42 to −6 dBFS, and blooms back as it falls away.
+        float wetGain = 1.0f;
+        if (duckNow > 0.0f || p.duck > 0.0f)
+        {
+            glide (duckNow, std::clamp (p.duck, 0.0f, 1.0f), fast);
+            const float level = std::max (std::abs (inLeft), std::abs (inRight));
+            duckEnvelope += (level > duckEnvelope ? duckAttack : duckRelease) * (level - duckEnvelope);
+            if (i % 16 == 0)
+            {
+                const float db = 20.0f * std::log10 (std::max (duckEnvelope, 1.0e-6f));
+                duckGain = std::pow (10.0f, -1.5f * duckNow * std::clamp ((db + 42.0f) / 36.0f, 0.0f, 1.0f));
+            }
+            wetGain = duckGain;
+        }
+
+        left[i] = inLeft + wetGain * (now.delayLevel * delayed[0] + now.reverbLevel * outputTrim * tankLeft);
+        right[i] = inRight + wetGain * (now.delayLevel * delayed[1] + now.reverbLevel * outputTrim * tankRight);
     }
 
     if (levelTarget <= 0.0f && now.delayLevel <= 0.0f && now.reverbLevel <= 0.0f)

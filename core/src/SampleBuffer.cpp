@@ -1,5 +1,6 @@
 #include <silt/SampleBuffer.h>
 #include <silt/Onsets.h>
+#include <silt/Pitches.h>
 
 #include <algorithm>
 #include <cmath>
@@ -28,6 +29,7 @@ void SampleBuffer::analyse()
             zeroCrossings.push_back (i);
 
     transients = findOnsets (mono, sampleRate);
+    pitches = findPitches (mono, sampleRate, 12);
 }
 
 } // namespace silt

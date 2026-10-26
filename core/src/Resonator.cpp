@@ -19,46 +19,82 @@ double noteToHz (double note) noexcept { return 440.0 * std::pow (2.0, (note - 6
 int Resonator::bandRatios (const ResonatorParams& p, std::array<double, maxBands>& ratios) noexcept
 {
     const double top = std::pow (2.0, std::clamp ((double) p.rangeOctaves, 0.0, 4.0)) * (1.0 + 1.0e-9);
-    std::array<double, 64> candidates {};
+    std::array<double, 160> candidates {};
     int count = 0;
-    const auto add = [&] (double ratio)
+    const auto add = [&] (double ratio, double limit)
     {
-        if (ratio <= top && count < (int) candidates.size())
+        if (ratio <= limit && count < (int) candidates.size())
             candidates[(size_t) count++] = ratio;
     };
+    const int chordSize = std::clamp (p.chordSize, 0, (int) p.chord.size());
 
-    switch (p.notes)
+    // One note's bands, `offset` semitones over the root.
+    const auto bandsFor = [&] (double offset)
     {
-        case ResonatorNotes::scale:
+        const double shift = std::pow (2.0, offset / 12.0), limit = top * shift;
+        switch (p.notes)
         {
-            // The root snaps into the scale; with no scale, the root and its fifths.
-            const bool noScale = p.scale == Scale::off;
-            const int root = noScale ? (int) std::lround (p.rootNote)
-                                     : (int) std::lround (snapToScale (std::round (p.rootNote), p.scale, p.key));
-            const int key = noScale ? root : p.key;
-            const auto mask = scaleMask (noScale ? Scale::fifths : p.scale);
-            for (int s = 0; s <= 48; ++s)
+            case ResonatorNotes::scale:
             {
-                const int degree = ((root + s - key) % 12 + 12) % 12;
-                if ((mask >> degree & 1u) != 0)
-                    add (std::pow (2.0, (root + s - (double) p.rootNote) / 12.0));
+                if (chordSize > 0)
+                {
+                    // A chord rings its own notes, in octaves.
+                    for (double octave = 1.0; octave * shift <= limit; octave *= 2.0)
+                        add (octave * shift, limit);
+                    break;
+                }
+                // The root snaps into the scale; with no scale, the root and its fifths.
+                const bool noScale = p.scale == Scale::off;
+                const int root = noScale ? (int) std::lround (p.rootNote)
+                                         : (int) std::lround (snapToScale (std::round (p.rootNote), p.scale, p.key));
+                const int key = noScale ? root : p.key;
+                const auto mask = scaleMask (noScale ? Scale::fifths : p.scale);
+                for (int s = 0; s <= 48; ++s)
+                {
+                    const int degree = ((root + s - key) % 12 + 12) % 12;
+                    if ((mask >> degree & 1u) != 0)
+                        add (std::pow (2.0, (root + s - (double) p.rootNote) / 12.0), limit);
+                }
+                break;
             }
-            break;
+            case ResonatorNotes::harmonics:
+                for (int n = 1; n <= 16; ++n)
+                    add ((double) n * shift, limit);
+                break;
+            case ResonatorNotes::bell:
+                for (const double r : bellPartials)
+                    add (r * shift, limit);
+                for (const double r : bellPartials)
+                    add (2.0 * r * shift, limit);
+                break;
+            case ResonatorNotes::sample:
+            {
+                const int n = std::clamp (p.sampleCount, 0, (int) p.sampleHz.size());
+                if (n == 0)
+                {
+                    add (shift, limit);   // nothing found: the root alone
+                    break;
+                }
+                const double rootHz = 440.0 * std::pow (2.0, ((double) p.rootNote - 69.0) / 12.0);
+                const double lowest = p.sampleHz[0] / rootHz;
+                for (int i = 0; i < n; ++i)
+                    add (p.sampleHz[(size_t) i] / rootHz * shift, lowest * limit);
+                break;
+            }
         }
-        case ResonatorNotes::harmonics:
-            for (int n = 1; n <= 16; ++n)
-                add ((double) n);
-            break;
-        case ResonatorNotes::bell:
-        {
-            for (const double r : bellPartials)
-                add (r);
-            for (const double r : bellPartials)
-                add (2.0 * r);
-            std::sort (candidates.begin(), candidates.begin() + count);
-            break;
-        }
-    }
+    };
+
+    bandsFor (0.0);
+    for (int c = 0; c < chordSize; ++c)
+        bandsFor ((double) p.chord[(size_t) c]);
+    std::sort (candidates.begin(), candidates.begin() + count);
+
+    // The same band twice (a chord's shared notes and octaves) rings once.
+    int distinct = 0;
+    for (int i = 0; i < count; ++i)
+        if (distinct == 0 || candidates[(size_t) i] > candidates[(size_t) distinct - 1] * 1.003)
+            candidates[(size_t) distinct++] = candidates[(size_t) i];
+    count = distinct;
 
     // More than fit: an even pick from lowest to highest.
     const int n = std::min ({ count, maxBands, std::max (1, p.bandCount) });
@@ -111,6 +147,10 @@ void Resonator::updateCoefficients (const ResonatorParams& target, bool snap) no
     smoothed.bandCount = target.bandCount;
     smoothed.rootNote = target.rootNote;   // the band frequencies glide instead
     smoothed.notes = target.notes;
+    smoothed.sampleHz = target.sampleHz;
+    smoothed.sampleCount = target.sampleCount;
+    smoothed.chord = target.chord;
+    smoothed.chordSize = target.chordSize;
     smoothed.scale = target.scale;
     smoothed.key = target.key;
     const auto& p = smoothed;

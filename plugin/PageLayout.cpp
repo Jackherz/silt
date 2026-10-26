@@ -102,7 +102,7 @@ std::vector<Entry> build (bool instrument)
     const Shown firstHalf = [] (const Context& c) { return c.resonatorHalf == 0; };
     const Shown secondHalf = [] (const Context& c) { return c.resonatorHalf == 1; };
     knob (resonator, 0, "resTune", "TUNE", firstHalf);
-    menu (resonator, 1, "resNotes", "NOTES", { "SCALE", "HARMONICS", "BELL" }, firstHalf);
+    menu (resonator, 1, "resNotes", "NOTES", { "SCALE", "HARMONICS", "BELL", "SAMPLE" }, firstHalf);
     knob (resonator, 2, "resRange", "RANGE", firstHalf);
     knob (resonator, 3, "resDecay", "DECAY", firstHalf);
     knob (resonator, 4, "resBright", "BRIGHT", firstHalf);
@@ -153,6 +153,7 @@ std::vector<Entry> build (bool instrument)
     under (Kind::underButton, space, 0, "spaceSync", 60, {}, "SYNC");
     under (Kind::underMenu, space, 1, "spaceMode", 104, { "PING-PONG", "STEREO" }, {});
     under (Kind::underButton, space, 4, "spaceFreeze", 72, {}, "FREEZE");
+    under (Kind::underMenu, space, 7, "spaceDuck", 104, { "NO DUCK", "DUCK LOW", "DUCK MID", "DUCK HIGH" }, {});
 
     // MOD: the shown modulator (picked on the rail, or by knob 1), its type,
     // five settings for that type, and ASSIGN (arms it for the controller).

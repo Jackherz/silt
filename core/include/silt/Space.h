@@ -20,6 +20,7 @@ struct SpaceParams
     float shimmer = 0.0f;         // 0…1: octave-up feedback into the reverb
     float reverbLevel = 0.0f;     // 0…1, a send
     bool freeze = false;          // hold the reverb tail and the delay loop
+    float duck = 0.0f;            // 0…1: the repeats and the tail dip while sound comes in (up to 30 dB)
 };
 
 // SPACE: a tape-style stereo delay feeding a reverb. Both are sends added to
@@ -99,6 +100,9 @@ private:
     double shiftPhase = 0.0;
     float shimmerHigh = 0.0f, shimmerLow = 0.0f, tankEnergy = 0.0f;
     float shimmerInject = 0.0f;   // fed into the tank on the next sample
+
+    // DUCK: the input's level (fast up, back down in about half a second) and the gain it sets.
+    float duckEnvelope = 0.0f, duckGain = 1.0f, duckNow = 0.0f;
 };
 
 } // namespace silt
