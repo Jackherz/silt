@@ -132,6 +132,14 @@ Targets are the continuous and stepped parameters; switches (menus, buttons),
 the pattern seed and MACRO knobs aren't. Modulation updates every 64 samples (the
 knobs' own smoothing takes it from there); routes are saved with the set.
 
+**Screen insets:** the screen's bottom-right corner draws the open page as a picture,
+from the modulated values, so it moves with modulation: FILTER the response curve
+(slope, morph, resonance, mix, cutoff line), RESONATOR the bands (across by pitch,
+height level, width ring time), COLOR the drive curve with the bit steps, SPACE the
+delay taps (alternating sides for ping-pong, each one FEEDBACK quieter) over the
+reverb tail, PITCH the scale on a keyboard and the pattern's steps, MOD the shown
+modulator (one cycle of a WAVE, an ENVELOPE's shape, or the trace of the others).
+
 **Presets** (header: ◀ name ▶, SAVE): a preset is the sound (every parameter, the
 modulation routes, the shown modulator), not the sample, the controller mapping or
 the window. Eight factory presets are built in (Init, Glass Cloud, Tape Choir, Rust

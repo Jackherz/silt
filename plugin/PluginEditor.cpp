@@ -3,6 +3,7 @@
 #include "ModColours.h"
 #include "PanelLook.h"
 #include "Presets.h"
+#include "ScreenInsets.h"
 
 using namespace silt::ui;
 namespace layout = silt::layout;
@@ -229,6 +230,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addAndMakeVisible (*rail);
     presetBar = std::make_unique<PresetBar> (silt);
     addAndMakeVisible (*presetBar);
+    screen->drawInset = [this] (juce::Graphics& g, juce::Rectangle<float> area) { return drawPageInset (g, area, page, silt, *rail); };
 
     for (const auto& entry : layout::entries (SiltProcessor::isInstrument))
         buildControl (entry);
@@ -917,6 +919,13 @@ void SiltEditor::timerCallback()
                     c->slider->repaint();
                     break;
                 }
+    // The screen's corner picture: redrawn when what it shows changes.
+    if (auto key = insetKey (page, silt, *rail); key != insetSeen)
+    {
+        insetSeen = std::move (key);
+        screen->repaintInset();
+    }
+
     std::array<float, SiltProcessor::numModulators> stripes {};
     for (int m = 0; m < SiltProcessor::numModulators; ++m)
         stripes[(size_t) m] = silt.modOutputs[(size_t) m].load();

@@ -85,7 +85,8 @@ set(SILT_PLUGIN_SOURCES
     plugin/PageLayout.cpp
     plugin/PluginEditor.cpp
     plugin/PluginProcessor.cpp
-    plugin/Presets.cpp)
+    plugin/Presets.cpp
+    plugin/ScreenInsets.cpp)
 
 # Host check: loads a built VST3 and round-trips a sample through its state.
 juce_add_console_app(silt_hostcheck PRODUCT_NAME "silt-hostcheck")

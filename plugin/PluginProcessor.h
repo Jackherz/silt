@@ -73,6 +73,7 @@ public:
     void startLearn() noexcept { learnStep.store (0); }
     void cancelLearn() noexcept { learnStep.store (-1); }
     juce::String slotParameter (int page, int slot) const;   // "" for an empty slot
+    static double divisionQuarters (int index);              // a synced note value, in quarter notes
     silt::layout::Context layoutContext() const;             // the page table's view of the parameters
     void applyControllerMoves();                             // message thread (also the timer)
     void newPattern();

@@ -141,6 +141,7 @@ private:
     std::unique_ptr<silt::ui::RouteList> routeList;
     std::unique_ptr<PresetBar> presetBar;
     juce::String presetShown;
+    std::vector<float> insetSeen;
     juce::TooltipWindow tooltips { this, 600 };
 
     std::vector<std::unique_ptr<Control>> controls;

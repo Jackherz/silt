@@ -1518,6 +1518,11 @@ silt::layout::Context SiltProcessor::layoutContext() const
     return c;
 }
 
+double SiltProcessor::divisionQuarters (int index)
+{
+    return ::divisionQuarters[juce::jlimit (0, (int) std::size (::divisionQuarters) - 1, index)];
+}
+
 void SiltProcessor::newPattern()
 {
     if (auto* seed = dynamic_cast<juce::RangedAudioParameter*> (params.getParameter ("patternSeed")))

@@ -66,7 +66,33 @@ public:
 
     void resized() override { waveCache = {}; }
 
+    // The open page's picture, in the bottom-right corner over the grain roll
+    // (drawInset draws it and returns false when the page has none).
+    std::function<bool (juce::Graphics&, juce::Rectangle<float>)> drawInset;
+    void repaintInset() { repaint (insetArea()); }
+
     void paint (juce::Graphics& g) override
+    {
+        paintScreen (g);
+        if (drawInset != nullptr)
+        {
+            const auto area = insetArea().toFloat();
+            juce::Graphics::ScopedSaveState state (g);
+            g.reduceClipRegion (area.toNearestInt());
+            drawInset (g, area);
+        }
+    }
+
+    // Right-aligned at the bottom: the grain roll's height plus the status line.
+    juce::Rectangle<int> insetArea() const
+    {
+        auto content = getLocalBounds().reduced (8 + 12 + 10, 8 + 8 + 6);
+        const int rollAndStatus = juce::roundToInt ((float) (content.getHeight() - 36) * 0.36f) + 20;
+        return content.removeFromRight (juce::jmin (330, content.getWidth() * 42 / 100)).removeFromBottom (rollAndStatus);
+    }
+
+private:
+    void paintScreen (juce::Graphics& g)
     {
         auto r = getLocalBounds();
         g.setColour (ink);
@@ -133,7 +159,6 @@ public:
         g.drawText (numViews > 0 ? hud : juce::String ("READY."), bottom, juce::Justification::centredLeft);
     }
 
-private:
     void drawWave (juce::Graphics& g, juce::Rectangle<int> area)
     {
         if (! waveCache.isValid() || waveCache.getWidth() != area.getWidth() || waveCache.getHeight() != area.getHeight())
