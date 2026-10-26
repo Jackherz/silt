@@ -45,11 +45,64 @@ void SiltEditor::FineSlider::endDepth()
     depthModulatorNow = -1;
 }
 
+// The rings are handles: a press on one drags its depth (Shift+Alt-click
+// flips its polarity). With a modulator armed, the ring just outside the
+// knob's routes is its handle, so dragging it makes the route.
+int SiltEditor::FineSlider::modulatorAtRing (juce::Point<float> p) const
+{
+    const int rings = (int) ringModulators.size() + (armedHintModulator >= 0 ? 1 : 0);
+    if (target < 0 || rings == 0 || ringBase <= 0.0f)
+        return -1;
+    const float d = p.getDistanceFrom (ringCentre);
+    if (d < ringBase - 4.0f || d > ringBase + 3.0f * (float) (rings - 1) + 5.0f)
+        return -1;
+    const int ring = juce::jlimit (0, rings - 1, juce::roundToInt ((d - ringBase) / 3.0f));
+    return ring < (int) ringModulators.size() ? ringModulators[(size_t) ring] : armedHintModulator;
+}
+
+void SiltEditor::FineSlider::mouseMove (const juce::MouseEvent& e)
+{
+    const int m = modulatorAtRing (e.position);
+    setMouseCursor (m >= 0 ? juce::MouseCursor::UpDownResizeCursor : juce::MouseCursor::NormalCursor);
+    const int ring = m < 0 ? -1 : (int) (std::find (ringModulators.begin(), ringModulators.end(), m) - ringModulators.begin());
+    if (ring != hoverRing)
+    {
+        hoverRing = ring;
+        repaint();
+    }
+    if (ringHover)
+        ringHover (m);
+    juce::Slider::mouseMove (e);
+}
+
+void SiltEditor::FineSlider::mouseExit (const juce::MouseEvent& e)
+{
+    if (hoverRing != -1)
+    {
+        hoverRing = -1;
+        repaint();
+    }
+    if (ringHover)
+        ringHover (-2);   // left the knob
+    juce::Slider::mouseExit (e);
+}
+
 void SiltEditor::FineSlider::mouseDown (const juce::MouseEvent& e)
 {
     if (e.mods.isPopupMenu() && showMenu != nullptr)
     {
         showMenu();
+        return;
+    }
+    if (const int m = modulatorAtRing (e.position); m >= 0)
+    {
+        if (e.mods.isShiftDown() && e.mods.isAltDown())
+        {
+            if (togglePolarity)
+                togglePolarity (m);
+            return;
+        }
+        beginDepth (m);
         return;
     }
     if (e.mods.isAltDown() && target >= 0)
@@ -242,6 +295,13 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     };
     addAndMakeVisible (learnButton);
 
+    // UNDO / REDO: knob, menu, button and modulation changes (also Cmd/Ctrl+Z,
+    // Shift+Cmd/Ctrl+Z, which some hosts keep for themselves).
+    undoButton.onClick = [this] { stepUndo (false); };
+    redoButton.onClick = [this] { stepUndo (true); };
+    addAndMakeVisible (undoButton);
+    addAndMakeVisible (redoButton);
+
     // ROUTES: every modulation route in one list, from any page.
     routesButton.onClick = [this]
     {
@@ -371,6 +431,37 @@ void SiltEditor::wireModulation (FineSlider& s)
         repaint (header);
     };
     s.showMenu = [this, &s] { showKnobMenu (s); };
+    s.togglePolarity = [this, target, &s] (int m)
+    {
+        if (silt.routeAmount (m, target) == 0.0f)
+            return;
+        silt.beginRouteGesture();
+        silt.editRoutes ([&] { silt.setRoutePolarity (m, target, silt.routeIsBipolar (m, target) ? SiltProcessor::unipolar : SiltProcessor::bipolar); });
+        s.repaint();
+    };
+    s.ringHover = [this, target] (int m)
+    {
+        // Over a modulatable knob, the LCD says what the mouse can do there.
+        juce::String hint;
+        if (m >= 0 && silt.routeAmount (m, target) != 0.0f)
+            hint = "MOD " + juce::String (m + 1) + ": DRAG RING FOR DEPTH, SHIFT+ALT-CLICK " + (silt.routeIsBipolar (m, target) ? "+" : juce::String::charToString ((juce::juce_wchar) 0x00b1));
+        else if (m >= 0)
+            hint = "MOD " + juce::String (m + 1) + ": DRAG THIS RING TO MODULATE";
+        else if (m == -1)
+        {
+            bool routed = false;
+            for (int other = 0; other < SiltProcessor::numModulators; ++other)
+                routed = routed || silt.routeAmount (other, target) != 0.0f;
+            hint = routed ? juce::String ("DRAG A COLOURED RING FOR ITS DEPTH")
+                 : silt.armedMod.load() >= 0 ? juce::String()
+                 : juce::String ("DROP A MOD CHIP HERE, OR ARM ONE AND DRAG THE RING");
+        }
+        if (hint != hoverHint)
+        {
+            hoverHint = hint;
+            repaint (header);
+        }
+    };
 }
 
 // Right-click on a knob: each modulator's depth on it, in its colour, with
@@ -392,6 +483,10 @@ void SiltEditor::showKnobMenu (FineSlider& s)
         if (amount != 0.0f)
         {
             depthsMenu.addSeparator();
+            const bool bipolar = silt.routeIsBipolar (m, target);
+            depthsMenu.addItem (100 * (m + 1) + 97, juce::String::charToString ((juce::juce_wchar) 0x00b1) + " Bipolar: both ways round the knob", true, bipolar);
+            depthsMenu.addItem (100 * (m + 1) + 98, "+ Unipolar: one way", true, ! bipolar);
+            depthsMenu.addSeparator();
             depthsMenu.addItem (100 * (m + 1) + 99, "Remove");
             any = true;
         }
@@ -404,8 +499,8 @@ void SiltEditor::showKnobMenu (FineSlider& s)
     menu.addSeparator();
     menu.addItem (1, "Clear all modulation on this knob", any);
     menu.addItem (2, "Show all routes...");
-    menu.addItem (3, "Undo route change", silt.canUndoRoutes());
-    menu.addItem (4, "Redo route change", silt.canRedoRoutes());
+    menu.addItem (3, "Undo " + silt.undoDescription().toLowerCase(), silt.canUndoRoutes());
+    menu.addItem (4, "Redo " + silt.redoDescription().toLowerCase(), silt.canRedoRoutes());
 
     juce::Component::SafePointer<FineSlider> safe (&s);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&s), [this, target, safe] (int chosen)
@@ -417,18 +512,36 @@ void SiltEditor::showKnobMenu (FineSlider& s)
         else if (chosen == 2)
             showRoutes (-1);
         else if (chosen == 3)
-            silt.undoRoutes();
+            stepUndo (false);
         else if (chosen == 4)
-            silt.redoRoutes();
+            stepUndo (true);
         else if (chosen >= 100)
         {
             const int m = chosen / 100 - 1, i = chosen % 100;
-            silt.editRoutes ([&] { silt.setRouteAmount (m, target, i == 99 ? 0.0f : depths[i]); });
+            silt.editRoutes ([&]
+            {
+                if (i == 97 || i == 98)
+                    silt.setRoutePolarity (m, target, i == 97 ? SiltProcessor::bipolar : SiltProcessor::unipolar);
+                else
+                    silt.setRouteAmount (m, target, i == 99 ? 0.0f : depths[i]);
+            });
             lastUsedMod = m;
         }
         if (safe != nullptr)
             safe->repaint();
     });
+}
+
+// One step back or forward, with a word in the LCD about what changed.
+void SiltEditor::stepUndo (bool redo)
+{
+    const auto what = redo ? silt.redoDescription() : silt.undoDescription();
+    if (redo ? silt.redoRoutes() : silt.undoRoutes())
+    {
+        flash = (redo ? "REDO: " : "UNDO: ") + what;
+        flashUntil = juce::Time::getMillisecondCounter() + 1500;
+        repaint();
+    }
 }
 
 void SiltEditor::selectModulator (int m, bool arm)
@@ -487,17 +600,30 @@ void SiltEditor::drawModulation (juce::Graphics& g, juce::Slider& slider, juce::
     int ring = 0;
     bool anyLive = false;
     const int armed = silt.armedMod.load();
+    fine->ringCentre = centre;
+    fine->ringBase = radius;
+    fine->ringModulators.clear();
+    fine->armedHintModulator = -1;
     for (int m = 0; m < SiltProcessor::numModulators; ++m)
     {
         const float amount = silt.routeAmount (m, target);
         if (amount == 0.0f || ! silt.isModulatorEnabled (m))
             continue;   // muted: its ring is hidden (its routes stay)
         anyLive = true;
-        const bool bipolar = silt::Modulator::isBipolar (silt.readModulatorParams (m));
+        const bool bipolar = silt.routeIsBipolar (m, target);
         const float rawLo = position + (bipolar ? -std::abs (amount) : juce::jmin (0.0f, amount));
         const float rawHi = position + (bipolar ? std::abs (amount) : juce::jmax (0.0f, amount));
         const float lo = quantise (juce::jlimit (0.0f, 1.0f, rawLo)), hi = quantise (juce::jlimit (0.0f, 1.0f, rawHi));
-        drawArc (m, lo, hi, ring, armed == m ? 1.0f : 0.85f);
+        drawArc (m, lo, hi, ring, armed == m || fine->hoverRing == ring ? 1.0f : 0.85f);
+        if (fine->hoverRing == ring)   // the ring under the mouse: a grip along it
+        {
+            juce::Path grip;
+            const float rr = ringRadius (ring);
+            grip.addCentredArc (centre.x, centre.y, rr, rr, 0.0f, angleFor (lo), angleFor (hi), true);
+            g.setColour (modColour (m).base.brighter (0.4f).withAlpha (0.6f));
+            g.strokePath (grip, juce::PathStrokeType (4.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+        fine->ringModulators.push_back (m);
 
         const float r = ringRadius (ring);
         // Clamped ends get a stop across the ring.
@@ -523,12 +649,13 @@ void SiltEditor::drawModulation (juce::Graphics& g, juce::Slider& slider, juce::
     // Armed: a faint full ring on every knob it can reach but doesn't yet.
     else if (armed >= 0 && silt.routeAmount (armed, target) == 0.0f)
     {
+        fine->armedHintModulator = armed;
         juce::Path circle, stroke;
         const float r = ringRadius (ring);
         circle.addCentredArc (centre.x, centre.y, r, r, 0.0f, angleFor (0.0f), angleFor (1.0f), true);
-        const float dashes[] { 2.0f, 3.0f };
-        juce::PathStrokeType (1.0f).createDashedStroke (stroke, circle, dashes, 2);
-        g.setColour (modColour (armed).base.withAlpha (0.45f));
+        const float dashes[] { 3.0f, 2.5f };
+        juce::PathStrokeType (1.8f).createDashedStroke (stroke, circle, dashes, 2);
+        g.setColour (modColour (armed).base.withAlpha (0.8f));
         g.fillPath (stroke);
     }
 
@@ -637,11 +764,10 @@ bool SiltEditor::keyPressed (const juce::KeyPress& key)
         selectModulator ((int) (c - '1'), true);
         return true;
     }
-    // Cmd/Ctrl+Z undoes a route change, with Shift redoes it.
+    // Cmd/Ctrl+Z undoes, with Shift redoes.
     if (key.getKeyCode() == 'Z' && key.getModifiers().isCommandDown())
     {
-        if (key.getModifiers().isShiftDown() ? silt.redoRoutes() : silt.undoRoutes())
-            repaint();
+        stepUndo (key.getModifiers().isShiftDown());
         return true;
     }
     if (key == juce::KeyPress::escapeKey)
@@ -659,13 +785,17 @@ juce::String SiltEditor::statusText() const
 {
     if (depthReadout.isNotEmpty())
         return depthReadout;
+    if (flash.isNotEmpty() && juce::Time::getMillisecondCounter() < flashUntil)
+        return flash;
+    if (hoverHint.isNotEmpty())
+        return hoverHint;
 
     if (const int step = silt.learnStep.load(); step >= 0)
         return step < SiltProcessor::slotsPerPage ? "LEARN: TURN KNOB " + juce::String (step + 1)
              : step == 8 ? juce::String ("LEARN: PRESS PREVIOUS PAGE") : juce::String ("LEARN: PRESS NEXT PAGE");
 
     if (const int m = silt.armedMod.load(); m >= 0)
-        return "MOD " + juce::String (m + 1) + " ARMED: ALT-DRAG OR TURN A KNOB";
+        return "MOD " + juce::String (m + 1) + " ARMED: DRAG A KNOB'S OUTER RING";
 
     using S = SiltProcessor::CaptureState;
     switch (silt.captureState.load())
@@ -795,6 +925,9 @@ void SiltEditor::timerCallback()
         presetBar->refresh();
     }
 
+    undoButton.setEnabled (silt.canUndoRoutes());
+    redoButton.setEnabled (silt.canRedoRoutes());
+
     const bool capturing = silt.captureState.load() != SiltProcessor::CaptureState::idle;
     armButton.setButtonText (capturing ? "CANCEL" : juce::String (juce::CharPointer_UTF8 ("\xe2\x97\x8f ARM")));
 
@@ -849,6 +982,10 @@ void SiltEditor::resized()
         row.removeFromRight (8);
     }
     routesButton.setBounds (row.removeFromRight (90));
+    row.removeFromRight (8);
+    redoButton.setBounds (row.removeFromRight (60));
+    row.removeFromRight (4);
+    undoButton.setBounds (row.removeFromRight (60));
 
     auto panel = pagePanel.reduced (2);
     auto tabs = panel.removeFromTop (28);

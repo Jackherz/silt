@@ -22,6 +22,7 @@
 // or from Capture: arm, wait for the next bar, record N bars of the capture
 // source (sidechain on the instrument, input on Silt FX), then swap it in.
 class SiltProcessor final : public juce::AudioProcessor,
+                            private juce::AudioProcessorParameter::Listener,
                             private juce::Timer
 {
 public:
@@ -126,6 +127,12 @@ public:
     float routeAmount (int modulator, int target) const noexcept;
     void setRouteAmount (int modulator, int target, float amount) noexcept;
     void clearRoutesOnTarget (int target) noexcept;
+    // A route's polarity: natural follows its source; or set it bipolar (swings
+    // both ways round the knob) or unipolar (one way).
+    enum Polarity { natural = 0, unipolar = 1, bipolar = 2 };
+    void setRoutePolarity (int modulator, int target, int polarity) noexcept;
+    int routePolarityOf (int modulator, int target) const noexcept;
+    bool routeIsBipolar (int modulator, int target) const noexcept;
     void clearRoutesForModulator (int modulator) noexcept;
     int routeCount (int modulator) const noexcept;
     struct Route { int modulator, target; float amount; };
@@ -133,15 +140,21 @@ public:
     juce::String depthSpan (int modulator, int target) const;       // "480 Hz to 2.64 kHz": what it moves over
     juce::String depthText (int modulator, int target) const;       // "480 Hz to 2.64 kHz  (±35%)"
 
-    // Message thread: route edits that can be undone. `edit` changes routes; the
-    // change becomes one undo step, merged with the previous step until the next
-    // beginRouteGesture(), so a whole drag undoes at once.
+    // Undo (message thread): one history for everything you change by hand.
+    // Knob, menu and button changes are recorded per gesture (a drag, a pick, a
+    // controller turn); host automation, which has no gestures, isn't.
+    // Route edits go through editRoutes(): the change becomes one undo step,
+    // merged with the previous step until the next beginRouteGesture(), so a
+    // whole drag undoes at once.
     void editRoutes (const std::function<void()>& edit);
-    void beginRouteGesture() { routeUndo.beginNewTransaction(); }
-    bool undoRoutes() { return routeUndo.undo(); }
-    bool redoRoutes() { return routeUndo.redo(); }
+    void beginRouteGesture() { routeUndo.beginNewTransaction ("MODULATION"); }
+    bool undoRoutes() { return undoing ([this] { return routeUndo.undo(); }); }
+    bool redoRoutes() { return undoing ([this] { return routeUndo.redo(); }); }
     bool canUndoRoutes() const { return routeUndo.canUndo(); }
     bool canRedoRoutes() const { return routeUndo.canRedo(); }
+    juce::String undoDescription() const { return routeUndo.getUndoDescription(); }
+    juce::String redoDescription() const { return routeUndo.getRedoDescription(); }
+    void clearUndoHistory() { routeUndo.clearUndoHistory(); }
     float modulatedValue01 (int target) const noexcept;             // where modulation has it now
     silt::ModulatorParams readModulatorParams (int modulator) const noexcept;
     bool isModulatorEnabled (int modulator) const noexcept;         // muted: contributes nothing, routes kept
@@ -224,10 +237,23 @@ private:
     };
     std::array<bool, 128> heldKeys {};   // audio thread: which notes are down, so repeats don't miscount
     std::array<float, numModulators> globalModValues {};   // audio thread: this chunk's shared values
+    std::array<bool, numModulators> nativeBipolar {}, modEnabled {};   // audio thread, per chunk
+    std::array<std::atomic<int>, numModulators * maxTargets> routePolarity {};
+    float shapedFor (int modulator, int target, float value) const noexcept;
+    juce::String routesToString() const;
+    void routesFromString (const juce::String&);
     std::vector<int> voiceTargets;
 
-    // Route undo (message thread).
+    // Undo (message thread).
     class RoutesChange;
+    class ParameterChange;
+    void parameterValueChanged (int, float) override {}
+    void parameterGestureChanged (int index, bool starting) override;
+    bool undoing (const std::function<bool()>&);
+    bool replaying = false;                    // undo/redo or a preset is setting values: don't record
+    std::map<int, float> gestureStart;         // parameter index → value when its gesture began
+    int lastGestureParameter = -1;
+    juce::uint32 lastGestureTime = 0;
     std::vector<float> routeSnapshot() const;
     void restoreRoutes (const std::vector<float>&) noexcept;
     juce::UndoManager routeUndo { 0, 50 };

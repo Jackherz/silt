@@ -234,3 +234,24 @@ TEST_CASE ("User presets save, list, load and step")
     CHECK (silt.presetName == "Zeta");
     folder.getFile().deleteRecursively();
 }
+
+TEST_CASE ("A knob's coloured ring is a handle for its route's depth")
+{
+    EditorRig rig;
+    rig.editor->showPage (silt::layout::filter);
+    const int t = rig.silt.modulationTarget ("filterCutoff");
+    rig.silt.setRouteAmount (2, t, 0.3f);
+    auto* knob = dynamic_cast<SiltEditor::FineSlider*> (rig.editor->findKnob ("filterCutoff"));
+    REQUIRE (knob != nullptr);
+    rig.editor->createComponentSnapshot (rig.editor->getLocalBounds());   // draws the rings
+    REQUIRE (knob->ringModulators.size() == 1);
+
+    const auto onRing = knob->ringCentre.translated (0.0f, -knob->ringBase);
+    CHECK (knob->modulatorAtRing (onRing) == 2);
+    CHECK (knob->modulatorAtRing (knob->ringCentre) == -1);   // the knob itself: its value
+
+    // Armed, the next ring out belongs to the armed modulator.
+    rig.silt.armedMod.store (0);
+    rig.editor->createComponentSnapshot (rig.editor->getLocalBounds());
+    CHECK (knob->modulatorAtRing (knob->ringCentre.translated (0.0f, -(knob->ringBase + 3.0f))) == 0);
+}

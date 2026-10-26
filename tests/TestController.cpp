@@ -537,3 +537,94 @@ TEST_CASE ("Route edits undo and redo; a gesture is one step")
     REQUIRE (rig.silt.redoRoutes());
     CHECK (rig.silt.routeAmount (0, t) == 0.3f);
 }
+
+// --- Polarity and undo of values -----------------------------------------------------
+
+TEST_CASE ("A route's polarity: unipolar goes one way from a bipolar source, bipolar both ways from a unipolar one")
+{
+    Rig rig;
+    rig.set ("filterCutoff", 0.5f);
+    rig.set ("m1Shape", 1.0f);   // square: −1 or +1
+    const int t = rig.silt.modulationTarget ("filterCutoff");
+    rig.silt.setRouteAmount (0, t, 0.3f);
+    CHECK (rig.silt.routeIsBipolar (0, t));
+    rig.silt.setRoutePolarity (0, t, SiltProcessor::unipolar);
+    float lo = 1.0f, hi = 0.0f;
+    for (int i = 0; i < 100; ++i)
+    {
+        runBlocks (rig, 1);
+        lo = std::min (lo, rig.silt.modulatedValue01 (t));
+        hi = std::max (hi, rig.silt.modulatedValue01 (t));
+    }
+    CHECK_THAT (lo, WithinAbs (0.5, 1.0e-4));
+    CHECK_THAT (hi, WithinAbs (0.8, 1.0e-4));
+
+    // MACRO is unipolar; set the route bipolar and the knob's middle is "no change".
+    rig.set ("m2Type", rig.silt.params.getParameter ("m2Type")->convertTo0to1 (5.0f));
+    rig.set ("m2Macro", 0.5f);
+    const int reso = rig.silt.modulationTarget ("filterReso");
+    rig.silt.setRouteAmount (1, reso, 0.4f);
+    rig.silt.setRoutePolarity (1, reso, SiltProcessor::bipolar);
+    runBlocks (rig, 2);
+    CHECK_THAT (rig.silt.modulatedValue01 (reso), WithinAbs (rig.value ("filterReso"), 1.0e-5));
+    rig.set ("m2Macro", 0.0f);
+    runBlocks (rig, 2);
+    CHECK_THAT (rig.silt.modulatedValue01 (reso), WithinAbs (juce::jmax (0.0f, rig.value ("filterReso") - 0.4f), 1.0e-5));
+
+    // Saved with the set; removing the route forgets it.
+    juce::MemoryBlock state;
+    rig.silt.getStateInformation (state);
+    Rig restored;
+    restored.silt.setStateInformation (state.getData(), (int) state.getSize());
+    CHECK (restored.silt.routePolarityOf (0, t) == SiltProcessor::unipolar);
+    CHECK (restored.silt.routePolarityOf (1, reso) == SiltProcessor::bipolar);
+    restored.silt.setRouteAmount (0, t, 0.0f);
+    CHECK (restored.silt.routePolarityOf (0, t) == SiltProcessor::natural);
+}
+
+TEST_CASE ("Knob, menu and button changes undo; automation and preset loads don't record")
+{
+    Rig rig;
+    auto* spray = rig.silt.params.getParameter ("spray");
+    auto* reverse = rig.silt.params.getParameter ("reverse");
+    const auto gesture = [] (juce::AudioProcessorParameter* p, float v)
+    {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost (v);
+        p->endChangeGesture();
+    };
+
+    gesture (spray, 0.6f);
+    reverse->setValueNotifyingHost (0.9f);   // automation: no gesture, not recorded
+    gesture (reverse, 0.2f);
+    CHECK (rig.silt.undoDescription() == "REVERSE");
+
+    REQUIRE (rig.silt.undoRoutes());
+    CHECK (reverse->getValue() == 0.9f);
+    REQUIRE (rig.silt.undoRoutes());
+    CHECK (spray->getValue() == 0.0f);
+    CHECK_FALSE (rig.silt.canUndoRoutes());
+    REQUIRE (rig.silt.redoRoutes());
+    CHECK (spray->getValue() == 0.6f);
+
+    // A controller turn: many quick gestures on one parameter make one step.
+    rig.silt.clearUndoHistory();
+    for (const float v : { 0.1f, 0.2f, 0.3f, 0.4f })
+        gesture (spray, v);
+    REQUIRE (rig.silt.undoRoutes());
+    CHECK (spray->getValue() == 0.6f);
+    CHECK_FALSE (rig.silt.canUndoRoutes());
+
+    // Values and routes share one history.
+    rig.silt.beginRouteGesture();
+    rig.silt.editRoutes ([&] { rig.silt.setRouteAmount (0, rig.silt.modulationTarget ("pitch"), 0.2f); });
+    gesture (spray, 0.9f);
+    REQUIRE (rig.silt.undoRoutes());
+    CHECK (spray->getValue() == 0.6f);
+    REQUIRE (rig.silt.undoRoutes());
+    CHECK (rig.silt.allRoutes().empty());
+
+    // A preset load sets every value without recording and starts the history over.
+    rig.silt.applyPreset (*rig.silt.capturePreset ("x"), "x");
+    CHECK_FALSE (rig.silt.canUndoRoutes());
+}

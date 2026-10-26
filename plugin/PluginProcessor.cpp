@@ -435,6 +435,9 @@ SiltProcessor::SiltProcessor()
                                      p ("Enable"), p ("Voice"), p ("Macro") };
     }
 
+    for (auto* parameter : getParameters())
+        parameter->addListener (this);
+
     raw = std::make_unique<RawParams> ([this] (const char* id) -> std::atomic<float>*
     {
         if (const auto it = targetIndex.find (id); it != targetIndex.end())
@@ -453,6 +456,8 @@ SiltProcessor::SiltProcessor()
 
 SiltProcessor::~SiltProcessor()
 {
+    for (auto* parameter : getParameters())
+        parameter->removeListener (this);
     stopTimer();
     loader.removeAllJobs (true, 5000);
 }
@@ -907,7 +912,9 @@ void SiltProcessor::applyModulation() noexcept
     {
         const auto mp = readModulatorParams (m);
         value[(size_t) m] = modulators[(size_t) m].advance (mp, modContext);   // runs muted too, so unmuting picks up in step
-        if (! isModulatorEnabled (m))
+        nativeBipolar[(size_t) m] = silt::Modulator::isBipolar (mp);
+        modEnabled[(size_t) m] = isModulatorEnabled (m);
+        if (! modEnabled[(size_t) m])
             value[(size_t) m] = 0.0f;
         globalModValues[(size_t) m] = value[(size_t) m];
         modOutputs[(size_t) m].store (value[(size_t) m], std::memory_order_relaxed);
@@ -918,7 +925,8 @@ void SiltProcessor::applyModulation() noexcept
         const float base = targets[t].raw->load (std::memory_order_relaxed);
         float offset = 0.0f;
         for (int m = 0; m < numModulators; ++m)
-            offset += routeAmounts[(size_t) m * maxTargets + t].load (std::memory_order_relaxed) * value[(size_t) m];
+            if (const float amount = routeAmounts[(size_t) m * maxTargets + t].load (std::memory_order_relaxed); amount != 0.0f && modEnabled[(size_t) m])
+                offset += amount * shapedFor (m, (int) t, value[(size_t) m]);
         if (offset == 0.0f)
         {
             modulated[t].store (base, std::memory_order_relaxed);
@@ -971,7 +979,80 @@ float SiltProcessor::routeAmount (int modulator, int target) const noexcept
 void SiltProcessor::setRouteAmount (int modulator, int target, float amount) noexcept
 {
     if (modulator >= 0 && modulator < numModulators && target >= 0 && target < (int) targets.size())
+    {
         routeAmounts[(size_t) modulator * maxTargets + (size_t) target].store (juce::jlimit (-1.0f, 1.0f, amount), std::memory_order_relaxed);
+        if (amount == 0.0f)
+            routePolarity[(size_t) modulator * maxTargets + (size_t) target].store (natural, std::memory_order_relaxed);   // a new route starts natural
+    }
+}
+
+void SiltProcessor::setRoutePolarity (int modulator, int target, int polarity) noexcept
+{
+    if (modulator >= 0 && modulator < numModulators && target >= 0 && target < (int) targets.size())
+        routePolarity[(size_t) modulator * maxTargets + (size_t) target].store (juce::jlimit (0, 2, polarity), std::memory_order_relaxed);
+}
+
+int SiltProcessor::routePolarityOf (int modulator, int target) const noexcept
+{
+    return routePolarity[(size_t) modulator * maxTargets + (size_t) target].load (std::memory_order_relaxed);
+}
+
+// Bipolar: swings both ways round the knob; unipolar: one way. A route follows
+// its source (WAVE and RANDOM bipolar, ENVELOPE and the rest unipolar) unless
+// it's been set.
+bool SiltProcessor::routeIsBipolar (int modulator, int target) const noexcept
+{
+    switch (routePolarityOf (modulator, target))
+    {
+        case unipolar: return false;
+        case bipolar:  return true;
+        default:       return silt::Modulator::isBipolar (readModulatorParams (modulator));
+    }
+}
+
+// Audio thread: a modulator's value as this route takes it (the source's
+// native range rescaled when the route's polarity differs).
+float SiltProcessor::shapedFor (int m, int t, float v) const noexcept
+{
+    const int polarity = routePolarity[(size_t) m * maxTargets + (size_t) t].load (std::memory_order_relaxed);
+    const bool native = nativeBipolar[(size_t) m];
+    if (polarity == unipolar && native)
+        return 0.5f * (v + 1.0f);
+    if (polarity == bipolar && ! native)
+        return 2.0f * v - 1.0f;
+    return v;
+}
+
+// "modulator:parameter:amount[:b|u]" separated by ';' (modulator 0–3; the polarity
+// only when it's been set).
+juce::String SiltProcessor::routesToString() const
+{
+    juce::StringArray routes;
+    for (const auto& r : allRoutes())
+    {
+        const int polarity = routePolarityOf (r.modulator, r.target);
+        routes.add (juce::String (r.modulator) + ":" + targets[(size_t) r.target].parameter->getParameterID() + ":" + juce::String (r.amount, 4)
+                    + (polarity == bipolar ? ":b" : polarity == unipolar ? ":u" : ""));
+    }
+    return routes.joinIntoString (";");
+}
+
+void SiltProcessor::routesFromString (const juce::String& text)
+{
+    for (auto& amount : routeAmounts)
+        amount.store (0.0f);
+    for (auto& polarity : routePolarity)
+        polarity.store (natural);
+    for (const auto& route : juce::StringArray::fromTokens (text, ";", ""))
+    {
+        const auto parts = juce::StringArray::fromTokens (route, ":", "");
+        if (parts.size() < 3)
+            continue;
+        const int m = parts[0].getIntValue(), t = modulationTarget (parts[1]);
+        setRouteAmount (m, t, parts[2].getFloatValue());
+        if (parts.size() > 3)
+            setRoutePolarity (m, t, parts[3] == "b" ? bipolar : parts[3] == "u" ? unipolar : natural);
+    }
 }
 
 void SiltProcessor::clearRoutesOnTarget (int target) noexcept
@@ -1022,7 +1103,7 @@ juce::String SiltProcessor::depthSpan (int modulator, int target) const
     const float amount = routeAmount (modulator, target);
     auto& p = *targets[(size_t) target].parameter;
     const float base = p.getValue();
-    const bool bipolar = silt::Modulator::isBipolar (readModulatorParams (modulator));
+    const bool bipolar = routeIsBipolar (modulator, target);
     const float lo = juce::jlimit (0.0f, 1.0f, base + (bipolar ? -std::abs (amount) : juce::jmin (0.0f, amount)));
     const float hi = juce::jlimit (0.0f, 1.0f, base + (bipolar ? std::abs (amount) : juce::jmax (0.0f, amount)));
     return p.getText (lo, 0) + " to " + p.getText (hi, 0);
@@ -1032,7 +1113,7 @@ juce::String SiltProcessor::depthSpan (int modulator, int target) const
 juce::String SiltProcessor::depthText (int modulator, int target) const
 {
     const float amount = routeAmount (modulator, target);
-    const bool bipolar = silt::Modulator::isBipolar (readModulatorParams (modulator));
+    const bool bipolar = routeIsBipolar (modulator, target);
     const int percent = juce::roundToInt (amount * 100.0f);
     const auto sign = bipolar ? juce::String::charToString ((juce::juce_wchar) 0x00b1) : (percent > 0 ? juce::String ("+") : juce::String());
     return depthSpan (modulator, target) + "  (" + sign + juce::String (bipolar ? std::abs (percent) : percent) + "%)";
@@ -1066,10 +1147,14 @@ private:
 
 std::vector<float> SiltProcessor::routeSnapshot() const
 {
-    std::vector<float> s ((size_t) (numModulators * numTargets()));
+    // Amount and polarity per route.
+    std::vector<float> s ((size_t) (2 * numModulators * numTargets()));
     for (int m = 0; m < numModulators; ++m)
         for (int t = 0; t < numTargets(); ++t)
-            s[(size_t) (m * numTargets() + t)] = routeAmount (m, t);
+        {
+            s[(size_t) (2 * (m * numTargets() + t))] = routeAmount (m, t);
+            s[(size_t) (2 * (m * numTargets() + t) + 1)] = (float) routePolarityOf (m, t);
+        }
     return s;
 }
 
@@ -1077,7 +1162,79 @@ void SiltProcessor::restoreRoutes (const std::vector<float>& s) noexcept
 {
     for (int m = 0; m < numModulators; ++m)
         for (int t = 0; t < numTargets(); ++t)
-            setRouteAmount (m, t, s[(size_t) (m * numTargets() + t)]);
+        {
+            setRouteAmount (m, t, s[(size_t) (2 * (m * numTargets() + t))]);
+            setRoutePolarity (m, t, (int) s[(size_t) (2 * (m * numTargets() + t) + 1)]);
+        }
+}
+
+// One parameter's value before and after a gesture. Gestures on the same
+// parameter close together (a controller knob sends one per message) merge.
+class SiltProcessor::ParameterChange final : public juce::UndoableAction
+{
+public:
+    ParameterChange (SiltProcessor& p, int i, float b, float a) : processor (p), index (i), before (b), after (a) {}
+
+    bool perform() override { set (after); return true; }
+    bool undo() override { set (before); return true; }
+    int getSizeInUnits() override { return 1; }
+
+    juce::UndoableAction* createCoalescedAction (juce::UndoableAction* next) override
+    {
+        if (auto* change = dynamic_cast<ParameterChange*> (next); change != nullptr && change->index == index)
+            return new ParameterChange (processor, index, before, change->after);
+        return nullptr;
+    }
+
+private:
+    void set (float value)
+    {
+        auto* parameter = processor.getParameters()[index];
+        const juce::ScopedValueSetter<bool> quiet (processor.replaying, true);
+        parameter->beginChangeGesture();
+        parameter->setValueNotifyingHost (value);
+        parameter->endChangeGesture();
+    }
+
+    SiltProcessor& processor;
+    int index;
+    float before, after;
+};
+
+// Gestures from the panel, the controller and the mod rail: a value at the
+// start, a step at the end if it changed. Only on the message thread; never
+// while undo, redo or a preset is setting values.
+void SiltProcessor::parameterGestureChanged (int index, bool starting)
+{
+    if (replaying || ! juce::MessageManager::existsAndIsCurrentThread())
+        return;
+    auto* parameter = getParameters()[index];
+    if (starting)
+    {
+        gestureStart[index] = parameter->getValue();
+        return;
+    }
+    const auto it = gestureStart.find (index);
+    if (it == gestureStart.end())
+        return;
+    const float before = it->second, after = parameter->getValue();
+    gestureStart.erase (it);
+    if (juce::exactlyEqual (before, after))
+        return;
+
+    const auto now = juce::Time::getMillisecondCounter();
+    if (index != lastGestureParameter || now - lastGestureTime > 800)
+        routeUndo.beginNewTransaction (parameter->getName (24).toUpperCase());
+    lastGestureParameter = index;
+    lastGestureTime = now;
+    const juce::ScopedValueSetter<bool> quiet (replaying, true);   // perform() sets the value it already has
+    routeUndo.perform (new ParameterChange (*this, index, before, after));
+}
+
+bool SiltProcessor::undoing (const std::function<bool()>& step)
+{
+    lastGestureParameter = -1;   // the next change starts its own step
+    return step();
 }
 
 void SiltProcessor::editRoutes (const std::function<void()>& edit)
@@ -1174,7 +1331,8 @@ void SiltProcessor::VoiceModulation::compute (int v) noexcept
     {
         float offset = 0.0f;
         for (int m = 0; m < numModulators; ++m)
-            offset += owner.routeAmount (m, t) * (perVoice[(size_t) m] ? values[(size_t) v][(size_t) m] : owner.globalModValues[(size_t) m]);
+            if (const float amount = owner.routeAmount (m, t); amount != 0.0f && owner.modEnabled[(size_t) m])
+                offset += amount * owner.shapedFor (m, t, perVoice[(size_t) m] ? values[(size_t) v][(size_t) m] : owner.globalModValues[(size_t) m]);
         const float moved = juce::jlimit (0.0f, 1.0f, base01[(size_t) t] + offset);
         scratch[(size_t) t] = owner.targets[(size_t) t].parameter->convertFrom0to1 (moved);
         owner.voiceModulated01[(size_t) v][(size_t) t].store (moved, std::memory_order_relaxed);
@@ -1247,10 +1405,7 @@ std::unique_ptr<juce::XmlElement> SiltProcessor::capturePreset (const juce::Stri
     for (auto* parameter : getParameters())
         if (auto* p = dynamic_cast<juce::RangedAudioParameter*> (parameter); p != nullptr && inPresets (p->getParameterID()))
             values->setAttribute (p->getParameterID(), p->convertFrom0to1 (p->getValue()));
-    juce::StringArray routes;
-    for (const auto& r : allRoutes())
-        routes.add (juce::String (r.modulator) + ":" + targets[(size_t) r.target].parameter->getParameterID() + ":" + juce::String (r.amount, 4));
-    xml->setAttribute ("routes", routes.joinIntoString (";"));
+    xml->setAttribute ("routes", routesToString());
     xml->setAttribute ("modShown", modShown.load());
     return xml;
 }
@@ -1260,6 +1415,7 @@ std::unique_ptr<juce::XmlElement> SiltProcessor::capturePreset (const juce::Stri
 // are replaced; the route undo history starts over (it can't undo the values).
 void SiltProcessor::applyPreset (const juce::XmlElement& xml, const juce::String& name)
 {
+    const juce::ScopedValueSetter<bool> quiet (replaying, true);   // one load, not 150 undo steps
     const auto* values = xml.getChildByName ("PARAMS");
     for (auto* parameter : getParameters())
         if (auto* p = dynamic_cast<juce::RangedAudioParameter*> (parameter); p != nullptr && inPresets (p->getParameterID()))
@@ -1273,14 +1429,7 @@ void SiltProcessor::applyPreset (const juce::XmlElement& xml, const juce::String
             p->endChangeGesture();
         }
 
-    for (auto& amount : routeAmounts)
-        amount.store (0.0f);
-    for (const auto& route : juce::StringArray::fromTokens (xml.getStringAttribute ("routes"), ";", ""))
-    {
-        const auto parts = juce::StringArray::fromTokens (route, ":", "");
-        if (parts.size() == 3)
-            setRouteAmount (parts[0].getIntValue(), modulationTarget (parts[1]), parts[2].getFloatValue());
-    }
+    routesFromString (xml.getStringAttribute ("routes"));
     modShown.store (juce::jlimit (0, numModulators - 1, xml.getIntAttribute ("modShown", 0)));
     routeUndo.clearUndoHistory();
     presetName = name;
@@ -1711,12 +1860,7 @@ void SiltProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("knobCCs", ccs.joinIntoString (","), nullptr);
     state.setProperty ("pageCCs", juce::String (previousPageCC.load()) + "," + juce::String (nextPageCC.load()), nullptr);
     state.setProperty ("page", currentPage.load(), nullptr);
-    juce::StringArray routes;   // "modulator:parameter:amount"
-    for (int m = 0; m < numModulators; ++m)
-        for (size_t t = 0; t < targets.size(); ++t)
-            if (const float amount = routeAmount (m, (int) t); amount != 0.0f)
-                routes.add (juce::String (m) + ":" + targets[t].parameter->getParameterID() + ":" + juce::String (amount, 4));
-    state.setProperty ("modRoutes", routes.joinIntoString (";"), nullptr);
+    state.setProperty ("modRoutes", routesToString(), nullptr);
     state.setProperty ("modShown", modShown.load(), nullptr);
     state.setProperty ("presetName", presetName, nullptr);
     if (editorWidth.load() > 0)
@@ -1792,14 +1936,7 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
         nextPageCC.store (juce::jlimit (0, 127, pages[1].getIntValue()));
     }
     currentPage.store (juce::jlimit (0, numPages - 1, (int) tree.getProperty ("page", 0)));
-    for (auto& amount : routeAmounts)
-        amount.store (0.0f);
-    for (const auto& route : juce::StringArray::fromTokens (tree.getProperty ("modRoutes").toString(), ";", ""))
-    {
-        const auto parts = juce::StringArray::fromTokens (route, ":", "");
-        if (parts.size() == 3)
-            setRouteAmount (parts[0].getIntValue(), modulationTarget (parts[1]), parts[2].getFloatValue());
-    }
+    routesFromString (tree.getProperty ("modRoutes").toString());
     modShown.store (juce::jlimit (0, numModulators - 1, (int) tree.getProperty ("modShown", 0)));
     routeUndo.clearUndoHistory();   // a loaded set starts its own history
     presetName = tree.getProperty ("presetName", "Init").toString();

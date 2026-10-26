@@ -15,11 +15,20 @@ referenced where they matter.
   on load rather than listed, since nothing can apply them.
 - MOD slot 7 (ASSIGN) arms the shown modulator and lights only while that one is armed.
 
+**Revision, 26 Oct 2026** (after use; research on Pigments, Bitwig, Rift and
+others): Alt-drag wasn't discoverable, so the coloured rings are now the handles
+(drag to set depth; Pigments' "collars", Rift's modulation slider); an armed
+modulator's dashed ring on every knob is the handle for a new route (Bitwig's routing
+mode); hovering a ring changes the cursor and explains itself in the LCD. Alt-drag
+stays as a shortcut. Routes have a polarity (bipolar/unipolar), set from the knob's
+right-click, Shift+Alt-click on the ring (as in Rift) or the route list. Undo covers
+knob, menu and button gestures as well as routes, with UNDO/REDO in the strip.
+
 §8 "later" ideas, 26 Oct 2026: all done.
 
-- **Undo:** route changes only (a `juce::UndoManager` of before/after snapshots;
-  gestures merge into one step; Cmd/Ctrl+Z). Parameter values aren't in it: an APVTS
-  undo manager would also record host automation.
+- **Undo:** one `juce::UndoManager` for route edits (before/after snapshots) and
+  parameter gestures (recorded from `parameterGestureChanged`, so host automation,
+  which has no gestures, isn't); gestures merge into one step.
 - **Depth in real units:** `depthSpan()`/`depthText()` lead with the span in the
   parameter's units; the LCD readout, menus and route list use it.
 - **Macros:** a MACRO modulator type (its knob is the value), not a separate second row

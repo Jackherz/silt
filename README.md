@@ -84,11 +84,17 @@ routed to). Design: `docs/mod-section-design.md`.
   to make a +25% route, hover × (twice) clears its routes, right-click to edit,
   mute, show or clear. Keys 1–4 arm, Esc disarms. The header's four stripes are the
   same four modulators as meters.
-- **Depth on any knob:** Alt-drag sets the depth of the armed modulator (or the
-  knob's only route, or the last one used); Shift+Alt is finer; it snaps to zero
-  near it. Alt+double-click removes it. Plain drag is always the value, and
-  double-click resets the value. Right-click a knob for each modulator's depth
-  (quick values, add, remove) in its colour.
+- **Depth on any knob:** the coloured rings are handles: press one and drag up or
+  down (Shift for fine; it snaps to zero). With a modulator armed, every knob shows
+  a dashed ring in its colour: drag that to make the route. Hovering a ring changes
+  the cursor and the LCD says what it does. Alt-drag on the knob is a shortcut (the
+  armed modulator, or the knob's only route, or the last one used); Alt+double-click
+  removes it. Plain drag on the knob is always its value; double-click resets it.
+  Right-click a knob for each modulator's depth, polarity and removal, in its colour.
+- **Polarity per route:** bipolar (±, both ways round the knob) or unipolar (+, one
+  way). A route starts as its source is (WAVE and RANDOM bipolar, the rest unipolar);
+  change it with Shift+Alt-click on its ring, the knob's right-click, or ± in the
+  route list. Saved with the set and in presets.
 - **Rings** round a knob: an arc per route in its modulator's colour and texture
   (solid, long dash, short dash, dotted), numbered at its far end, with a stop
   where the range clamps it, and a dot where the value is now. Stepped parameters
@@ -96,9 +102,11 @@ routed to). Design: `docs/mod-section-design.md`.
 - **ROUTES** (strip, or right-click): every route in one list, filtered by
   modulator or page. Drag a depth (double-click to type it), see its span in the
   parameter's units, × removes one, CLEAR ALL (twice) removes them all.
-- **Undo:** route changes (drags, drops, menus, clears, controller turns) undo
-  and redo with Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z, the route list's UNDO/REDO, or a
-  knob's right-click; a whole drag or a clear-all is one step. Depths read in the
+- **Undo:** UNDO and REDO in the strip (and Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z when the
+  host passes them on) step back through everything changed by hand: knobs, menus,
+  buttons, controller turns, and modulation edits; the LCD says what. A drag, a
+  controller turn or a clear-all is one step. Host automation and preset loads
+  aren't recorded (a preset starts the history over). Depths read in the
   parameter's units first ("480 Hz to 2.64 kHz (±35%)").
 - **Mute** a modulator (ON under TYPE, or the chip's menu): it contributes nothing
   and keeps its routes.

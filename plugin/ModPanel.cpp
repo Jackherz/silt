@@ -332,6 +332,15 @@ public:
             refresh();
         };
         addAndMakeVisible (depth);
+        polarity.setTooltip ("Bipolar (both ways round the knob) or unipolar (one way)");
+        polarity.onClick = [this]
+        {
+            silt.beginRouteGesture();
+            silt.editRoutes ([this] { silt.setRoutePolarity (route.modulator, route.target,
+                                                             silt.routeIsBipolar (route.modulator, route.target) ? SiltProcessor::unipolar : SiltProcessor::bipolar); });
+            refresh();
+        };
+        addAndMakeVisible (polarity);
         remove.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x00d7));
         remove.onClick = [this]
         {
@@ -344,8 +353,9 @@ public:
 
     void refresh()
     {
-        const bool bipolar = silt::Modulator::isBipolar (silt.readModulatorParams (route.modulator));
+        const bool bipolar = silt.routeIsBipolar (route.modulator, route.target);
         depth.setText (percentText (silt.routeAmount (route.modulator, route.target), bipolar), juce::dontSendNotification);
+        polarity.setButtonText (bipolar ? juce::String::charToString ((juce::juce_wchar) 0x00b1) : juce::String ("+"));
         span = silt.depthSpan (route.modulator, route.target);
         repaint();
     }
@@ -387,7 +397,7 @@ public:
         g.setColour (ink);
         g.setFont (panelFont (12.0f));
         g.drawText (silt.targetParameter (route.target).getName (40).toUpperCase(), r.removeFromLeft (170), juce::Justification::centredLeft);
-        r.removeFromLeft (82);   // the depth box
+        r.removeFromLeft (82 + 30);   // the depth box and polarity
         g.setColour (inkSoft);
         g.setFont (monoFont (11.0f));
         g.drawText (span, r.withTrimmedRight (34), juce::Justification::centredLeft);
@@ -398,6 +408,7 @@ public:
         auto r = getLocalBounds().reduced (0, 2);
         remove.setBounds (r.removeFromRight (26));
         depth.setBounds (r.withX (34 + 6 + 84 + 170).withWidth (72));
+        polarity.setBounds (r.withX (34 + 6 + 84 + 170 + 76).withWidth (26));
     }
 
     const SiltProcessor::Route& getRoute() const noexcept { return route; }
@@ -407,7 +418,7 @@ private:
     ModActions& actions;
     SiltProcessor::Route route;
     juce::Label depth;
-    juce::TextButton remove;
+    juce::TextButton polarity, remove;
     juce::String span;
     float amountAtStart = 0.0f;
 };

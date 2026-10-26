@@ -63,7 +63,18 @@ public:
         std::function<void (int modulator, bool dragging)> depthDragged;   // for the LCD readout
         std::function<void()> showMenu;                  // right-click
         std::function<void()> routeGesture;              // a new undo step begins
+        std::function<void (int modulator)> togglePolarity;
+        std::function<void (int modulator)> ringHover;   // −1: left the rings
         int dropHover = -1;                              // a chip held over it
+
+        // The rings as last drawn (set while drawing): which modulator each ring
+        // shows, and whether an armed modulator's hint ring follows them.
+        juce::Point<float> ringCentre;
+        float ringBase = 0.0f;
+        std::vector<int> ringModulators;
+        int armedHintModulator = -1;
+        int hoverRing = -1;
+        int modulatorAtRing (juce::Point<float>) const;  // −1: not on a ring
 
         // The depth gesture, also used directly by tests.
         void beginDepth (int modulator);
@@ -75,6 +86,8 @@ public:
         void mouseDrag (const juce::MouseEvent&) override;
         void mouseUp (const juce::MouseEvent&) override;
         void mouseDoubleClick (const juce::MouseEvent&) override;
+        void mouseMove (const juce::MouseEvent&) override;
+        void mouseExit (const juce::MouseEvent&) override;
 
         bool isInterestedInDragSource (const SourceDetails&) override;
         void itemDragEnter (const SourceDetails&) override;
@@ -135,6 +148,10 @@ private:
     std::vector<bool> shownNow;   // per control: what updateVisibility last showed
 
     juce::TextButton armButton, loadButton { "LOAD" }, learnButton { "LEARN" }, routesButton { "ROUTES" };
+    juce::TextButton undoButton { "UNDO" }, redoButton { "REDO" };
+    juce::String flash;                                // a moment's message in the LCD
+    juce::uint32 flashUntil = 0;
+    void stepUndo (bool redo);
     juce::ToggleButton monitorButton { "MONITOR" };
     juce::ComboBox captureBars;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureBarsAttachment;
@@ -150,6 +167,7 @@ private:
     std::array<float, SiltProcessor::numModulators> stripesSeen {};
     int lastUsedMod = 0;
     juce::String depthReadout;                         // shown in the LCD during a depth drag
+    juce::String hoverHint;                            // shown in the LCD while over a modulation ring
     std::array<silt::GrainView, SiltProcessor::maxGrainViews> viewsScratch {};   // per editor, not shared
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SiltEditor)
