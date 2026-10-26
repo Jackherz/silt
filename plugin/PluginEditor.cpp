@@ -622,11 +622,28 @@ void SiltEditor::drawModulation (juce::Graphics& g, juce::Slider& slider, juce::
         if (amount == 0.0f || ! silt.isModulatorEnabled (m))
             continue;   // muted: its ring is hidden (its routes stay)
         anyLive = true;
+        // Which way it moves first: towards position + amount (up for a positive
+        // depth, down for a negative one). That half is solid, with an arrow and
+        // the number at its end; a bipolar route's other half is faint.
         const bool bipolar = silt.routeIsBipolar (m, target);
-        const float rawLo = position + (bipolar ? -std::abs (amount) : juce::jmin (0.0f, amount));
-        const float rawHi = position + (bipolar ? std::abs (amount) : juce::jmax (0.0f, amount));
+        const float rawFirst = position + amount, rawOther = bipolar ? position - amount : position;
+        const float rawLo = juce::jmin (rawFirst, rawOther), rawHi = juce::jmax (rawFirst, rawOther);
         const float lo = quantise (juce::jlimit (0.0f, 1.0f, rawLo)), hi = quantise (juce::jlimit (0.0f, 1.0f, rawHi));
-        drawArc (m, lo, hi, ring, armed == m || fine->hoverRing == ring ? 1.0f : 0.85f);
+        const float first = quantise (juce::jlimit (0.0f, 1.0f, rawFirst)), other = quantise (juce::jlimit (0.0f, 1.0f, rawOther));
+        const float alpha = armed == m || fine->hoverRing == ring ? 1.0f : 0.85f;
+        if (bipolar)
+            drawArc (m, juce::jmin (position, other), juce::jmax (position, other), ring, alpha * 0.35f);
+        drawArc (m, juce::jmin (position, first), juce::jmax (position, first), ring, alpha);
+        {
+            // The arrowhead, pointing on round the ring the way the value goes.
+            const float rr = ringRadius (ring), at = angleFor (first);
+            const float onward = (amount >= 0.0f ? -1.0f : 1.0f) * 0.13f;   // higher values are anticlockwise
+            juce::Path arrow;
+            arrow.addTriangle (centre.getPointOnCircumference (rr - 3.2f, at), centre.getPointOnCircumference (rr + 3.2f, at),
+                               centre.getPointOnCircumference (rr, at + onward));
+            g.setColour (modColour (m).base.withAlpha (alpha));
+            g.fillPath (arrow);
+        }
         if (fine->hoverRing == ring)   // the ring under the mouse: a grip along it
         {
             juce::Path grip;
@@ -646,8 +663,8 @@ void SiltEditor::drawModulation (juce::Graphics& g, juce::Slider& slider, juce::
                 g.drawLine (juce::Line<float> (centre.getPointOnCircumference (r - 3.0f, angleFor (end)),
                                                centre.getPointOnCircumference (r + 3.0f, angleFor (end))), 1.6f);
             }
-        // The number at the far end: never colour alone.
-        const float far = amount >= 0.0f || bipolar ? hi : lo;
+        // The number where it heads first: never colour alone.
+        const float far = first;
         g.setColour (modColour (m).base.darker (0.3f));
         g.setFont (monoFont (8.0f));
         g.drawText (juce::String (m + 1), juce::Rectangle<float> (9.0f, 9.0f).withCentre (centre.getPointOnCircumference (r + 6.0f, angleFor (far))),

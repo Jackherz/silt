@@ -99,8 +99,10 @@ routed to). Design: `docs/mod-section-design.md`.
   change it with Shift+Alt-click on its ring, the knob's right-click, or ± in the
   route list. Saved with the set and in presets.
 - **Rings** round a knob: an arc per route in its modulator's colour and texture
-  (solid, long dash, short dash, dotted), numbered at its far end, with a stop
-  where the range clamps it, and a dot where the value is now. Stepped parameters
+  (solid, long dash, short dash, dotted). The half it moves into first is solid with
+  an arrow and the modulator's number at its end; a bipolar route's return half is
+  faint. Depths are signed, as on an Elektron LFO: + moves up first, − down first.
+  A stop marks where the range clamps it, and a dot where the value is now. Stepped parameters
   show whole steps. An armed modulator draws a faint ring on every knob it can reach.
 - **ROUTES** (strip, or right-click): every route in one list, filtered by
   modulator or page. Drag a depth (double-click to type it), see its span in the

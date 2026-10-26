@@ -213,7 +213,10 @@ TEST_CASE ("Routes list every non-zero pair; clearing a modulator touches only i
     rig.silt.clearRoutesForModulator (2);
     CHECK (rig.silt.routeCount (2) == 0);
     CHECK (rig.silt.routeAmount (0, cutoff) == 0.4f);
-    CHECK (rig.silt.depthText (0, cutoff).endsWith ("(" + juce::String::charToString ((juce::juce_wchar) 0x00b1) + "40%)"));
+    CHECK (rig.silt.depthText (0, cutoff).endsWith ("(+40%)"));
+    rig.silt.setRouteAmount (0, cutoff, -0.4f);
+    CHECK (rig.silt.depthText (0, cutoff).endsWith ("(-40%)"));
+    rig.silt.setRouteAmount (0, cutoff, 0.4f);
     CHECK (rig.silt.depthText (0, cutoff).startsWith (rig.silt.depthSpan (0, cutoff)));
 }
 

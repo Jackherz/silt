@@ -1134,14 +1134,12 @@ juce::String SiltProcessor::depthSpan (int modulator, int target) const
     return p.getText (lo, 0) + " to " + p.getText (hi, 0);
 }
 
-// The span, then the depth as a share of the range.
+// The span, then the depth, signed like an Elektron LFO's: + moves the value
+// up first, − down first (bipolar routes then swing back past the knob).
 juce::String SiltProcessor::depthText (int modulator, int target) const
 {
-    const float amount = routeAmount (modulator, target);
-    const bool bipolar = routeIsBipolar (modulator, target);
-    const int percent = juce::roundToInt (amount * 100.0f);
-    const auto sign = bipolar ? juce::String::charToString ((juce::juce_wchar) 0x00b1) : (percent > 0 ? juce::String ("+") : juce::String());
-    return depthSpan (modulator, target) + "  (" + sign + juce::String (bipolar ? std::abs (percent) : percent) + "%)";
+    const int percent = juce::roundToInt (routeAmount (modulator, target) * 100.0f);
+    return depthSpan (modulator, target) + "  (" + (percent > 0 ? "+" : "") + juce::String (percent) + "%)";
 }
 
 // --- route undo ---------------------------------------------------------------------

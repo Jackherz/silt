@@ -18,11 +18,10 @@ int typeOf (SiltProcessor& silt, int m)
     return (int) silt.readModulatorParams (m).type;
 }
 
-juce::String percentText (float amount, bool bipolar)
+// Signed: + moves the value up first, − down first. Polarity has its own button.
+juce::String percentText (float amount)
 {
     const int percent = juce::roundToInt (amount * 100.0f);
-    if (bipolar)
-        return juce::String::charToString ((juce::juce_wchar) 0x00b1) + juce::String (std::abs (percent)) + "%";
     return (percent > 0 ? "+" : "") + juce::String (percent) + "%";
 }
 
@@ -381,7 +380,7 @@ public:
     void refresh()
     {
         const bool bipolar = silt.routeIsBipolar (route.modulator, route.target);
-        depth.setText (percentText (silt.routeAmount (route.modulator, route.target), bipolar), juce::dontSendNotification);
+        depth.setText (percentText (silt.routeAmount (route.modulator, route.target)), juce::dontSendNotification);
         polarity.setButtonText (bipolar ? juce::String::charToString ((juce::juce_wchar) 0x00b1) : juce::String ("+"));
         span = silt.depthSpan (route.modulator, route.target);
         repaint();
