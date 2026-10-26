@@ -14,7 +14,7 @@
 // share a slot: `shown` picks the one in use from the current parameter values.
 namespace silt::layout
 {
-enum Page { grain, shape, pitch, play, resonator, filter, color, space, mod, numPages };
+enum Page { grain, shape, pitch, play, resonator, filter, color, space, mod, chain, numPages };
 const char* pageName (int page);
 
 enum class Kind

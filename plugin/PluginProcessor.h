@@ -81,6 +81,22 @@ public:
     // Message thread.
     void loadFile (const juce::File&);   // ROOT goes back to C3
 
+    // CHAIN: the order RESONATOR, FILTER, COLOR and SPACE run in, as one of
+    // the 24 orders ("chainOrder"). chainOrder gives the modules by position.
+    enum Module { moduleResonator, moduleFilter, moduleColor, moduleSpace, numModules };
+    static constexpr int numChainOrders = 24;
+    static std::array<int, numModules> chainOrder (int index);
+    static int chainOrderIndex (const std::array<int, numModules>&);
+    static juce::String moduleName (int module);
+    static juce::String chainOrderName (int index);   // "R>F>C>S"
+
+    // The live scope: the sound going into one module and coming out of it,
+    // mono, as rendered. The editor picks the module (−1: none) and reads the
+    // latest samples; the return value changes whenever new ones arrive.
+    static constexpr int scopeSize = 8192;
+    std::atomic<int> scopeModule { -1 };
+    unsigned readScope (float* in, float* out, int count) const;
+
     // Factory samples, built in: LOAD lists them, and a new instance opens
     // with the first. Loading one sets ROOT to its key. A state saves one by
     // its number rather than as audio.
@@ -235,6 +251,11 @@ private:
     int lastNote = -1;           // the last note played, for FOLLOW and KEY (audio thread)
     bool lastLive = false;
     std::atomic<float>* sampleGain = nullptr;
+    int chainNow = 0;          // audio thread: the order running, and its fade
+    float chainFade = 1.0f;
+    std::array<std::atomic<float>, scopeSize> scopeIn {}, scopeOut {};
+    std::atomic<unsigned> scopeWrite { 0 };
+    void writeScope (std::array<std::atomic<float>, scopeSize>&, const float* l, const float* r, int count) noexcept;
     float sampleGainNow = 1.0f;   // audio thread: the gain ramped to
 
     // Modulation state.

@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "ChainView.h"
 #include "GrainScreen.h"
 #include "ModColours.h"
 #include "PanelLook.h"
@@ -240,6 +241,18 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     for (const auto& entry : layout::entries (SiltProcessor::isInstrument))
         buildControl (entry);
     shownNow.assign (controls.size(), false);
+
+    // CHAIN: the module order, over the screen's lower part; a click opens a module's page.
+    chainView = std::make_unique<ChainView> (silt);
+    chainView->onOpen = [this] (int module)
+    {
+        static constexpr int pages[] { layout::resonator, layout::filter, layout::color, layout::space };
+        const int target = pages[juce::jlimit (0, 3, module)];
+        pageTabs[(size_t) target].setToggleState (true, juce::dontSendNotification);
+        silt.currentPage.store (target);
+        showPage (target);
+    };
+    addChildComponent (*chainView);
 
     routeList = std::make_unique<RouteList> (silt, modActions);
     routeList->onClose = [this] { routeList->setVisible (false); routesButton.setToggleState (false, juce::dontSendNotification); };
@@ -547,6 +560,29 @@ void SiltEditor::showKnobMenu (FineSlider& s)
 }
 
 // One step back or forward, with a word in the LCD about what changed.
+// COLOR: the scope taps the module, reads ~21 ms past the latest rising zero
+// crossing, and draws what goes in against what comes out.
+void SiltEditor::updateScope()
+{
+    const int module = page == layout::color ? SiltProcessor::moduleColor : -1;
+    silt.scopeModule.store (module);
+    if (module < 0)
+    {
+        screen->hideScope();
+        screenShowsScope = false;
+        return;
+    }
+    scopeIn.resize (4096);
+    scopeOut.resize (4096);
+    const unsigned written = silt.readScope (scopeIn.data(), scopeOut.data(), (int) scopeIn.size());
+    if (written == scopeSeen && screenShowsScope)
+        return;
+    scopeSeen = written;
+    screenShowsScope = true;
+    screen->setScope (scopeIn, scopeOut, juce::roundToInt (silt.getSampleRate() > 0.0 ? silt.getSampleRate() * 0.021 : 1008.0),
+                      SiltProcessor::moduleName (module));
+}
+
 void SiltEditor::chooseFile()
 {
     chooser = std::make_unique<juce::FileChooser> ("Load a sample", juce::File(), "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg");
@@ -735,6 +771,7 @@ void SiltEditor::showPage (int p)
     page = juce::jlimit (0, layout::numPages - 1, p);
     if (routeList->isVisible())
         routeList->onClose();   // choosing a page (tab or controller) goes to it
+    chainView->setVisible (page == layout::chain);
     updateVisibility();
 }
 
@@ -912,6 +949,11 @@ void SiltEditor::timerCallback()
         screen->repaint();
     screenWasLive = live;
 
+    // The live scope, on pages whose module it shows: only redrawn when new audio arrived.
+    updateScope();
+    if (chainView->isVisible())
+        chainView->update();
+
     // The controller can change page; learning shows its progress.
     if (const int controllerPage = silt.currentPage.load(); controllerPage != page)
     {
@@ -1024,6 +1066,7 @@ void SiltEditor::resized()
     strip = r.removeFromBottom (34);
     r.removeFromBottom (10);
     screen->setBounds (r);
+    chainView->setBounds (screen->rollArea().translated (r.getX(), r.getY()));
 
     auto row = strip;
     armButton.setBounds (row.removeFromLeft (110));

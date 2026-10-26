@@ -24,6 +24,24 @@ const std::array<FactorySample, 4>& factorySamples()
     } };
     return list;
 }
+
+// The 24 chain orders, in permutation order: 0 is RES, FILTER, COLOR, SPACE.
+using ChainOrder = std::array<int, SiltProcessor::numModules>;
+const std::array<ChainOrder, SiltProcessor::numChainOrders>& chainOrders()
+{
+    static const auto list = []
+    {
+        std::array<ChainOrder, SiltProcessor::numChainOrders> orders {};
+        ChainOrder order { 0, 1, 2, 3 };
+        for (auto& o : orders)
+        {
+            o = order;
+            std::next_permutation (order.begin(), order.end());
+        }
+        return orders;
+    }();
+    return list;
+}
 } // namespace
 
 namespace
@@ -273,6 +291,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 percent ("spaceReverb", "Reverb level", 0.0f),
                 std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "spaceFreeze", 1 }, "Space freeze", false));
 
+    // CHAIN: the order the four modules run in, one of the 24.
+    {
+        juce::StringArray orders;
+        for (int i = 0; i < SiltProcessor::numChainOrders; ++i)
+            orders.add (SiltProcessor::chainOrderName (i));
+        layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "chainOrder", 1 }, "Chain order", orders, 0));
+    }
+
     // Modulators 1–4 (MOD page). Their own settings aren't modulation targets.
     for (int n = 1; n <= SiltProcessor::numModulators; ++n)
     {
@@ -390,13 +416,14 @@ struct SiltProcessor::RawParams
         spaceMode = p ("spaceMode"); spaceDelay = p ("spaceDelay"); spaceSize = p ("spaceSize"); spaceDecay = p ("spaceDecay");
         spaceTone = p ("spaceTone"); spaceShimmer = p ("spaceShimmer"); spaceReverb = p ("spaceReverb"); spaceFreeze = p ("spaceFreeze");
         monitor = p ("monitor"); mix = p ("mix");   // one of these is null, per build
+        chainOrder = p ("chainOrder");
     }
 
     std::atomic<float>* pitch, *size, *rate, *spray, *jitter, *reverse, *randAmp, *randPan, *fade, *slant, *ease;
     std::atomic<float>* sizeSync, *sizeDiv, *rateMode, *rateDiv, *grains, *grainSize;
     std::atomic<float>* start, *length, *scan, *endMode, *snap;
     std::atomic<float>* attack, *decay, *sustain, *release, *root;
-    std::atomic<float>* captureBars, *gain, *monitor, *mix;
+    std::atomic<float>* captureBars, *gain, *monitor, *mix, *chainOrder;
     std::atomic<float>* keyMode, *liveDelay, *delaySync, *delayDiv, *feedback, *freeze, *liveRun;
     std::atomic<float>* randPitch, *scale, *key, *patternDepth, *patternSteps, *patternSeed, *heads, *headSpread;
     std::atomic<float>* resTune, *resNotes, *resRange, *resDecay, *resBright, *resWidth, *resFollow, *resMix;
@@ -520,6 +547,8 @@ void SiltProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamples
     engine.prepare (sampleRate, juce::jmax (1, maximumExpectedSamplesPerBlock));
     voiceModulation.reset();
     engine.setVoiceParams (&voiceModulation);
+    chainNow = juce::jlimit (0, numChainOrders - 1, (int) raw->chainOrder->load());
+    chainFade = 1.0f;
     resonator.prepare (sampleRate);
     filter.prepare (sampleRate);
     color.prepare (sampleRate);
@@ -920,10 +949,44 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
                     wet.applyGainRamp (ch, 0, len, sampleGainNow, target);
             sampleGainNow = target;
         }
-        resonator.process (wet.getWritePointer (0), wet.getWritePointer (1), len, resonatorParams);
-        filter.process (wet.getWritePointer (0), wet.getWritePointer (1), len, filterParams);
-        color.process (wet.getWritePointer (0), wet.getWritePointer (1), len, colorParams);
-        space.process (wet.getWritePointer (0), wet.getWritePointer (1), len, spaceParams);
+
+        // The modules, in the CHAIN order. A new order fades the sound down,
+        // switches and fades back up (about 5 ms each way), so it doesn't click.
+        const int wantedChain = juce::jlimit (0, numChainOrders - 1, (int) raw->chainOrder->load (std::memory_order_relaxed));
+        const float fadeStep = (float) len / (float) (0.005 * currentSampleRate);
+        float fadeTo = chainFade;
+        if (wantedChain != chainNow)
+            fadeTo = juce::jmax (0.0f, chainFade - fadeStep);
+        else if (chainFade < 1.0f)
+            fadeTo = juce::jmin (1.0f, chainFade + fadeStep);
+
+        const int tapped = scopeModule.load (std::memory_order_relaxed);
+        for (const int module : chainOrders()[(size_t) chainNow])
+        {
+            float* l = wet.getWritePointer (0);
+            float* r = wet.getWritePointer (1);
+            if (module == tapped)
+                writeScope (scopeIn, l, r, len);
+            switch (module)
+            {
+                case moduleResonator: resonator.process (l, r, len, resonatorParams); break;
+                case moduleFilter:    filter.process (l, r, len, filterParams); break;
+                case moduleColor:     color.process (l, r, len, colorParams); break;
+                default:              space.process (l, r, len, spaceParams); break;
+            }
+            if (module == tapped)
+            {
+                writeScope (scopeOut, l, r, len);
+                scopeWrite.store (scopeWrite.load (std::memory_order_relaxed) + (unsigned) len, std::memory_order_release);
+            }
+        }
+
+        if (! juce::exactlyEqual (fadeTo, chainFade) || chainFade < 1.0f)
+            for (int ch = 0; ch < 2; ++ch)
+                wet.applyGainRamp (ch, 0, len, chainFade, fadeTo);
+        chainFade = fadeTo;
+        if (wantedChain != chainNow && chainFade <= 0.0f)
+            chainNow = wantedChain;
 
         // Sample by sample, reading the input before writing the output: the
         // two can share memory.
@@ -1737,6 +1800,55 @@ std::unique_ptr<juce::AudioBuffer<float>> SiltProcessor::decode (juce::AudioForm
     auto audio = std::make_unique<juce::AudioBuffer<float>> ((int) juce::jmax (1u, reader.numChannels), juce::jmax (1, frames));
     reader.read (audio.get(), 0, frames, 0, true, true);
     return audio;
+}
+
+std::array<int, SiltProcessor::numModules> SiltProcessor::chainOrder (int index)
+{
+    return chainOrders()[(size_t) juce::jlimit (0, numChainOrders - 1, index)];
+}
+
+int SiltProcessor::chainOrderIndex (const std::array<int, numModules>& order)
+{
+    const auto& all = chainOrders();
+    for (size_t i = 0; i < all.size(); ++i)
+        if (all[i] == order)
+            return (int) i;
+    return 0;
+}
+
+juce::String SiltProcessor::moduleName (int module)
+{
+    static const char* names[] { "RESONATOR", "FILTER", "COLOR", "SPACE" };
+    return names[juce::jlimit (0, numModules - 1, module)];
+}
+
+juce::String SiltProcessor::chainOrderName (int index)
+{
+    juce::StringArray letters;
+    for (const int m : chainOrder (index))
+        letters.add (moduleName (m).substring (0, 1));
+    return letters.joinIntoString (">");
+}
+
+// Audio thread: mono, into the scope's ring at the current write count.
+void SiltProcessor::writeScope (std::array<std::atomic<float>, scopeSize>& ring, const float* l, const float* r, int count) noexcept
+{
+    const unsigned at = scopeWrite.load (std::memory_order_relaxed);
+    for (int i = 0; i < count; ++i)
+        ring[(at + (unsigned) i) & (scopeSize - 1)].store (0.5f * (l[i] + r[i]), std::memory_order_relaxed);
+}
+
+unsigned SiltProcessor::readScope (float* in, float* out, int count) const
+{
+    count = juce::jmin (count, scopeSize / 2);
+    const unsigned end = scopeWrite.load (std::memory_order_acquire);
+    for (int i = 0; i < count; ++i)
+    {
+        const auto at = (end - (unsigned) (count - i)) & (scopeSize - 1);
+        in[i] = scopeIn[at].load (std::memory_order_relaxed);
+        out[i] = scopeOut[at].load (std::memory_order_relaxed);
+    }
+    return end;
 }
 
 void SiltProcessor::loadFile (const juce::File& file)

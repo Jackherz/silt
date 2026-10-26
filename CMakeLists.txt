@@ -81,6 +81,7 @@ FetchContent_MakeAvailable(juce clap_juce_extensions)
 # The plug-in's own sources, shared by both builds, the snapshot tool and the
 # plug-in tests.
 set(SILT_PLUGIN_SOURCES
+    plugin/ChainView.cpp
     plugin/ModPanel.cpp
     plugin/PageLayout.cpp
     plugin/PluginEditor.cpp

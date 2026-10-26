@@ -5,7 +5,7 @@ namespace silt::layout
 
 const char* pageName (int page)
 {
-    static const char* names[] { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER", "COLOR", "SPACE", "MOD" };
+    static const char* names[] { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER", "COLOR", "SPACE", "MOD", "CHAIN" };
     return names[juce::jlimit (0, numPages - 1, page)];
 }
 
@@ -192,6 +192,10 @@ std::vector<Entry> build (bool instrument)
         knob (mod, 3, id ("Macro"), "MACRO", macro);
     }
     e.push_back ({ mod, 7, Kind::action, "!assign", "CONTROLLER", {}, "ASSIGN", 0, {}, {} });
+
+    // CHAIN: the modules' order. The screen shows it and lets you drag them;
+    // the knob steps through all 24 orders.
+    knob (chain, 0, "chainOrder", "ORDER");
     return e;
 }
 } // namespace

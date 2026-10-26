@@ -4,7 +4,7 @@
 //   silt_snapshot sample.wav out-folder [param=value ...] [route=mod:param:amount ...]
 //
 // Loads the sample, holds a note so grains are sounding, then writes one PNG
-// per page (grain.png, shape.png, pitch.png, play.png, resonator.png, filter.png, color.png, space.png, mod.png, then routes.png with the route list open). Parameter values are in the
+// per page (grain.png, shape.png, pitch.png, play.png, resonator.png, filter.png, color.png, space.png, mod.png, chain.png, then routes.png with the route list open). Parameter values are in the
 // parameter's own units (ms, %, st...).
 
 #include "../../plugin/PluginEditor.h"
@@ -107,14 +107,16 @@ int main (int argc, char* argv[])
     editor->setVisible (true);
     runMessageLoop (100);
 
-    for (const auto* name : { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER", "COLOR", "SPACE", "MOD" })
+    for (const auto* name : { "GRAIN", "SHAPE", "PITCH", "PLAY", "RESONATOR", "FILTER", "COLOR", "SPACE", "MOD", "CHAIN" })
     {
         for (auto* child : editor->getChildren())
             if (auto* tab = dynamic_cast<juce::TextButton*> (child); tab != nullptr && tab->getButtonText() == name)
                 tab->triggerClick();
 
         play (silt, 0.05, false);
-        runMessageLoop (120);
+        runMessageLoop (60);
+        play (silt, 0.05, false);   // again: a page's scope taps only once it's shown
+        runMessageLoop (60);
 
         const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
         const auto file = outDir.getChildFile (juce::String (name).toLowerCase() + ".png");

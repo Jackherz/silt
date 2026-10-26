@@ -90,9 +90,69 @@ public:
     std::function<bool (juce::Graphics&, juce::Rectangle<float>)> drawInset;
     void repaintInset() { repaint (insetArea()); }
 
+    // The live scope, over the grain roll left of the inset: the sound going
+    // into a module (faint) and coming out (bright), steadied on the input's
+    // rising zero crossings and scaled to fit. in/out: the latest samples,
+    // oldest first; window: how many to show.
+    void setScope (const std::vector<float>& in, const std::vector<float>& out, int window, const juce::String& title)
+    {
+        const bool wasShown = scopeShown;
+        scopeShown = true;
+        scopeTitle = title;
+        const int n = (int) juce::jmin (in.size(), out.size());
+        window = juce::jlimit (16, juce::jmax (16, n / 2), window);
+        int from = n - window;
+        // The latest rising zero crossing that still leaves a full window.
+        for (int i = from; i > juce::jmax (1, n - 2 * window); --i)
+            if (in[(size_t) i - 1] <= 0.0f && in[(size_t) i] > 0.0f)
+            {
+                from = i;
+                break;
+            }
+        scopeIn.assign (in.begin() + from, in.begin() + from + window);
+        scopeOut.assign (out.begin() + from, out.begin() + from + window);
+
+        float peak = 0.0f;
+        for (int i = 0; i < window; ++i)
+            peak = juce::jmax (peak, std::abs (scopeIn[(size_t) i]), std::abs (scopeOut[(size_t) i]));
+        const bool wasQuiet = scopeQuiet;
+        scopeQuiet = peak < 1.0e-4f;
+        if (scopeQuiet && wasQuiet && wasShown)
+            return;   // silence: already showing PLAY A NOTE
+        const float target = 0.9f / juce::jmax (peak, 0.02f);
+        scopeScale = target < scopeScale ? target : scopeScale + (target - scopeScale) * 0.15f;   // shrink at once, grow slowly
+        repaint (scopeArea());
+    }
+
+    void hideScope()
+    {
+        if (scopeShown)
+        {
+            scopeShown = false;
+            repaint (scopeArea());
+        }
+    }
+
+    // Where the grain roll is: the lower part of the screen.
+    juce::Rectangle<int> rollArea() const
+    {
+        auto inner = getLocalBounds().reduced (8 + 12 + 10, 8 + 8 + 6);
+        inner.removeFromTop (16);
+        inner.removeFromBottom (20);
+        return inner.removeFromBottom (juce::roundToInt ((float) inner.getHeight() * 0.36f));
+    }
+
+    juce::Rectangle<int> scopeArea() const
+    {
+        auto area = rollArea();
+        return area.withRight (juce::jmin (area.getRight(), insetArea().getX() - 10));
+    }
+
     void paint (juce::Graphics& g) override
     {
         paintScreen (g);
+        if (scopeShown)
+            drawScope (g, scopeArea());
         if (drawInset != nullptr)
         {
             const auto area = insetArea().toFloat();
@@ -111,6 +171,54 @@ public:
     }
 
 private:
+    void drawScope (juce::Graphics& g, juce::Rectangle<int> area)
+    {
+        g.setColour (screenBlue);
+        g.fillRect (area.expanded (0, 2));
+        const auto box = area.toFloat();
+        g.setColour (screenLight.withAlpha (0.6f));
+        g.drawRect (box, 1.0f);
+        g.setColour (screenLight.withAlpha (0.35f));
+        g.drawHorizontalLine (area.getCentreY(), box.getX(), box.getRight());
+
+        auto label = area.reduced (6, 3).removeFromTop (12);
+        g.setFont (monoFont (10.0f));
+        g.setColour (screenLime);
+        g.drawText (scopeTitle, label, juce::Justification::centredLeft);
+        g.setColour (juce::Colours::white);
+        g.drawText ("OUT", label.removeFromRight (26), juce::Justification::centredRight);
+        g.setColour (screenPale.withAlpha (0.7f));
+        g.drawText ("IN", label.removeFromRight (30), juce::Justification::centredLeft);
+
+        if (scopeQuiet || scopeIn.empty())
+        {
+            g.setColour (screenPale.withAlpha (0.8f));
+            g.drawText ("PLAY A NOTE", area, juce::Justification::centred);
+            return;
+        }
+
+        const auto trace = [&] (const std::vector<float>& v, juce::Colour colour, float thickness)
+        {
+            const float half = box.getHeight() * 0.5f - 3.0f, mid = box.getCentreY();
+            const float dx = box.getWidth() / (float) juce::jmax (1, (int) v.size() - 1);
+            juce::Path path;
+            for (size_t i = 0; i < v.size(); ++i)
+            {
+                const float y = mid - juce::jlimit (-1.0f, 1.0f, v[i] * scopeScale) * half;
+                if (i == 0)
+                    path.startNewSubPath (box.getX(), y);
+                else
+                    path.lineTo (box.getX() + dx * (float) i, y);
+            }
+            g.setColour (colour);
+            g.strokePath (path, juce::PathStrokeType (thickness));
+        };
+        juce::Graphics::ScopedSaveState state (g);
+        g.reduceClipRegion (area.reduced (1));
+        trace (scopeIn, screenPale.withAlpha (0.45f), 1.2f);
+        trace (scopeOut, juce::Colours::white, 1.5f);
+    }
+
     void paintScreen (juce::Graphics& g)
     {
         auto r = getLocalBounds();
@@ -312,6 +420,10 @@ private:
     int numViews = 0;
     std::array<float, silt::Engine::numVoices> heads {};
     juce::String hud;
+    bool scopeShown = false, scopeQuiet = true;
+    std::vector<float> scopeIn, scopeOut;
+    float scopeScale = 1.0f;
+    juce::String scopeTitle;
 };
 
 // The screen's GAIN: the sample's level, as text on the screen. Drag up or

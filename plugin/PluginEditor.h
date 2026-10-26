@@ -7,6 +7,7 @@
 namespace silt::ui
 {
 class PanelLook;
+class ChainView;
 class GrainScreen;
 class SampleGainBox;
 }
@@ -137,6 +138,7 @@ private:
     SiltProcessor& silt;
     std::unique_ptr<silt::ui::PanelLook> look;
     std::unique_ptr<silt::ui::GrainScreen> screen;
+    std::unique_ptr<silt::ui::ChainView> chainView;
     silt::ui::ModActions modActions;
     std::unique_ptr<silt::ui::ModRail> rail;
     std::unique_ptr<silt::ui::RouteList> routeList;
@@ -157,6 +159,10 @@ private:
     juce::uint32 flashUntil = 0;
     void stepUndo (bool redo);
     void chooseFile();   // LOAD's file chooser
+    void updateScope();
+    std::vector<float> scopeIn, scopeOut;
+    unsigned scopeSeen = 0;
+    bool screenShowsScope = false;
     juce::ToggleButton monitorButton { "MONITOR" };
     juce::ComboBox captureBars;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureBarsAttachment;

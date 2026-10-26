@@ -747,3 +747,89 @@ TEST_CASE ("LOAD's factory samples set ROOT; a file sets it back to C; a restore
     CHECK (restored.silt.getFactorySample() == -1);
     CHECK_THAT (restored.silt.getOverview().seconds, WithinAbs (2.0, 0.01));
 }
+
+TEST_CASE ("CHAIN: 24 distinct orders, the first the classic one; a knob on the CHAIN page moves it")
+{
+    CHECK (SiltProcessor::chainOrder (0) == std::array<int, 4> { 0, 1, 2, 3 });
+    juce::StringArray names;
+    for (int i = 0; i < SiltProcessor::numChainOrders; ++i)
+    {
+        CHECK (SiltProcessor::chainOrderIndex (SiltProcessor::chainOrder (i)) == i);
+        names.addIfNotAlreadyThere (SiltProcessor::chainOrderName (i));
+    }
+    CHECK (names.size() == SiltProcessor::numChainOrders);
+    CHECK (SiltProcessor::chainOrderName (0) == "R>F>C>S");
+
+    Rig rig;
+    CHECK (rig.silt.slotParameter (silt::layout::chain, 0) == "chainOrder");
+    CHECK (rig.silt.modulationTarget ("chainOrder") < 0);
+    CHECK (rig.silt.capturePreset ("x")->getChildByName ("PARAMS")->hasAttribute ("chainOrder"));
+}
+
+TEST_CASE ("CHAIN order changes the sound: noise after a low-pass is brighter than noise before it")
+{
+    // High-frequency energy (first differences) of the output with a dark
+    // low-pass and COLOR noise, in a given order.
+    const auto brightness = [] (const std::array<int, 4>& order)
+    {
+        Rig rig;
+        loadSine (rig);
+        const auto setPlain = [&] (const char* id, float v)
+        {
+            auto* p = rig.silt.params.getParameter (id);
+            p->setValueNotifyingHost (p->convertTo0to1 (v));
+        };
+        setPlain ("filterMode", 2.0f);
+        setPlain ("filterCutoff", 200.0f);
+        setPlain ("colorNoise", 100.0f);
+        setPlain ("chainOrder", (float) SiltProcessor::chainOrderIndex (order));
+        rig.silt.prepareToPlay (48000.0, 512);   // starts in the order, without the fade
+
+        juce::MidiBuffer on;
+        on.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 512);
+        double energy = 0.0;
+        for (int b = 0; b < 60; ++b)
+        {
+            buffer.clear();
+            rig.silt.processBlock (buffer, on);
+            on.clear();
+            if (b >= 20)
+                for (int i = 1; i < 512; ++i)
+                    energy += std::pow (buffer.getSample (0, i) - buffer.getSample (0, i - 1), 2.0f);
+        }
+        return energy;
+    };
+    const double noiseLast = brightness ({ 0, 1, 2, 3 });    // filter, then COLOR's noise
+    const double noiseFirst = brightness ({ 0, 2, 1, 3 });   // COLOR's noise, then the filter
+    CHECK (noiseLast > noiseFirst * 4.0);
+}
+
+TEST_CASE ("The scope sees the sound going into the tapped module and out of it")
+{
+    Rig rig;
+    loadSine (rig);
+    rig.set ("colorBits", rig.silt.params.getParameter ("colorBits")->convertTo0to1 (3.0f));
+    rig.silt.scopeModule.store (SiltProcessor::moduleColor);
+
+    juce::MidiBuffer on;
+    on.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+    juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 512);
+    for (int b = 0; b < 20; ++b)
+    {
+        buffer.clear();
+        rig.silt.processBlock (buffer, on);
+        on.clear();
+    }
+    std::vector<float> in (2048), out (2048);
+    CHECK (rig.silt.readScope (in.data(), out.data(), 2048) >= 2048u);
+
+    float peak = 0.0f, difference = 0.0f;
+    for (size_t i = 0; i < in.size(); ++i)
+    {
+        peak = std::max (peak, std::abs (in[i]));
+        difference = std::max (difference, std::abs (out[i] - in[i]));
+    }
+    CHECK (peak > 0.01f);
+    CHECK (difference > 0.005f);   // 3 bits: the output is visibly steppier
+}
