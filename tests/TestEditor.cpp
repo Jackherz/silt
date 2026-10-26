@@ -85,7 +85,15 @@ TEST_CASE ("Every slot's shown control is the one the controller moves, in every
                 rig.set ((id + "Type").toRawUTF8(), (float) type);
                 rig.set ((id + "Sync").toRawUTF8(), (float) sync);
                 rig.checkAgreement ("modulator type / sync");
+                rig.set ((id + "Voice").toRawUTF8(), 1.0f);
+                rig.checkAgreement ("modulator type / sync, per voice");
+                rig.set ((id + "Voice").toRawUTF8(), 0.0f);
             }
+        rig.set ((id + "Type").toRawUTF8(), 0.0f);
+        rig.set ((id + "Voice").toRawUTF8(), 1.0f);
+        rig.editor->showPage (silt::layout::mod);
+        CHECK (rig.editor->visibleParameterId (silt::layout::mod, 7) == id + "Spread");   // SPREAD in ASSIGN's place
+        rig.set ((id + "Voice").toRawUTF8(), 0.0f);
     }
 }
 
@@ -362,4 +370,19 @@ TEST_CASE ("A theme changes the palette, and Cream puts it back")
     CHECK (silt::ui::frame.getPerceivedBrightness() < 0.3f);   // the header stays dark in every theme
     silt::ui::applyTheme (0);
     CHECK (silt::ui::chassis == cream);
+}
+
+TEST_CASE ("The strip's controls fit without overlapping at the smallest size")
+{
+    EditorRig rig;
+    rig.editor->setSize (860, 520);
+    std::vector<juce::Rectangle<int>> boxes;
+    for (const auto* text : { "LOAD", "LEARN", "RANDOM", "FEED", "UNDO", "REDO", "MOD ROUTES" })
+        for (auto* child : rig.editor->getChildren())
+            if (auto* b = dynamic_cast<juce::TextButton*> (child); b != nullptr && b->getButtonText() == text)
+                boxes.push_back (b->getBounds());
+    REQUIRE (boxes.size() == 7);
+    for (size_t i = 0; i < boxes.size(); ++i)
+        for (size_t j = i + 1; j < boxes.size(); ++j)
+            CHECK_FALSE (boxes[i].intersects (boxes[j]));
 }

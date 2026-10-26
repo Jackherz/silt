@@ -290,6 +290,10 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     captureBars.addItemList ({ "1 BAR", "2 BARS", "4 BARS", "8 BARS" }, 1);
     addAndMakeVisible (captureBars);
     captureBarsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "captureBars", captureBars);
+    feedButton.setClickingTogglesState (true);
+    feedButton.setTooltip ("FEED: ARM records what Silt itself is playing (from the next bar), so the grains play their own sound");
+    addAndMakeVisible (feedButton);
+    feedAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "captureFeed", feedButton);
 
     armButton.getProperties().set ("red", true);
     armButton.setColour (juce::TextButton::textColourOffId, onFrame);
@@ -1136,8 +1140,8 @@ juce::String SiltEditor::statusText() const
     using S = SiltProcessor::CaptureState;
     switch (silt.captureState.load())
     {
-        case S::armed: return silt.hostPlaying.load() ? "ARMED: WAITING FOR NEXT BAR" : "ARMED: STARTING";
-        case S::recording: return "REC " + juce::String (juce::roundToInt (silt.captureProgress.load() * 100.0f)) + "%";
+        case S::armed: return juce::String (param ("captureFeed") > 0.5f ? "FEED " : "") + (silt.hostPlaying.load() ? "ARMED: WAITING FOR NEXT BAR" : "ARMED: STARTING");
+        case S::recording: return juce::String (param ("captureFeed") > 0.5f ? "FEED " : "") + "REC " + juce::String (juce::roundToInt (silt.captureProgress.load() * 100.0f)) + "%";
         case S::done:
         case S::cancelRequested:
         case S::cancelled:
@@ -1342,28 +1346,31 @@ void SiltEditor::resized()
     screen->setBounds (r);
     chainView->setBounds (screen->rollArea().translated (r.getX(), r.getY()));
 
-    auto row = strip;
-    armButton.setBounds (row.removeFromLeft (110));
-    row.removeFromLeft (8);
-    captureBars.setBounds (row.removeFromLeft (104).reduced (0, 4));
-    row.removeFromLeft (8);
-    loadButton.setBounds (row.removeFromLeft (90));
-    row.removeFromLeft (8);
-    learnButton.setBounds (row.removeFromLeft (90));
-    row.removeFromLeft (8);
-    randomButton.setBounds (row.removeFromLeft (90));
-    row.removeFromLeft (4);
-    randomAmountBox->setBounds (row.removeFromLeft (52));
-    if constexpr (SiltProcessor::isInstrument)
+    // The strip: left to right, then the right-hand group; everything narrows
+    // together when the window is small.
     {
-        monitorButton.setBounds (row.removeFromRight (104).reduced (0, 4));
-        row.removeFromRight (8);
+        struct Part { juce::Component* c; int width, gap; bool right; int trimY; };
+        std::vector<Part> parts { { &armButton, 100, 8, false, 0 }, { &captureBars, 100, 4, false, 4 }, { &feedButton, 60, 8, false, 0 },
+                                  { &loadButton, 80, 8, false, 0 }, { &learnButton, 80, 8, false, 0 },
+                                  { &randomButton, 86, 4, false, 0 }, { randomAmountBox.get(), 52, 0, false, 0 } };
+        if constexpr (SiltProcessor::isInstrument)
+            parts.push_back ({ &monitorButton, 104, 8, true, 4 });
+        parts.push_back ({ &routesButton, 112, 8, true, 0 });
+        parts.push_back ({ &redoButton, 60, 4, true, 0 });
+        parts.push_back ({ &undoButton, 60, 16, true, 0 });
+        int wanted = 0;
+        for (const auto& p : parts)
+            wanted += p.width + p.gap;
+        const float scale = juce::jmin (1.0f, (float) strip.getWidth() / (float) wanted);
+        auto row = strip;
+        for (const auto& p : parts)
+        {
+            const int w = juce::roundToInt ((float) p.width * scale), gap = juce::roundToInt ((float) p.gap * scale);
+            auto area = p.right ? row.removeFromRight (w) : row.removeFromLeft (w);
+            p.c->setBounds (area.reduced (0, p.trimY));
+            p.right ? row.removeFromRight (gap) : row.removeFromLeft (gap);
+        }
     }
-    routesButton.setBounds (row.removeFromRight (112));
-    row.removeFromRight (8);
-    redoButton.setBounds (row.removeFromRight (60));
-    row.removeFromRight (4);
-    undoButton.setBounds (row.removeFromRight (60));
 
     auto panel = pagePanel.reduced (2);
     auto tabs = panel.removeFromTop (28);

@@ -8,10 +8,11 @@ namespace silt::ui
 
 // The screen: the sample (cached, redrawn only when it or the size changes),
 // the region, a playhead per voice, and every sounding grain twice: as a line
-// on the waveform where it's reading, and as a bar in the grain roll below.
-// The roll's two axes keep Spray and Random pan apart: left to right is where
-// in the sample a grain plays (spray scatters it sideways), top to bottom is
-// where it sits in the stereo field (random pan spreads it up and down).
+// on the waveform where it's reading, and as a glowing dot with a fading
+// trail in the grain field below. The field's two axes keep Spray and Random
+// pan apart: left to right is where in the sample a grain plays (spray
+// scatters it sideways), top to bottom is where it sits in the stereo field
+// (random pan spreads it up and down).
 class GrainScreen final : public juce::Component
 {
 public:
@@ -36,12 +37,15 @@ public:
     bool setActivity (const std::array<silt::GrainView, SiltProcessor::maxGrainViews>& v, int n,
                       const std::array<float, silt::Engine::numVoices>& h, const juce::String& info)
     {
-        const bool changed = n > 0 || numViews > 0 || h != heads || info != hud;
         if (n > 0)
             std::copy (v.begin(), v.begin() + n, views.begin());
         numViews = n;
+        fadeFrames = n > 0 ? 45 : juce::jmax (0, fadeFrames - 1);   // trails fade for 1.5 s after the last grain
+        const bool changed = n > 0 || fadeFrames > 0 || h != heads || info != hud;
         heads = h;
         hud = info;
+        if ((n > 0 || fadeFrames > 0) && ! scopeShown)
+            updateField();
         return changed;
     }
 
@@ -365,6 +369,50 @@ private:
         g.drawHorizontalLine (roll.getY() - 3, full.getX(), full.getRight());
     }
 
+    // The grain field, drawn into an image that fades a little each frame, so
+    // every grain leaves a short trail. Across: where it's reading (as on the
+    // waveform). Down: where it sits in the stereo field, plus an offset of its
+    // own (up to a quarter of the height) so grains at one pan still form a
+    // cloud. Size: level.
+    void updateField()
+    {
+        const auto roll = rollArea();
+        const float scale = 2.0f;
+        const int w = juce::roundToInt ((float) roll.getWidth() * scale), h = juce::roundToInt ((float) roll.getHeight() * scale);
+        if (w <= 0 || h <= 0)
+            return;
+        if (! field.isValid() || field.getWidth() != w || field.getHeight() != h)
+            field = juce::Image (juce::Image::ARGB, w, h, true);
+
+        juce::Graphics g (field);
+        // Fade what's there: about a third of its strength gone per frame.
+        juce::Image::BitmapData pixels (field, juce::Image::BitmapData::readWrite);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x)
+            {
+                auto* p = pixels.getPixelPointer (x, y);
+                for (int c = 0; c < 4; ++c)
+                    p[c] = (juce::uint8) ((p[c] * 170) >> 8);
+            }
+
+        const float laneTop = (float) h * 0.12f, laneBottom = (float) h * 0.88f;
+        for (int i = 0; i < numViews; ++i)
+        {
+            const auto& v = views[(size_t) i];
+            const float level = juce::jlimit (0.0f, 1.0f, v.level);
+            const float x = (live ? xOf (v.position) : v.position) * (float) w;
+            const auto hash = (std::uint32_t) (v.voice * 131u + v.slot * 2654435761u);
+            const float own = ((float) (hash % 1000u) / 1000.0f - 0.5f) * 0.5f;   // ±25% of the height
+            const float y = juce::jmap (juce::jlimit (-1.0f, 1.0f, v.pan * 0.85f + own), -1.0f, 1.0f, laneTop, laneBottom);
+            const float r = (1.5f + 4.0f * level) * scale;
+            const auto colour = v.reversed ? screenLime : juce::Colours::white;
+            g.setColour (colour.withAlpha (0.15f + 0.25f * level));
+            g.fillEllipse (juce::Rectangle<float> (r * 2.6f, r * 2.6f).withCentre ({ x, y }));   // glow
+            g.setColour (colour.withAlpha (0.45f + 0.55f * level));
+            g.fillEllipse (juce::Rectangle<float> (r, r).withCentre ({ x, y }));
+        }
+    }
+
     void drawGrains (juce::Graphics& g, juce::Rectangle<int> wave, juce::Rectangle<int> roll)
     {
         const float w = (float) wave.getWidth();
@@ -382,6 +430,8 @@ private:
         g.drawText ("L", juce::Rectangle<float> ((float) roll.getX(), panToY (-1.0f) - 6.0f, 10.0f, 12.0f), juce::Justification::centredLeft);
         g.drawText ("C", juce::Rectangle<float> ((float) roll.getX(), panToY (0.0f) - 6.0f, 10.0f, 12.0f), juce::Justification::centredLeft);
         g.drawText ("R", juce::Rectangle<float> ((float) roll.getX(), panToY (1.0f) - 6.0f, 10.0f, 12.0f), juce::Justification::centredLeft);
+        if (field.isValid() && fadeFrames > 0)
+            g.drawImage (field, roll.toFloat());
 
         for (int i = 0; i < numViews; ++i)
         {
@@ -393,17 +443,6 @@ private:
             // On the waveform: a line at the read position, as tall as the grain is loud.
             g.setColour ((v.reversed ? screenLime : juce::Colours::white).withAlpha (alpha * 0.8f));
             g.fillRect (x, mid - half * level, 1.5f, juce::jmax (1.0f, 2.0f * half * level));
-
-            // In the roll: the span it covers and its head, at its stereo
-            // position. A small offset per grain keeps centred grains apart.
-            const float stagger = ((float) ((v.voice * 5 + v.slot) % 5) - 2.0f) * laneH * 0.5f;
-            const float y = panToY (juce::jlimit (-1.0f, 1.0f, v.pan)) + stagger - laneH * 0.5f;
-            const float sx = (float) wave.getX() + (live ? xOf (v.start) : v.start) * w;
-            const float ex = juce::jmax (sx + 1.0f, sx + (v.end - v.start) * w);
-            g.setColour ((v.reversed ? screenLime : screenPale).withAlpha (0.25f + 0.35f * level));
-            g.fillRect (sx, y + laneH * 0.3f, ex - sx, juce::jmax (1.0f, laneH * 0.4f));
-            g.setColour ((v.reversed ? screenLime : juce::Colours::white).withAlpha (alpha));
-            g.fillRect (x - 1.5f, y, 3.0f, juce::jmax (2.0f, laneH - 1.0f));
         }
 
         // Voice playheads: a marker over the waveform.
@@ -431,6 +470,8 @@ private:
     int numViews = 0;
     std::array<float, silt::Engine::numVoices> heads {};
     juce::String hud;
+    juce::Image field;     // the grain field with its trails
+    int fadeFrames = 0;    // frames left to fade after the last grain
     bool scopeShown = false, scopeQuiet = true;
     std::vector<float> scopeIn, scopeOut;
     float scopeScale = 1.0f;

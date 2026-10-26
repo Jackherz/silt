@@ -11,6 +11,11 @@ questions (§12):
 3. **Envelope** restarts per note (no legato mode yet).
 4. **Live mode:** the drone voice is a voice like any other, so per-voice modulators run
    on it, triggered by the follower.
+5. **SPREAD (27 Oct 2026):** a per-voice WAVE gets a SPREAD knob (slot 7, in ASSIGN's
+   place while VOICE is on). Each note of a phrase sits further round the cycle by the
+   golden ratio (counting from the first note after all were released), times SPREAD,
+   applied where the wave is read (`ModulatorParams::voiceOffset`), so it works free,
+   retriggered or synced. At 0 the voices move together, as before.
 
 How it's built: the engine (still JUCE-free) has a small `silt::VoiceParams` interface it
 calls when a note starts or ends on a voice and, while active, to get each voice's

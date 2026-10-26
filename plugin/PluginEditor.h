@@ -184,6 +184,8 @@ private:
     bool screenShowsScope = false;
     juce::ToggleButton monitorButton { "MONITOR" };
     juce::ComboBox captureBars;
+    juce::TextButton feedButton { "FEED" };   // ARM records Silt's own output
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> feedAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureBarsAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> monitorAttachment;
     std::unique_ptr<juce::FileChooser> chooser;

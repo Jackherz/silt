@@ -966,3 +966,55 @@ TEST_CASE ("SPACE's live trace restarts at each note and shows what SPACE adds")
         loudest = std::max (loudest, rig.silt.spaceTraceAt (i));
     CHECK (loudest > 0.001f);
 }
+
+TEST_CASE ("Per-voice SPREAD sets a chord's waves apart; at 0 they move together")
+{
+    // The three voices' modulated pitch, a moment after a chord starts.
+    const auto voices = [] (float spread)
+    {
+        Rig rig;
+        loadSine (rig);
+        rig.set ("m1Voice", 1.0f);   // MOD 1 is a 1 Hz sine
+        rig.set ("m1Spread", spread);
+        const int t = rig.silt.modulationTarget ("pitch");
+        rig.silt.setRouteAmount (0, t, 0.5f);
+        juce::MidiBuffer chord;
+        for (const int note : { 60, 64, 67 })
+            chord.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
+        runBlocks (rig, 20, chord);
+        std::vector<float> values;
+        for (int v = 0; v < silt::Engine::numVoices; ++v)
+            if (rig.silt.voiceShown[(size_t) v].load())
+                values.push_back (rig.silt.voiceModulated01[(size_t) v][(size_t) t].load());
+        return values;
+    };
+    const auto together = voices (0.0f);
+    REQUIRE (together.size() == 3);
+    CHECK_THAT (together[0], WithinAbs (together[1], 1.0e-5));
+    CHECK_THAT (together[1], WithinAbs (together[2], 1.0e-5));
+
+    const auto apart = voices (1.0f);
+    REQUIRE (apart.size() == 3);
+    CHECK (std::abs (apart[0] - apart[1]) > 0.05f);
+    CHECK (std::abs (apart[1] - apart[2]) > 0.05f);
+}
+
+TEST_CASE ("FEED records Silt's own output and plays it as the new sample")
+{
+    Rig rig;
+    loadSine (rig);
+    rig.set ("captureFeed", 1.0f);
+    rig.set ("captureBars", 0.0f);   // 1 bar: 2 s at 120 BPM
+    rig.silt.armCapture();
+    juce::MidiBuffer on;
+    on.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+    runBlocks (rig, 200, on);   // about 2.1 s; no host playing, so it starts at once
+    const auto loaded = [&] { return rig.silt.getOverview().name.startsWith ("FEED"); };
+    for (int i = 0; i < 300 && ! loaded(); ++i)
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    REQUIRE (loaded());
+    const auto overview = rig.silt.getOverview();
+    CHECK_THAT (overview.seconds, WithinAbs (2.0, 0.01));
+    CHECK (*std::max_element (overview.maximum.begin(), overview.maximum.end()) > 0.05f);   // it heard the grains
+    CHECK_FALSE (rig.silt.capturePreset ("x")->getChildByName ("PARAMS")->hasAttribute ("captureFeed"));
+}

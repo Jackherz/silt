@@ -90,10 +90,12 @@ float Modulator::wave (const ModulatorParams& p, const ModContext& c) noexcept
     // SYMMETRY warps the phase before the wave is read: the first half of the
     // cycle takes `symmetry` of it, the second half the rest.
     double read = phase;
+    if (p.voiceOffset != 0.0f)
+        read = (read + p.voiceOffset) - std::floor (read + p.voiceOffset);
     if (p.symmetry != 0.5f)
     {
         const double s = std::clamp ((double) p.symmetry, 0.001, 0.999);
-        read = phase < s ? 0.5 * phase / s : 0.5 + 0.5 * (phase - s) / (1.0 - s);
+        read = read < s ? 0.5 * read / s : 0.5 + 0.5 * (read - s) / (1.0 - s);
     }
 
     const float shape = std::clamp (p.shape, 0.0f, 3.0f);

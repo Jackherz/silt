@@ -179,6 +179,7 @@ std::vector<Entry> build (bool instrument)
         under (Kind::underButton, mod, 3, id ("Rev"), 42, {}, "REV", both (wave, on (id ("Sync"))));
         e.back().dx = 25;
         knob (mod, 4, id ("Phase"), "PHASE", wave);
+        knob (mod, 7, id ("Spread"), "SPREAD", both (wave, on (id ("Voice"))));
         under (Kind::underButton, mod, 4, id ("Retrig"), 64, {}, "RETRIG", wave);
         knob (mod, 5, id ("Sym"), "SYM", wave);
         knob (mod, 6, id ("Curve"), "CURVE", wave);
@@ -203,7 +204,13 @@ std::vector<Entry> build (bool instrument)
         // MACRO: one knob that moves everything it's routed to.
         knob (mod, 3, id ("Macro"), "MACRO", macro);
     }
-    e.push_back ({ mod, 7, Kind::action, "!assign", "CONTROLLER", {}, "ASSIGN", 0, {}, {} });
+    // A per-voice WAVE puts SPREAD in slot 7; otherwise it's the controller's ASSIGN.
+    const auto voiceWave = [] (const Context& c)
+    {
+        const auto id = "m" + juce::String (c.modShown + 1);
+        return juce::roundToInt (c.v (id + "Type")) == 0 && c.v (id + "Voice") > 0.5f;
+    };
+    e.push_back ({ mod, 7, Kind::action, "!assign", "CONTROLLER", {}, "ASSIGN", 0, [voiceWave] (const Context& c) { return ! voiceWave (c); }, {} });
 
     // CHAIN: the modules' order. The screen shows it and lets you drag them;
     // the knob steps through all 24 orders.

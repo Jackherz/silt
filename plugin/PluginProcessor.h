@@ -305,7 +305,7 @@ private:
     struct ModulatorRaw
     {
         std::atomic<float>* type, *rate, *sync, *div, *shape, *phase, *retrig, *smooth, *jitter;
-        std::atomic<float>* attack, *decay, *sustain, *release, *repeat, *followAttack, *followRelease, *gain, *source, *enable, *voice, *macro, *sym, *curve, *rev;
+        std::atomic<float>* attack, *decay, *sustain, *release, *repeat, *followAttack, *followRelease, *gain, *source, *enable, *voice, *macro, *sym, *curve, *rev, *spread;
     };
     std::array<bool, 128> heldKeys {};   // audio thread: which notes are down, so repeats don't miscount
     std::array<float, numModulators> globalModValues {};   // audio thread: this chunk's shared values
@@ -360,6 +360,8 @@ private:
         std::array<std::array<float, numModulators>, voicesN> values {};
         std::array<silt::GrainParams, voicesN> params {};
         std::array<bool, voicesN> held {}, started {};
+        std::array<float, voicesN> spreadOffset {};   // SPREAD: where this voice's note sits round the cycle
+        int notesInPhrase = 0;
         std::array<bool, numModulators> perVoice {};
         std::array<float, maxTargets> base01 {}, scratch {};
         bool active = false;
@@ -384,6 +386,7 @@ private:
 
     // Capture: the message thread allocates the target, the audio thread fills it.
     std::unique_ptr<silt::SampleBuffer> captureOwned;            // message thread only
+    bool capturingFeed = false;                                  // message thread: this capture is FEED's
     std::atomic<silt::SampleBuffer*> captureTarget { nullptr };  // shared view for the audio thread
     int captureWritePos = 0;                                     // audio thread only
 

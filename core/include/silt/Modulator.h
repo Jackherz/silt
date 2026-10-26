@@ -17,6 +17,7 @@ struct ModulatorParams
     bool sync = false;
     double syncQuarters = 1.0;   // one cycle (WAVE) or step (RANDOM), in quarter notes
     bool reverse = false;        // WAVE synced: runs backwards against the bar
+    float voiceOffset = 0.0f;    // WAVE: 0…1 of a cycle added where it's read (per-voice SPREAD)
     // WAVE
     float shape = 0.0f;          // 0 sine, 1 triangle, 2 saw, 3 square, blended between
     float phase = 0.0f;          // 0…1: where a retriggered or synced cycle starts

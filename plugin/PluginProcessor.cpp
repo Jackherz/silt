@@ -365,6 +365,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                     // Per voice: each voice runs its own copy from its own note (grain
                     // parameters only; the effects follow the shared one).
                     std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Voice"), 1 }, name ("per voice"), false),
+                    // SPREAD (a per-voice WAVE): each new note's wave starts further round
+                    // the cycle, so a chord's voices move apart instead of together.
+                    percent (id ("Spread"), name ("voice spread"), 0.0f),
                     percent (id ("Macro"), name ("macro"), 0.0f),
                     // WAVE: where the cycle turns round (50%: as drawn) and how it bends (0%: straight).
                     percent (id ("Sym"), name ("symmetry"), 50.0f),
@@ -378,6 +381,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
     // Capture and output
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "captureBars", 1 }, "Capture length",
                                                               captureBarChoices, 1),
+                // FEED: ARM records Silt's own output (from the next bar), so the
+                // grains play what they just made.
+                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "captureFeed", 1 }, "Capture own output", false),
                 withUnit ("gain", "Output", Range (-48.0f, 12.0f, 0.1f), 0.0f, formatDb),
                 // The sample's own level, before the grains go anywhere: for samples
                 // that come in too loud or too soft (the screen's GAIN).
@@ -527,7 +533,7 @@ SiltProcessor::SiltProcessor()
         };
         modulatorRaw[(size_t) m] = { p ("Type"), p ("Rate"), p ("Sync"), p ("Div"), p ("Shape"), p ("Phase"), p ("Retrig"), p ("Smooth"), p ("Jitter"),
                                      p ("Attack"), p ("Decay"), p ("Sustain"), p ("Release"), p ("Repeat"), p ("FAttack"), p ("FRelease"), p ("Gain"), p ("Source"),
-                                     p ("Enable"), p ("Voice"), p ("Macro"), p ("Sym"), p ("Curve"), p ("Rev") };
+                                     p ("Enable"), p ("Voice"), p ("Macro"), p ("Sym"), p ("Curve"), p ("Rev"), p ("Spread") };
     }
 
     for (auto* parameter : getParameters())
@@ -908,7 +914,9 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     captureSource.store (source, std::memory_order_relaxed);
     if (capture.getNumChannels() > 0)
         captureMeter.process (capture.getArrayOfReadPointers(), capture.getNumChannels(), numSamples);
-    runCapture (capture, position ? &*position : nullptr);
+    const bool feeding = params.getRawParameterValue ("captureFeed")->load (std::memory_order_relaxed) > 0.5f;
+    if (! feeding)
+        runCapture (capture, position ? &*position : nullptr);
 
     // Rendered in chunks of up to 64 samples: modulation updates per chunk and
     // every parameter is read after it.
@@ -1092,6 +1100,11 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
                 output.setSample (1, start + i, safetyClip ((dryR + wet.getSample (1, i) * mix) * gain));
         }
     }
+
+    // FEED: the capture takes what Silt just played, sample for sample with
+    // the block's position, so it still starts on the bar.
+    if (feeding)
+        runCapture (output, position ? &*position : nullptr);
 
     activeGrains.store (engine.getActiveGrainCount(), std::memory_order_relaxed);
     liveMode.store (lastLive, std::memory_order_relaxed);
@@ -1593,7 +1606,11 @@ void SiltProcessor::VoiceModulation::step (int v, int numSamples) noexcept
     started[(size_t) v] = false;
     for (int m = 0; m < numModulators; ++m)
         if (perVoice[(size_t) m])
-            values[(size_t) v][(size_t) m] = mods[(size_t) v][(size_t) m].advance (owner.readModulatorParams (m), c);
+        {
+            auto own = owner.readModulatorParams (m);
+            own.voiceOffset = owner.modulatorRaw[(size_t) m].spread->load (std::memory_order_relaxed) * 0.01f * spreadOffset[(size_t) v];
+            values[(size_t) v][(size_t) m] = mods[(size_t) v][(size_t) m].advance (own, c);
+        }
 }
 
 // One voice's grain parameters: grain targets from this voice's modulators
@@ -1618,6 +1635,12 @@ void SiltProcessor::VoiceModulation::compute (int v) noexcept
 
 void SiltProcessor::VoiceModulation::noteStarted (int v, int note, float velocity) noexcept
 {
+    // SPREAD: the notes of a phrase (from the first after all were let go)
+    // step round the cycle by the golden ratio, so any number stay apart.
+    if (std::none_of (held.begin(), held.end(), [] (bool h) { return h; }))
+        notesInPhrase = 0;
+    spreadOffset[(size_t) v] = (float) std::fmod (0.6180339887 * notesInPhrase++, 1.0);
+
     // A new note (or a stolen voice) starts its modulators afresh.
     for (int m = 0; m < numModulators; ++m)
         mods[(size_t) v][(size_t) m].reset (0x7019e + (std::uint64_t) (v * numModulators + m) + (std::uint64_t) note * 977u);
@@ -1668,7 +1691,10 @@ bool SiltProcessor::isModulatorPerVoice (int m) const noexcept
 namespace
 {
 // Session and sample settings (ROOT is the sample's key), not part of a sound.
-bool inPresets (const juce::String& id) { return id != "monitor" && id != "captureBars" && id != "sampleGain" && id != "root"; }
+bool inPresets (const juce::String& id)
+{
+    return id != "monitor" && id != "captureBars" && id != "captureFeed" && id != "sampleGain" && id != "root";
+}
 } // namespace
 
 std::unique_ptr<juce::XmlElement> SiltProcessor::capturePreset (const juce::String& name) const
@@ -1917,7 +1943,7 @@ void SiltProcessor::timerCallback()
     if (state == CaptureState::done)
     {
         captureTarget.store (nullptr, std::memory_order_release);
-        analyseThenInstall (std::move (captureOwned), "CAPTURE " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"));
+        analyseThenInstall (std::move (captureOwned), (capturingFeed ? "FEED " : "CAPTURE ") + juce::Time::getCurrentTime().formatted ("%H:%M:%S"));
         captureState.store (CaptureState::idle, std::memory_order_release);
     }
     else if (state == CaptureState::cancelled)
@@ -1939,6 +1965,7 @@ void SiltProcessor::armCapture()
     const double seconds = juce::jmin (maxCaptureSeconds, bars * barQuarters * 60.0 / bpm);
 
     captureOwned = std::make_unique<silt::SampleBuffer> ((int) (seconds * currentSampleRate), currentSampleRate);
+    capturingFeed = params.getRawParameterValue ("captureFeed")->load() > 0.5f;
     captureProgress.store (0.0f);
     captureTarget.store (captureOwned.get(), std::memory_order_release);
     captureState.store (CaptureState::armed, std::memory_order_release);
