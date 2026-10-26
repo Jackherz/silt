@@ -149,11 +149,45 @@ public:
     }
 
     // Right-click on the screen: the sample's menu (the editor builds it).
+    // SLICE: drag a slice line to move it; double-click a line to remove it,
+    // or anywhere else on the waveform to add one.
     std::function<void()> onMenu;
+    std::function<void (int index, float share)> onSliceMove;
+    std::function<void (float share)> onSliceAdd;
+    std::function<void (int index)> onSliceRemove;
+
     void mouseDown (const juce::MouseEvent& e) override
     {
-        if (e.mods.isPopupMenu() && onMenu)
-            onMenu();
+        draggingSlice = -1;
+        if (e.mods.isPopupMenu())
+        {
+            if (onMenu)
+                onMenu();
+            return;
+        }
+        draggingSlice = sliceAt (e.position);
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (draggingSlice >= 0 && onSliceMove)
+            onSliceMove (draggingSlice, waveShareAt (e.position.x));
+    }
+    void mouseUp (const juce::MouseEvent&) override { draggingSlice = -1; }
+    void mouseDoubleClick (const juce::MouseEvent& e) override
+    {
+        if (slices.empty() || live || ! waveRect().toFloat().contains (e.position))
+            return;
+        if (const int i = sliceAt (e.position); i >= 0)
+        {
+            if (onSliceRemove)
+                onSliceRemove (i);
+        }
+        else if (onSliceAdd)
+            onSliceAdd (waveShareAt (e.position.x));
+    }
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        setMouseCursor (sliceAt (e.position) >= 0 ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
     }
 
     // How the grains are drawn below the waveform; each theme has its own.
@@ -181,6 +215,17 @@ public:
             field = {};
             repaint();
         }
+    }
+
+    // Where the waveform is (as paintScreen lays it out).
+    juce::Rectangle<int> waveRect() const
+    {
+        auto inner = getLocalBounds().reduced (8 + 12 + 10, 8 + 8 + 6);
+        inner.removeFromTop (16);
+        inner.removeFromBottom (20);
+        inner.removeFromBottom (juce::roundToInt ((float) inner.getHeight() * fieldShare));
+        inner.removeFromBottom (6);
+        return inner;
     }
 
     // Where the grain roll is: the lower part of the screen.
@@ -696,6 +741,29 @@ private:
     float displayGain = 1.0f;
     bool live = false, frozen = false, transientsShown = false, selfFeed = false;
     std::vector<float> slices;
+    int draggingSlice = -1;
+
+    // The slice line within a few pixels of a point on the waveform, or −1.
+    int sliceAt (juce::Point<float> p) const
+    {
+        const auto wave = waveRect().toFloat();
+        if (slices.empty() || live || ! wave.contains (p))
+            return -1;
+        int best = -1;
+        float nearest = 6.0f;
+        for (size_t i = 0; i < slices.size(); ++i)
+            if (const float d = std::abs (wave.getX() + slices[i] * wave.getWidth() - p.x); d < nearest)
+            {
+                nearest = d;
+                best = (int) i;
+            }
+        return best;
+    }
+    float waveShareAt (float x) const   // a share of the sample, from a point on the waveform
+    {
+        const auto wave = waveRect().toFloat();
+        return juce::jlimit (0.0f, 1.0f, (x - wave.getX()) / juce::jmax (1.0f, wave.getWidth()));
+    }
     float writeShare = 0.0f;
     std::array<float, SiltProcessor::liveColumns> livePeaks {};
     float start = 0.0f, length = 1.0f;

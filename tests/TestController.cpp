@@ -1136,3 +1136,38 @@ TEST_CASE ("Sample tools: trim to the region, reverse, normalise; each an undo s
     CHECK (reader->numChannels == 2);
     file.deleteFile();
 }
+
+TEST_CASE ("SLICE: moving, adding and removing a slice makes them MANUAL, kept with the session")
+{
+    Rig rig;
+    loadSine (rig);
+    rig.set ("keyMode", rig.silt.params.getParameter ("keyMode")->convertTo0to1 (3.0f));     // SLICE
+    rig.set ("sliceCount", rig.silt.params.getParameter ("sliceCount")->convertTo0to1 (4.0f));
+    runBlocks (rig, 1);   // the count reaches its modulated copy
+    REQUIRE (rig.silt.sliceMarks().size() == 4);   // equal quarters
+
+    rig.silt.moveSlice (1, 0.4f);
+    CHECK (juce::roundToInt (rig.silt.params.getParameter ("sliceMode")->convertFrom0to1 (rig.value ("sliceMode"))) == 2);   // MANUAL
+    auto marks = rig.silt.sliceMarks();
+    REQUIRE (marks.size() == 4);
+    CHECK_THAT (marks[1], WithinAbs (0.4, 1e-4));
+    CHECK_THAT (marks[2], WithinAbs (0.5, 1e-4));
+
+    rig.silt.moveSlice (1, 0.9f);   // can't pass its neighbour
+    CHECK (rig.silt.sliceMarks()[1] < rig.silt.sliceMarks()[2]);
+
+    rig.silt.addSlice (0.9f);
+    CHECK (rig.silt.sliceMarks().size() == 5);
+    rig.silt.removeSlice (0);
+    marks = rig.silt.sliceMarks();
+    REQUIRE (marks.size() == 4);
+
+    juce::MemoryBlock state;
+    rig.silt.getStateInformation (state);
+    Rig restored;
+    restored.silt.setStateInformation (state.getData(), (int) state.getSize());
+    const auto again = restored.silt.manualSlices();
+    REQUIRE (again.size() == marks.size());
+    for (size_t i = 0; i < marks.size(); ++i)
+        CHECK_THAT (again[i], WithinAbs (marks[i], 1e-5));
+}

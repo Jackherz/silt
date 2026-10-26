@@ -1091,3 +1091,25 @@ TEST_CASE ("Slice mode: each key from the root plays its own slice, at the sampl
     CHECK (second.first >= 0.5f / 3.0f - 0.01f);
     CHECK (second.second <= 1.2f / 3.0f + 0.01f);
 }
+
+TEST_CASE ("Slice mode, MANUAL: a key plays from its mark to the next")
+{
+    TestEngine engine (makeSine (240.0, 2.0));
+    const std::array<float, 3> table { 0.0f, 0.1f, 0.6f };
+    GrainParams p;
+    p.slice = true;
+    p.sliceTable = table.data();
+    p.sliceTableSize = 3;
+    p.sizeMs = 120.0;   // grains overlap, so some are always sounding when we look
+    p.spray = 0.0;
+    p.scan = 0.0;
+    render (engine, p, (int) (0.3 * sampleRate), { { 0, 61, true } });   // the second slice
+    std::array<GrainView, 256> views {};
+    const int n = engine.collectGrainViews (views.data(), (int) views.size());
+    REQUIRE (n > 0);
+    for (int i = 0; i < n; ++i)
+    {
+        CHECK (views[(size_t) i].start >= 0.099f);
+        CHECK (views[(size_t) i].end <= 0.601f);
+    }
+}

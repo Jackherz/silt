@@ -159,6 +159,16 @@ public:
     std::pair<float, float> shownRegion() const;   // start and length as they'll play (snapped)
     std::vector<float> sliceMarks() const;         // SLICE: where each slice starts, as shares (empty in other modes)
 
+    // SLICE BY MANUAL: your own slice starts (shares of the sample), kept with
+    // the session. Moving, adding or removing one from EQUAL or AT HITS first
+    // copies their slices in and switches to MANUAL. Message thread.
+    static constexpr int maxSlices = 128;
+    void moveSlice (int index, float share);
+    void addSlice (float share);
+    void removeSlice (int index);
+    std::vector<float> manualSlices() const;
+    void setManualSlices (std::vector<float>);
+
     // Sounding grains for the screen. The audio thread publishes a snapshot
     // about 60 times a second; readGrainViews copies the latest (lock-free,
     // retrying if it lands mid-update) and returns how many.
@@ -327,6 +337,11 @@ private:
     std::array<float, 8> followChord {};
     int followChordSize = 0;
     bool spaceNoteStarted = false;
+    std::array<std::atomic<float>, 128> sliceTable {};   // MANUAL slices, written before sliceCountManual
+    std::atomic<int> sliceCountManual { 0 };
+    mutable std::array<float, 128> sliceScratch {};      // audio thread: this chunk's copy, for GrainParams
+    void makeSlicesManual();
+    float minimumSliceGap() const;   // the shortest slice, as a share of the sample (256 samples)
     bool lastSelfFeed = false;   // audio thread: FEED was on last chunk   // a note began since SPACE last ran: restart the trace
     void writeScope (std::array<std::atomic<float>, scopeSize>&, const float* l, const float* r, int count) noexcept;
     float sampleGainNow = 1.0f;   // audio thread: the gain ramped to

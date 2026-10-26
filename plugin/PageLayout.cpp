@@ -88,8 +88,9 @@ std::vector<Entry> build (bool instrument)
     knob (play, 2, "length", "LENGTH", sampleMode);
     knob (play, 3, "scan", "SCAN", pitchMode);
     knob (play, 3, "sliceCount", "SLICES", both (sliceMode, is ("sliceMode", 0)));
-    knob (play, 3, "scan", "SCAN", both (sliceMode, is ("sliceMode", 1)));   // cut at hits, the count is the sample's
-    under (Kind::underMenu, play, 3, "sliceMode", 92, { "EQUAL", "AT HITS" }, {}, sliceMode);
+    const Shown notEqual = [] (const Context& c) { return juce::roundToInt (c.v ("sliceMode")) != 0; };
+    knob (play, 3, "scan", "SCAN", both (sliceMode, notEqual));   // at hits or by hand, the count isn't a knob
+    under (Kind::underMenu, play, 3, "sliceMode", 92, { "EQUAL", "AT HITS", "MANUAL" }, {}, sliceMode);
     menu (play, 4, "endMode", "AT THE END", { "LOOP", "HOLD", "STOP" }, sampleMode);
     under (Kind::underMenu, play, 1, "snap", 104, { "SNAP OFF", "SNAP ZERO", "SNAP TRANS" }, {}, sampleMode);
     knob (play, 1, "liveDelay", "DELAY", both (liveMode, off ("delaySync")));

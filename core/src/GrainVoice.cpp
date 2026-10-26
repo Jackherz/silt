@@ -69,6 +69,19 @@ GrainVoice::Region GrainVoice::regionFor (const GrainParams& p, const SampleBuff
     if (slice < 0 || p.live)
         return whole;
 
+    if (p.sliceTable != nullptr && p.sliceTableSize > 0)
+    {
+        // MANUAL: from each mark to the next; the last to the region's end
+        // (or the sample's, if the region ends before it).
+        const double frames = buffer.getNumFrames();
+        const int count = p.sliceTableSize;
+        const int i = ((slice % count) + count) % count;
+        const double begin = std::clamp ((double) p.sliceTable[i], 0.0, 1.0) * (frames - 1.0);
+        double end = i + 1 < count ? std::clamp ((double) p.sliceTable[i + 1], 0.0, 1.0) * frames
+                                   : (whole.end > begin + 1.0 ? whole.end : frames);
+        return { begin, std::max (begin + 1.0, end) };
+    }
+
     if (p.sliceTransients)
     {
         constexpr double minimum = 256.0;   // a hit this close to the last starts no new slice

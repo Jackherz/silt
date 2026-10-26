@@ -259,6 +259,11 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     };
     screen->addAndMakeVisible (*dragOut);
 
+    // SLICE: move, add and remove slices on the waveform (MANUAL from then on).
+    screen->onSliceMove = [this] (int index, float share) { silt.moveSlice (index, share); screen->setSlices (silt.sliceMarks()); };
+    screen->onSliceAdd = [this] (float share) { silt.addSlice (share); screen->setSlices (silt.sliceMarks()); };
+    screen->onSliceRemove = [this] (int index) { silt.removeSlice (index); screen->setSlices (silt.sliceMarks()); };
+
     // Right-click the screen: the sample tools.
     screen->onMenu = [this]
     {

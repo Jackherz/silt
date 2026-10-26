@@ -187,7 +187,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
 
     // SLICE: keys play slices of the region, equal or cut at its transients.
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "sliceMode", 1 }, "Slice by",
-                                                              juce::StringArray { "Equal", "Transients" }, 0),
+                                                              juce::StringArray { "Equal", "Transients", "Manual" }, 0),
                 std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "sliceCount", 1 }, "Slices", 2, 64, 16));
 
     // Mode: the sample (PITCH), the live input (LIVE: a granular delay), or
@@ -696,6 +696,14 @@ silt::GrainParams SiltProcessor::readParams (const float* voiceValues) const noe
     p.slice = mode == 3;
     p.sliceTransients = (int) v (raw->sliceMode) == 1;
     p.sliceCount = (int) v (raw->sliceCount);
+    if (p.slice && (int) v (raw->sliceMode) == 2)
+        if (const int n = sliceCountManual.load (std::memory_order_acquire); n > 0)
+        {
+            for (int i = 0; i < n; ++i)
+                sliceScratch[(size_t) i] = sliceTable[(size_t) i].load (std::memory_order_relaxed);
+            p.sliceTable = sliceScratch.data();
+            p.sliceTableSize = n;
+        }
     p.feedback = v (raw->feedback) * 0.01;
     p.freeze = v (raw->freeze) > 0.5;
     p.liveTrigger = (silt::LiveTrigger) juce::jlimit (0, 2, (int) v (raw->liveRun));
@@ -2453,6 +2461,8 @@ std::vector<float> SiltProcessor::sliceMarks() const
 {
     if (juce::roundToInt (raw->keyMode->load()) != 3)
         return {};
+    if (juce::roundToInt (raw->sliceMode->load()) == 2 && sliceCountManual.load() > 0)
+        return manualSlices();
     const auto [start, length] = shownRegion();
     std::vector<float> marks;
     if (juce::roundToInt (raw->sliceMode->load()) == 1)
@@ -2475,6 +2485,77 @@ std::vector<float> SiltProcessor::sliceMarks() const
     for (int i = 0; i < count; ++i)
         marks.push_back (start + length * (float) i / (float) count);
     return marks;
+}
+
+std::vector<float> SiltProcessor::manualSlices() const
+{
+    std::vector<float> marks ((size_t) sliceCountManual.load());
+    for (size_t i = 0; i < marks.size(); ++i)
+        marks[i] = sliceTable[i].load();
+    return marks;
+}
+
+// Sorted, inside the sample, at most maxSlices, and no two closer than 256
+// samples' worth (a slice too short to hold a grain).
+float SiltProcessor::minimumSliceGap() const
+{
+    const juce::ScopedLock sl (sampleLock);
+    return sampleCopy.getNumSamples() > 0 ? 256.0f / (float) sampleCopy.getNumSamples() : 0.0005f;
+}
+
+void SiltProcessor::setManualSlices (std::vector<float> marks)
+{
+    std::sort (marks.begin(), marks.end());
+    const float gap = minimumSliceGap();
+    std::vector<float> kept;
+    for (const float m : marks)
+        if (m >= 0.0f && m < 1.0f && (kept.empty() || m - kept.back() >= gap) && (int) kept.size() < maxSlices)
+            kept.push_back (m);
+    sliceCountManual.store (0, std::memory_order_release);   // the audio thread reads none while they change
+    for (size_t i = 0; i < kept.size(); ++i)
+        sliceTable[i].store (kept[i], std::memory_order_relaxed);
+    sliceCountManual.store ((int) kept.size(), std::memory_order_release);
+}
+
+// From EQUAL or AT HITS: their slices become MANUAL's, then the edit applies.
+void SiltProcessor::makeSlicesManual()
+{
+    if (juce::roundToInt (raw->sliceMode->load()) == 2 && sliceCountManual.load() > 0)
+        return;
+    setManualSlices (sliceMarks());
+    if (auto* mode = params.getParameter ("sliceMode"))
+        mode->setValueNotifyingHost (mode->convertTo0to1 (2.0f));
+}
+
+void SiltProcessor::moveSlice (int index, float share)
+{
+    makeSlicesManual();
+    auto marks = manualSlices();
+    if (index < 0 || index >= (int) marks.size())
+        return;
+    // Between its neighbours: slices keep their order (and their minimum size).
+    const float gap = minimumSliceGap() * 1.01f;
+    const float lo = index > 0 ? marks[(size_t) index - 1] + gap : 0.0f;
+    const float hi = index + 1 < (int) marks.size() ? marks[(size_t) index + 1] - gap : 0.999f;
+    marks[(size_t) index] = juce::jlimit (lo, juce::jmax (lo, hi), share);
+    setManualSlices (std::move (marks));
+}
+
+void SiltProcessor::addSlice (float share)
+{
+    makeSlicesManual();
+    auto marks = manualSlices();
+    marks.push_back (juce::jlimit (0.0f, 0.999f, share));
+    setManualSlices (std::move (marks));
+}
+
+void SiltProcessor::removeSlice (int index)
+{
+    makeSlicesManual();
+    auto marks = manualSlices();
+    if (marks.size() > 1 && index >= 0 && index < (int) marks.size())
+        marks.erase (marks.begin() + index);
+    setManualSlices (std::move (marks));
 }
 
 // The gain that puts the sample's peak at −1 dBFS (0 with no sample).
@@ -2533,6 +2614,12 @@ void SiltProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("modShown", modShown.load(), nullptr);
     state.setProperty ("presetName", presetName, nullptr);
     state.setProperty ("randomAmount", randomAmount.load(), nullptr);
+    {
+        juce::StringArray marks;
+        for (const float m : manualSlices())
+            marks.add (juce::String (m, 6));
+        state.setProperty ("slices", marks.joinIntoString (","), nullptr);
+    }
     state.setProperty ("randomExcluded", randomExcluded.joinIntoString (","), nullptr);
     if (editorWidth.load() > 0)
     {
@@ -2623,6 +2710,12 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
     routeUndo.clearUndoHistory();   // a loaded set starts its own history
     presetName = tree.getProperty ("presetName", "Init").toString();
     randomAmount.store (juce::jlimit (0.0f, 1.0f, (float) tree.getProperty ("randomAmount", 0.5f)));
+    {
+        std::vector<float> marks;
+        for (const auto& m : juce::StringArray::fromTokens (tree.getProperty ("slices").toString(), ",", ""))
+            marks.push_back (m.getFloatValue());
+        setManualSlices (std::move (marks));
+    }
     if (tree.hasProperty ("randomExcluded"))
         randomExcluded = juce::StringArray::fromTokens (tree.getProperty ("randomExcluded").toString(), ",", "");
     editorWidth.store ((int) tree.getProperty ("editorWidth", 0));

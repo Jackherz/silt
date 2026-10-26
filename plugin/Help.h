@@ -48,7 +48,7 @@ inline juce::String helpFor (const juce::String& id)
         // PLAY
         { "keyMode", "MODE: pitched, live input, FEED or slices" },
         { "sliceCount", "SLICES: the region cut into this many keys" },
-        { "sliceMode", "SLICE BY: equal parts, or at each hit" },
+        { "sliceMode", "SLICE BY: equal, at hits, or drag your own" },
         { "start", "START: where in the sample notes begin" },
         { "length", "LENGTH: how much of the sample plays" },
         { "scan", "SCAN: how fast the playhead moves through" },

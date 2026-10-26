@@ -89,6 +89,8 @@ struct GrainParams
     bool slice = false;
     bool sliceTransients = false;
     int sliceCount = 16;           // equal slices, 1…128
+    const float* sliceTable = nullptr;   // MANUAL: where each slice starts, shares of the sample, ascending
+    int sliceTableSize = 0;
     double start = 0.0;            // 0…1: region start, where a note starts its playhead
     double length = 1.0;           // 0…1: region length as a share of the sample
     double scan = 1.0;             // playhead speed, −4…+4 (1 = real time, 0 = frozen)
