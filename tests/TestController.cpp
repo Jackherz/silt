@@ -662,3 +662,29 @@ TEST_CASE ("Sample gain scales the grains; normalise peaks the sample at -1 dB")
     CHECK (rig.silt.modulationTarget ("sampleGain") < 0);
     CHECK_FALSE (rig.silt.capturePreset ("x")->getChildByName ("PARAMS")->hasAttribute ("sampleGain"));
 }
+
+TEST_CASE ("WAVE RATE runs through zero: STOP in the middle, backwards below")
+{
+    Rig rig;
+    auto* rate = dynamic_cast<juce::RangedAudioParameter*> (rig.silt.params.getParameter ("m1Rate"));
+    REQUIRE (rate != nullptr);
+    CHECK_THAT (rate->convertFrom0to1 (0.5f), WithinAbs (0.0, 1.0e-6));
+    CHECK (rate->getText (rate->convertTo0to1 (0.0f), 0) == "STOP");
+    CHECK (rate->getText (rate->convertTo0to1 (-2.0f), 0) == "-2.00 Hz");
+    CHECK (rate->getText (rate->convertTo0to1 (1.0f), 0) == "1.00 Hz");
+    for (const float hz : { -50.0f, -3.0f, -0.2f, 0.2f, 1.0f, 7.5f, 50.0f })
+        CHECK_THAT (rate->convertFrom0to1 (rate->convertTo0to1 (hz)), WithinAbs (hz, 1.0e-3 * std::abs (hz)));
+    // Fine near zero: the middle 20% of the knob stays within ±0.4 Hz; half way out, 6 Hz.
+    CHECK (std::abs (rate->convertFrom0to1 (0.6f)) <= 0.41f);
+    CHECK (std::abs (rate->convertFrom0to1 (0.4f)) <= 0.41f);
+    CHECK_THAT (rate->convertFrom0to1 (0.75f), WithinAbs (6.25, 0.01));
+
+    // REV sits with SYNC on the MOD page for a synced WAVE only.
+    rig.set ("m1Sync", 1.0f);
+    const auto context = rig.silt.layoutContext();
+    bool revShown = false;
+    for (const auto& e : silt::layout::entries (SiltProcessor::isInstrument))
+        if (e.id == "m1Rev")
+            revShown = e.isShown (context);
+    CHECK (revShown);
+}

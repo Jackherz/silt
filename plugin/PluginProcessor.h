@@ -167,6 +167,8 @@ public:
     std::array<std::atomic<bool>, silt::Engine::numVoices> voiceShown {};
     std::array<std::array<std::atomic<float>, maxTargets>, silt::Engine::numVoices> voiceModulated01 {};
     std::array<std::atomic<float>, numModulators> modOutputs {};    // each modulator's latest value (0 if muted)
+    std::array<std::atomic<float>, numModulators> modPhases {};     // a WAVE's place in its cycle, for display
+    std::array<std::atomic<int>, numModulators> modStages {};       // an ENVELOPE's stage, for display
     std::atomic<int> modShown { 0 };                                // the modulator the MOD page shows
     std::atomic<int> armedMod { -1 };                               // ≥ 0: controller knobs set this modulator's depth
 
@@ -237,7 +239,7 @@ private:
     struct ModulatorRaw
     {
         std::atomic<float>* type, *rate, *sync, *div, *shape, *phase, *retrig, *smooth, *jitter;
-        std::atomic<float>* attack, *decay, *sustain, *release, *repeat, *followAttack, *followRelease, *gain, *source, *enable, *voice, *macro, *sym, *curve;
+        std::atomic<float>* attack, *decay, *sustain, *release, *repeat, *followAttack, *followRelease, *gain, *source, *enable, *voice, *macro, *sym, *curve, *rev;
     };
     std::array<bool, 128> heldKeys {};   // audio thread: which notes are down, so repeats don't miscount
     std::array<float, numModulators> globalModValues {};   // audio thread: this chunk's shared values

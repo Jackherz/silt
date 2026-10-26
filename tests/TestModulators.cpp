@@ -286,3 +286,56 @@ TEST_CASE ("Wave: CURVE bends but keeps the peaks and the sign, everywhere in ra
             }
         }
 }
+
+TEST_CASE ("Wave: a negative rate runs it backwards; zero holds it; REVERSE counts down the bar")
+{
+    ModulatorParams p;
+    p.shape = 2.0f;   // saw: rising forwards, falling backwards
+    Modulator forwards, backwards, held;
+    forwards.reset();
+    backwards.reset();
+    held.reset();
+    p.rateHz = 0.5f;
+    const auto up = run (forwards, p, 0.5);
+    p.rateHz = -0.5f;
+    const auto down = run (backwards, p, 0.5);
+    p.rateHz = 0.0f;
+    const auto still = run (held, p, 0.5);
+    int rising = 0, falling = 0;
+    for (size_t i = 1; i < up.size(); ++i)
+    {
+        rising += up[i] > up[i - 1] ? 1 : 0;
+        falling += down[i] < down[i - 1] ? 1 : 0;
+    }
+    CHECK (rising > (int) up.size() * 9 / 10);
+    CHECK (falling > (int) down.size() * 9 / 10);
+    CHECK (std::all_of (still.begin(), still.end(), [&] (float v) { return v == still.front(); }));
+
+    Modulator synced;
+    synced.reset();
+    p.sync = true;
+    p.reverse = true;
+    p.syncQuarters = 1.0;
+    auto c = context();
+    c.hostPlaying = true;
+    c.ppqEnd = 0.25;
+    CHECK_THAT (synced.advance (p, c), WithinAbs (2.0 * 0.75 - 1.0, 1.0e-6));   // a quarter in, counting down: 0.75 of the saw
+}
+
+TEST_CASE ("Random: a negative rate steps as fast as the positive one")
+{
+    for (const float rate : { 4.0f, -4.0f })
+    {
+        Modulator m;
+        m.reset (3);
+        ModulatorParams p;
+        p.type = ModType::random;
+        p.smooth = 0.0f;
+        p.rateHz = rate;
+        const auto out = run (m, p, 2.0);
+        int changes = 0;
+        for (size_t i = 1; i < out.size(); ++i)
+            changes += out[i] != out[i - 1];
+        CHECK (std::abs (changes - 8) <= 1);
+    }
+}

@@ -7,6 +7,7 @@
 #include <silt/Resonator.h>
 
 #include <complex>
+#include <optional>
 
 namespace silt::ui
 {
@@ -444,7 +445,8 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
     if (p.type == silt::ModType::wave)
         title << "  PHASE " << juce::roundToInt (p.phase * 360.0f) << juce::String::charToString ((juce::juce_wchar) 0x00b0)
               << "  SYM " << juce::roundToInt (p.symmetry * 100.0f) << "%  CURVE " << juce::roundToInt (p.curve * 100.0f) << "%"
-              << (p.retrigger ? "  RETRIG" : "");
+              << (p.retrigger ? "  RETRIG" : "")
+              << ((p.sync ? p.reverse : p.rateHz < 0.0f) ? "  BACKWARDS" : (! p.sync && p.rateHz == 0.0f) ? "  STOP" : "");
     auto plot = frame (g, area, title);
     const auto colour = modColour (m).base.brighter (0.25f);
     const bool bipolar = silt::Modulator::isBipolar (p);
@@ -453,6 +455,7 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
     g.drawHorizontalLine ((int) baseline, plot.getX(), plot.getRight());
 
     juce::Path line;
+    std::optional<juce::Point<float>> playhead;   // a moving dot for WAVE and ENVELOPE
     const auto add = [&] (int i, int n, float v)
     {
         const float y = bipolar ? baseline - juce::jlimit (-1.0f, 1.0f, v) * plot.getHeight() * 0.5f
@@ -472,9 +475,11 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
         const bool retrigger = p.retrigger;
         silt::Modulator copy;
         copy.reset();
+        // Drawn the way it runs: backwards for a negative rate or REV.
+        p.rateHz = (p.sync ? p.reverse : p.rateHz < 0.0f) ? -1.0f : 1.0f;
+        const double cycleStart = p.phase;
         p.sync = false;
         p.retrigger = true;
-        p.rateHz = 1.0f;
         silt::ModContext c;
         c.sampleRate = n;
         c.numSamples = 0;
@@ -485,6 +490,20 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
         c.noteStarted = false;
         for (int i = 1; i <= n; ++i)
             add (i, n, copy.advance (p, c));
+        // The playhead: where the wave is now, riding the drawn cycle (which
+        // starts at PHASE and runs the way the wave does).
+        {
+            const bool backwards = p.rateHz < 0.0f;
+            const double now = silt.modPhases[(size_t) m].load();
+            const double along = backwards ? cycleStart - now : now - cycleStart;
+            const float x = plot.getX() + plot.getWidth() * (float) (along - std::floor (along));
+            const float v = silt.modOutputs[(size_t) m].load();
+            const float y = bipolar ? baseline - juce::jlimit (-1.0f, 1.0f, v) * plot.getHeight() * 0.5f
+                                    : baseline - juce::jlimit (0.0f, 1.0f, v) * plot.getHeight();
+            g.setColour (colour.withAlpha (0.35f));
+            g.drawVerticalLine ((int) x, plot.getY(), plot.getBottom());
+            playhead = { x, y };
+        }
         // RETRIG: a dot where each note starts the wave.
         if (retrigger)
         {
@@ -509,6 +528,17 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
         line.lineTo (at (a + d, s));
         line.lineTo (at (a + d + hold, s));
         line.lineTo (at (total, 0.0f));
+
+        // Where it is now: placed along its stage by its level.
+        const float level = silt.modOutputs[(size_t) m].load();
+        switch (silt.modStages[(size_t) m].load())
+        {
+            case 1: playhead = at (a * level, level); break;                                                      // attack
+            case 2: playhead = at (a + d * (1.0f - level) / std::max (1.0e-3f, 1.0f - s), level); break;          // decay
+            case 3: playhead = at (a + d + hold * 0.5f, level); break;                                              // sustain
+            case 4: playhead = at (a + d + hold + rel * (1.0f - level / std::max (1.0e-3f, s)), level); break;     // release
+            default: break;
+        }
     }
     else
     {
@@ -521,6 +551,13 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
     }
     g.setColour (colour);
     g.strokePath (line, juce::PathStrokeType (1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    if (playhead.has_value())
+    {
+        g.setColour (juce::Colours::white);
+        g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre (*playhead));
+        g.setColour (colour);
+        g.drawEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre (*playhead), 1.5f);
+    }
 }
 } // namespace
 
@@ -564,9 +601,12 @@ std::vector<float> insetKey (int page, const SiltProcessor& silt, const ModRail&
             const int m = silt.modShown.load();
             const auto p = silt.readModulatorParams (m);
             key.insert (key.end(), { (float) m, (float) p.type, p.shape, p.symmetry, p.curve, p.phase, p.retrigger ? 1.0f : 0.0f,
+                                     p.rateHz < 0.0f ? -1.0f : p.rateHz > 0.0f ? 1.0f : 0.0f, p.reverse ? 1.0f : 0.0f, p.sync ? 1.0f : 0.0f,
                                      p.attackMs, p.decayMs, p.sustain, p.releaseMs });
             if (p.type != silt::ModType::wave && p.type != silt::ModType::envelope)
                 key.push_back ((float) rail.chip (m).getHistoryStart());   // the trace moves on
+            else
+                key.insert (key.end(), { silt.modOutputs[(size_t) m].load(), silt.modPhases[(size_t) m].load() });   // the dot moves on
             break;
         }
         default: break;

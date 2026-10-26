@@ -255,7 +255,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
         const auto name = [n] (const char* what) { return "Mod " + juce::String (n) + " " + what; };
         layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("Type"), 1 }, name ("type"),
                                                                   juce::StringArray { "Wave", "Random", "Envelope", "Follow", "MIDI", "Macro" }, 0),
-                    withUnit (id ("Rate"), name ("rate"), skewed (0.01f, 50.0f, 1.0f), 1.0f, formatHz),
+                    // Through zero: −50…+50 Hz on a cubic (most of the travel at slow rates,
+                    // smooth through 0, so modulation can sweep across it). Below zero
+                    // a WAVE runs backwards; near 0 it holds (STOP).
+                    withUnit (id ("Rate"), name ("rate"),
+                              Range (-50.0f, 50.0f,
+                                     [] (float, float, float x) { const float u = 2.0f * x - 1.0f; return 50.0f * u * u * u; },
+                                     [] (float, float, float v) { return 0.5f * (std::cbrt (juce::jlimit (-50.0f, 50.0f, v) / 50.0f) + 1.0f); },
+                                     [] (float, float, float v) { return std::abs (v) < 0.01f ? 0.0f : v; }),
+                              1.0f, [] (float v, int) { return std::abs (v) < 0.005f ? juce::String ("STOP") : (v < 0.0f ? "-" : "") + formatHz (std::abs (v), 0); }),
                     std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Sync"), 1 }, name ("sync"), false),
                     std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("Div"), 1 }, name ("rate (synced)"), divisionNames, quarter),
                     withUnit (id ("Shape"), name ("shape"), Range (0.0f, 3.0f, 0.001f), 0.0f, [] (float v, int)
@@ -270,6 +278,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                     withUnit (id ("Phase"), name ("phase"), Range (0.0f, 360.0f, 0.1f), 0.0f,
                               [] (float v, int) { return juce::String (juce::roundToInt (v)) + juce::String::charToString ((juce::juce_wchar) 0x00b0); }),
                     std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Retrig"), 1 }, name ("retrigger"), false),
+                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Rev"), 1 }, name ("reverse (synced)"), false),
                     percent (id ("Smooth"), name ("smooth"), 100.0f),
                     percent (id ("Jitter"), name ("jitter"), 0.0f),
                     withUnit (id ("Attack"), name ("attack"), skewed (0.0f, 5000.0f, 100.0f), 10.0f, formatMs),
@@ -445,7 +454,7 @@ SiltProcessor::SiltProcessor()
         };
         modulatorRaw[(size_t) m] = { p ("Type"), p ("Rate"), p ("Sync"), p ("Div"), p ("Shape"), p ("Phase"), p ("Retrig"), p ("Smooth"), p ("Jitter"),
                                      p ("Attack"), p ("Decay"), p ("Sustain"), p ("Release"), p ("Repeat"), p ("FAttack"), p ("FRelease"), p ("Gain"), p ("Source"),
-                                     p ("Enable"), p ("Voice"), p ("Macro"), p ("Sym"), p ("Curve") };
+                                     p ("Enable"), p ("Voice"), p ("Macro"), p ("Sym"), p ("Curve"), p ("Rev") };
     }
 
     for (auto* parameter : getParameters())
@@ -941,6 +950,8 @@ void SiltProcessor::applyModulation() noexcept
             value[(size_t) m] = 0.0f;
         globalModValues[(size_t) m] = value[(size_t) m];
         modOutputs[(size_t) m].store (value[(size_t) m], std::memory_order_relaxed);
+        modPhases[(size_t) m].store ((float) modulators[(size_t) m].getPhase(), std::memory_order_relaxed);
+        modStages[(size_t) m].store (modulators[(size_t) m].getStage(), std::memory_order_relaxed);
     }
 
     for (size_t t = 0; t < targets.size(); ++t)
@@ -969,6 +980,7 @@ silt::ModulatorParams SiltProcessor::readModulatorParams (int m) const noexcept
     p.type = (silt::ModType) juce::jlimit (0, 5, (int) v (r.type));
     p.rateHz = v (r.rate);
     p.sync = v (r.sync) > 0.5f;
+    p.reverse = v (r.rev) > 0.5f;
     p.syncQuarters = quartersFor (r.div);
     p.shape = v (r.shape);
     p.phase = v (r.phase) / 360.0f;

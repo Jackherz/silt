@@ -1042,7 +1042,7 @@ void SiltEditor::resized()
         const auto& e = *c->entry;
         if (! e.inSlot())
         {
-            c->component().setBounds (slotBounds (e.slot).removeFromBottom (20).withSizeKeepingCentre (e.width, 18));
+            c->component().setBounds (slotBounds (e.slot).removeFromBottom (20).withSizeKeepingCentre (e.width, 18).translated (e.dx, 0));
             continue;
         }
         auto cell = slotBounds (e.slot).withTrimmedTop (18).withTrimmedBottom (22).reduced (juce::jmin (10, slotBounds (0).getWidth() / 12), 0);

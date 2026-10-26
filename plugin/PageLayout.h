@@ -42,6 +42,7 @@ struct Entry
     int width = 0;             // under-slot controls
     std::function<bool (const Context&)> shown;   // null: always
     std::function<bool (const Context&)> dimmed;  // shown, but has no effect in the current state
+    int dx = 0;                                   // under-slot controls: offset from the slot's centre
 
     bool inSlot() const { return kind != Kind::underButton && kind != Kind::underMenu; }
     bool isShown (const Context& c) const { return shown == nullptr || shown (c); }

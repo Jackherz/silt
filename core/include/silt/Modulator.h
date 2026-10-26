@@ -13,9 +13,10 @@ struct ModulatorParams
     ModType type = ModType::wave;
 
     // WAVE and RANDOM
-    float rateHz = 1.0f;
+    float rateHz = 1.0f;         // WAVE: signed (negative runs it backwards, 0 holds it); RANDOM uses its size
     bool sync = false;
     double syncQuarters = 1.0;   // one cycle (WAVE) or step (RANDOM), in quarter notes
+    bool reverse = false;        // WAVE synced: runs backwards against the bar
     // WAVE
     float shape = 0.0f;          // 0 sine, 1 triangle, 2 saw, 3 square, blended between
     float phase = 0.0f;          // 0…1: where a retriggered or synced cycle starts
@@ -72,13 +73,18 @@ public:
     void reset (std::uint64_t seed = 1) noexcept;
     float advance (const ModulatorParams&, const ModContext&) noexcept;
 
+    // For display: where a WAVE is in its cycle (0…1), and an ENVELOPE's stage
+    // (0 idle, 1 attack, 2 decay, 3 sustain, 4 release).
+    double getPhase() const noexcept { return phase; }
+    int getStage() const noexcept { return (int) stage; }
+
 private:
     float wave (const ModulatorParams&, const ModContext&) noexcept;
     float randomStep (const ModulatorParams&, const ModContext&) noexcept;
     float envelope (const ModulatorParams&, const ModContext&) noexcept;
     float follow (const ModulatorParams&, const ModContext&) noexcept;
 
-    double cycleRate (const ModulatorParams&, const ModContext&) const noexcept;   // cycles per second
+    double cycleRate (const ModulatorParams&, const ModContext&) const noexcept;   // cycles per second, signed
 
     double phase = 0.0;
     // RANDOM

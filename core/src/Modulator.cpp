@@ -48,7 +48,7 @@ void Modulator::reset (std::uint64_t seed) noexcept
 
 double Modulator::cycleRate (const ModulatorParams& p, const ModContext& c) const noexcept
 {
-    return p.sync ? c.bpm / 60.0 / std::max (1.0e-3, p.syncQuarters) : std::max (0.0f, p.rateHz);
+    return p.sync ? (p.reverse ? -1.0 : 1.0) * c.bpm / 60.0 / std::max (1.0e-3, p.syncQuarters) : (double) p.rateHz;
 }
 
 float Modulator::advance (const ModulatorParams& p, const ModContext& c) noexcept
@@ -74,12 +74,13 @@ float Modulator::advance (const ModulatorParams& p, const ModContext& c) noexcep
 }
 
 // Synced while the host plays: the phase comes from the host's position, so the
-// wave lines up with the bar. Otherwise it runs free (or restarts per note).
+// wave lines up with the bar (REVERSE: counting down). Otherwise it runs free,
+// at a signed rate: backwards below zero, held at zero (or restarts per note).
 float Modulator::wave (const ModulatorParams& p, const ModContext& c) noexcept
 {
     const double step = cycleRate (p, c) * c.numSamples / c.sampleRate;
     if (p.sync && c.hostPlaying)
-        phase = c.ppqEnd / std::max (1.0e-3, p.syncQuarters) + p.phase;
+        phase = (p.reverse ? -1.0 : 1.0) * c.ppqEnd / std::max (1.0e-3, p.syncQuarters) + p.phase;
     else if (p.retrigger && c.noteStarted)
         phase = p.phase + step;
     else
@@ -132,7 +133,7 @@ float Modulator::randomStep (const ModulatorParams& p, const ModContext& c) noex
     else
     {
         lastStep = -1;
-        stepProgress += cycleRate (p, c) * c.numSamples / c.sampleRate / stepLength;
+        stepProgress += std::abs (cycleRate (p, c)) * c.numSamples / c.sampleRate / stepLength;   // steps have no direction
         while (stepProgress >= 1.0)
         {
             stepProgress -= 1.0;

@@ -161,7 +161,11 @@ std::vector<Entry> build (bool instrument)
         knob (mod, 2, id ("Shape"), "SHAPE", wave);
         knob (mod, 3, id ("Rate"), "RATE", both (timed, off (id ("Sync"))));
         knob (mod, 3, id ("Div"), "RATE", both (timed, on (id ("Sync"))));
-        under (Kind::underButton, mod, 3, id ("Sync"), 60, {}, "SYNC", timed);
+        under (Kind::underButton, mod, 3, id ("Sync"), 50, {}, "SYNC", timed);
+        e.back().dx = -24;
+        // Synced, a WAVE can't go negative: REV runs it backwards against the bar.
+        under (Kind::underButton, mod, 3, id ("Rev"), 42, {}, "REV", both (wave, on (id ("Sync"))));
+        e.back().dx = 25;
         knob (mod, 4, id ("Phase"), "PHASE", wave);
         under (Kind::underButton, mod, 4, id ("Retrig"), 64, {}, "RETRIG", wave);
         knob (mod, 5, id ("Sym"), "SYM", wave);

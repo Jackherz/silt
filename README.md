@@ -71,8 +71,10 @@ the delay's loop filters), SHIMMER (octave-up feedback in the reverb), REVERB (l
 The reverb is an 8-channel diffuser into an 8-line feedback delay network with
 per-line modulation and absorption filters; changing TIME glides like tape.
 
-**Modulation:** four modulators, each a WAVE (sine → triangle → saw → square, free
-or synced, phase, SYM (where the cycle turns round: 50% as drawn, the ends make
+**Modulation:** four modulators, each a WAVE (sine → triangle → saw → square; RATE
+runs through zero, −50 to +50 Hz: below zero the wave runs backwards and the middle
+is STOP, so another modulator on RATE can slow it, hold it and reverse it; synced,
+REV runs it backwards against the bar; phase, SYM (where the cycle turns round: 50% as drawn, the ends make
 saws and pulse widths), CURVE (bulging and lazy to spiked and snappy; greyed on a
 square, which it can't bend), retrigger on notes), RANDOM (smooth to stepped, jitter, free or
 synced), ENVELOPE (ADSR from the notes played; REPEAT loops it while held), FOLLOW
@@ -150,8 +152,8 @@ the delay taps (alternating sides for ping-pong, each FEEDBACK quieter, fading i
 with DELAY) and a reverb tail after the sound and after each repeat (fading in with
 REVERB, tinted by TONE, sparkling with SHIMMER, held when FROZEN), PITCH the scale
 on a keyboard and the pattern's steps, MOD the shown modulator (one cycle of a WAVE
-from its PHASE, with a dot when it RETRIGs; an ENVELOPE's shape; or the others'
-trace).
+from its PHASE, drawn the way it runs, with a dot when it RETRIGs; an ENVELOPE's
+shape; a moving playhead on both; or the others' trace).
 
 **Presets** (header: ◀ name ▶, SAVE): a preset is the sound (every parameter, the
 modulation routes, the shown modulator), not the sample, the controller mapping or
