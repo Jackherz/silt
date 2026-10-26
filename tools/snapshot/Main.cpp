@@ -80,7 +80,12 @@ int main (int argc, char* argv[])
             silt.layoutInset.store (parts[3].getFloatValue());
             continue;
         }
-        if (id == "theme")   // theme=index (0 Cream, 1 Night, 2 Slate, 3 Moss)
+        if (id == "grainview")   // grainview=index (0 dots, 1 stars, 2 shore, 3 film, 4 clouds)
+        {
+            SiltEditor::startGrainView = setting.fromFirstOccurrenceOf ("=", false, false).getIntValue();
+            continue;
+        }
+        if (id == "theme")   // theme=index (0 Cream, 1 Night, 2 Slate, 3 Moss, 4 Graphite)
         {
             SiltEditor::startTheme = setting.fromFirstOccurrenceOf ("=", false, false).getIntValue();
             continue;

@@ -35,6 +35,7 @@ public:
     explicit SiltEditor (SiltProcessor&);
     static inline bool tourOnFirstOpen = true;   // tests and the snapshot tool turn it off
     static inline int startTheme = -1;           // ≥ 0: this theme, not the saved one (the snapshot tool)
+    static inline int startGrainView = -2;       // ≥ −1: this grain view, not the saved one (the snapshot tool)
     ~SiltEditor() override;
 
     void paint (juce::Graphics&) override;
@@ -175,6 +176,8 @@ private:
     juce::TextButton tourButton { "?" };
     int pageBeforeTour = 0;
     void restyle();
+    void applyGrainLook();
+    int grainView = -1;   // the ? menu's GRAIN VIEW: −1 matches the theme, else a GrainScreen::FieldLook
     static void styleValueBox (juce::Slider&);
     void randomise();        // the open page
     void showRandomMenu();

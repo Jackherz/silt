@@ -209,6 +209,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
       look (std::make_unique<PanelLook>()), screen (std::make_unique<GrainScreen>())
 {
     applyTheme (startTheme >= 0 ? startTheme : settingsFile()->getIntValue ("theme", defaultTheme));
+    grainView = startGrainView >= -1 ? startGrainView : settingsFile()->getIntValue ("grainView", -1);
+    applyGrainLook();
     look->applyColours();
     setLookAndFeel (look.get());
     look->drawModulation = [this] (juce::Graphics& g, juce::Slider& s, juce::Point<float> c, float r, float pos) { drawModulation (g, s, c, r, pos); };
@@ -399,10 +401,23 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         menu.addSectionHeader ("THEME");
         for (size_t i = 0; i < themes().size(); ++i)
             menu.addItem (10 + (int) i, themes()[i].name, true, (int) i == currentThemeIndex());
+        static const char* looks[] { "Dots", "Stars", "Shore", "Film", "Clouds" };
+        menu.addSectionHeader ("GRAIN VIEW");
+        menu.addItem (30, "Match the theme", true, grainView < 0);
+        for (int i = 0; i < (int) std::size (looks); ++i)
+            menu.addItem (31 + i, looks[i], true, grainView == i);
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&tourButton), [this] (int chosen)
         {
             if (chosen == 1)
                 startTour();
+            else if (chosen >= 30)
+            {
+                grainView = chosen - 31;   // −1: match the theme
+                auto file = settingsFile();
+                file->setValue ("grainView", grainView);
+                file->saveIfNeeded();
+                applyGrainLook();
+            }
             else if (chosen >= 10)
                 setTheme (chosen - 10);
         });
@@ -702,8 +717,16 @@ void SiltEditor::restyle()
     screen->setOverview (silt.getOverview());   // the waveform is cached in the old colours
     backdrop = {};
     screen->restyle();
+    applyGrainLook();
     sendLookAndFeelChange();
     repaint();
+}
+
+// The grain field's look: the one chosen in the ? menu, or the theme's own.
+void SiltEditor::applyGrainLook()
+{
+    const int chosen = grainView >= 0 ? grainView : themes()[(size_t) currentThemeIndex()].grainLook;
+    screen->setFieldLook ((GrainScreen::FieldLook) juce::jlimit (0, 4, chosen));
 }
 
 void SiltEditor::styleValueBox (juce::Slider& s)

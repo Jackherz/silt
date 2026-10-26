@@ -138,6 +138,19 @@ public:
         }
     }
 
+    // How the grains are drawn below the waveform; each theme has its own.
+    enum class FieldLook { dots, stars, shore, film, clouds };
+    void setFieldLook (FieldLook l)
+    {
+        if (l != look)
+        {
+            look = l;
+            field = {};
+            fieldBackdrop = {};
+            repaint();
+        }
+    }
+
     // How the screen is shared: the grain field's share of the height, the
     // corner picture's share of the width (the screen's tiled sections).
     void setSplit (float fieldPart, float insetPart)
@@ -162,7 +175,7 @@ public:
     }
 
     juce::Point<int> getInsetTopLeft() const { return insetArea().getTopLeft(); }
-    void restyle() { bezel = {}; field = {}; repaint(); }   // after a theme change
+    void restyle() { bezel = {}; field = {}; fieldBackdrop = {}; repaint(); }   // after a theme change
 
     juce::Rectangle<int> scopeArea() const
     {
@@ -428,15 +441,20 @@ private:
             field = juce::Image (juce::Image::ARGB, w, h, true);
 
         juce::Graphics g (field);
-        // Fade what's there: about a third of its strength gone per frame.
-        juce::Image::BitmapData pixels (field, juce::Image::BitmapData::readWrite);
-        for (int y = 0; y < h; ++y)
-            for (int x = 0; x < w; ++x)
-            {
-                auto* p = pixels.getPixelPointer (x, y);
-                for (int c = 0; c < 4; ++c)
-                    p[c] = (juce::uint8) ((p[c] * 170) >> 8);
-            }
+        // Fade what's there, each look at its own pace: clouds linger, film flickers off.
+        static constexpr int keep[] { 170, 205, 150, 120, 236 };   // of 256 per frame, by FieldLook
+        const int kept = keep[(int) look];
+        ++tick;
+        {
+            juce::Image::BitmapData pixels (field, juce::Image::BitmapData::readWrite);
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x)
+                {
+                    auto* p = pixels.getPixelPointer (x, y);
+                    for (int c = 0; c < 4; ++c)
+                        p[c] = (juce::uint8) ((p[c] * kept) >> 8);
+                }
+        }
 
         const float laneTop = (float) h * 0.12f, laneBottom = (float) h * 0.88f;
         for (int i = 0; i < numViews; ++i)
@@ -449,10 +467,143 @@ private:
             const float y = juce::jmap (juce::jlimit (-1.0f, 1.0f, v.pan * 0.85f + own), -1.0f, 1.0f, laneTop, laneBottom);
             const float r = (1.5f + 4.0f * level) * scale;
             const auto colour = v.reversed ? screenLime : juce::Colours::white;
-            g.setColour (colour.withAlpha (0.15f + 0.25f * level));
-            g.fillEllipse (juce::Rectangle<float> (r * 2.6f, r * 2.6f).withCentre ({ x, y }));   // glow
-            g.setColour (colour.withAlpha (0.45f + 0.55f * level));
-            g.fillEllipse (juce::Rectangle<float> (r, r).withCentre ({ x, y }));
+            switch (look)
+            {
+                case FieldLook::dots:
+                    g.setColour (colour.withAlpha (0.15f + 0.25f * level));
+                    g.fillEllipse (juce::Rectangle<float> (r * 2.6f, r * 2.6f).withCentre ({ x, y }));   // glow
+                    g.setColour (colour.withAlpha (0.45f + 0.55f * level));
+                    g.fillEllipse (juce::Rectangle<float> (r, r).withCentre ({ x, y }));
+                    break;
+
+                case FieldLook::stars:
+                {
+                    // A four-pointed star that twinkles: its rays breathe with the frame.
+                    const float twinkle = 0.6f + 0.4f * std::sin ((float) tick * 0.7f + (float) (hash % 628u) * 0.01f);
+                    const float ray = r * (1.6f + 1.4f * twinkle);
+                    g.setColour (colour.withAlpha (0.12f + 0.2f * level));
+                    g.fillEllipse (juce::Rectangle<float> (r * 3.0f, r * 3.0f).withCentre ({ x, y }));
+                    g.setColour (colour.withAlpha ((0.5f + 0.5f * level) * twinkle));
+                    g.drawLine (x - ray, y, x + ray, y, 0.9f * scale);
+                    g.drawLine (x, y - ray, x, y + ray, 0.9f * scale);
+                    g.fillEllipse (juce::Rectangle<float> (r * 0.8f, r * 0.8f).withCentre ({ x, y }));
+                    break;
+                }
+
+                case FieldLook::shore:
+                {
+                    // Foam: a cluster of small bubbles riding a wave whose height the grain lifts.
+                    const float swell = std::sin ((float) tick * 0.12f + x * 0.012f) * (float) h * 0.06f;
+                    juce::Random foam (hash + (std::uint32_t) tick);
+                    for (int b = 0; b < 4; ++b)
+                    {
+                        const float bx = x + (foam.nextFloat() - 0.5f) * r * 3.0f, by = y + swell + (foam.nextFloat() - 0.5f) * r * 1.5f;
+                        const float br = r * (0.3f + 0.4f * foam.nextFloat());
+                        g.setColour (colour.withAlpha (0.35f + 0.5f * level));
+                        g.drawEllipse (juce::Rectangle<float> (br * 2.0f, br * 2.0f).withCentre ({ bx, by }), 0.8f * scale);
+                    }
+                    break;
+                }
+
+                case FieldLook::film:
+                {
+                    // A rough speck, sometimes a scratch down the frame.
+                    juce::Random speck (hash + (std::uint32_t) tick * 7u);
+                    juce::Path blot;
+                    for (int k = 0; k < 6; ++k)
+                    {
+                        const auto pt = juce::Point<float> (x, y).getPointOnCircumference (r * (0.4f + 0.6f * speck.nextFloat()), (float) k * 1.047f);
+                        k == 0 ? blot.startNewSubPath (pt) : blot.lineTo (pt);
+                    }
+                    blot.closeSubPath();
+                    g.setColour (colour.withAlpha (0.5f + 0.5f * level));
+                    g.fillPath (blot);
+                    if (speck.nextFloat() < 0.04f)
+                    {
+                        g.setColour (colour.withAlpha (0.35f));
+                        g.drawLine (x, 0.0f, x + (speck.nextFloat() - 0.5f) * 6.0f, (float) h, 0.7f * scale);
+                    }
+                    break;
+                }
+
+                case FieldLook::clouds:
+                    // Soft puffs, several layered, that drift and linger.
+                    for (int k = 0; k < 3; ++k)
+                    {
+                        const float pr = r * (2.0f + (float) k * 1.2f);
+                        g.setColour (colour.withAlpha ((0.05f + 0.07f * level) * (3.0f - (float) k) / 3.0f));
+                        g.fillEllipse (juce::Rectangle<float> (pr * 1.6f, pr).withCentre ({ x + (float) k * r, y - (float) k * r * 0.3f }));
+                    }
+                    break;
+            }
+        }
+    }
+
+    // What's behind the grains, by look: a starfield, a few still wave lines,
+    // the film's own grain, a lighter sky. Dots have none.
+    void drawFieldBackdrop (juce::Graphics& g, juce::Rectangle<int> roll)
+    {
+        if (look == FieldLook::dots || roll.isEmpty())
+            return;
+        // Drawn once per size, look and theme (a starfield is hundreds of dots).
+        if (fieldBackdrop.getWidth() != roll.getWidth() * 2 || fieldBackdrop.getHeight() != roll.getHeight() * 2)
+        {
+            fieldBackdrop = juce::Image (juce::Image::ARGB, roll.getWidth() * 2, roll.getHeight() * 2, true);
+            juce::Graphics b (fieldBackdrop);
+            b.addTransform (juce::AffineTransform::scale (2.0f));
+            paintFieldBackdrop (b, roll.withZeroOrigin());
+        }
+        g.drawImage (fieldBackdrop, roll.toFloat());
+    }
+
+    void paintFieldBackdrop (juce::Graphics& g, juce::Rectangle<int> roll)
+    {
+        const auto area = roll.toFloat();
+        switch (look)
+        {
+            case FieldLook::dots:
+                break;
+            case FieldLook::stars:
+            {
+                g.setGradientFill (juce::ColourGradient (screenBlue.darker (0.8f), 0.0f, area.getY(), screenBlue.darker (0.4f), 0.0f, area.getBottom(), false));
+                g.fillRect (area);
+                juce::Random sky (42);
+                for (int i = 0; i < (int) (area.getWidth() * area.getHeight() / 900.0f); ++i)
+                {
+                    const float size = 0.6f + sky.nextFloat() * 1.2f;
+                    g.setColour (screenPale.withAlpha (0.08f + 0.35f * sky.nextFloat()));
+                    g.fillEllipse (area.getX() + sky.nextFloat() * area.getWidth(), area.getY() + sky.nextFloat() * area.getHeight(), size, size);
+                }
+                break;
+            }
+            case FieldLook::shore:
+                for (int line = 0; line < 3; ++line)
+                {
+                    juce::Path wave;
+                    const float base = area.getY() + area.getHeight() * (0.3f + 0.22f * (float) line);
+                    for (float x = 0.0f; x <= area.getWidth(); x += 6.0f)
+                    {
+                        const float y = base + std::sin (x * 0.03f + (float) line * 1.7f) * 4.0f;
+                        x == 0.0f ? wave.startNewSubPath (area.getX() + x, y) : wave.lineTo (area.getX() + x, y);
+                    }
+                    g.setColour (screenLight.withAlpha (0.18f));
+                    g.strokePath (wave, juce::PathStrokeType (1.2f));
+                }
+                break;
+            case FieldLook::film:
+            {
+                juce::Random grain (7);
+                for (int i = 0; i < (int) (area.getWidth() * area.getHeight() / 60.0f); ++i)
+                {
+                    g.setColour ((grain.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (0.05f + 0.06f * grain.nextFloat()));
+                    g.fillRect (area.getX() + grain.nextFloat() * area.getWidth(), area.getY() + grain.nextFloat() * area.getHeight(), 1.0f, 1.0f);
+                }
+                break;
+            }
+            case FieldLook::clouds:
+                g.setGradientFill (juce::ColourGradient (screenLight.withAlpha (0.25f), 0.0f, area.getY(), juce::Colours::transparentBlack, 0.0f, area.getBottom(), false));
+                g.fillRect (area);
+                break;
         }
     }
 
@@ -464,6 +615,8 @@ private:
         const float laneH = (float) roll.getHeight() / lanes;
         const float rollTop = (float) roll.getY() + laneH * 1.5f, rollBottom = (float) roll.getBottom() - laneH * 1.5f;
         const auto panToY = [=] (float pan) { return juce::jmap (pan, -1.0f, 1.0f, rollTop, rollBottom); };
+
+        drawFieldBackdrop (g, roll);
 
         // Stereo guides: L at the top, centre, R at the bottom.
         g.setFont (monoFont (10.0f));
@@ -514,6 +667,9 @@ private:
     std::array<float, silt::Engine::numVoices> heads {};
     juce::String hud;
     juce::Image field;     // the grain field with its trails
+    FieldLook look = FieldLook::dots;
+    juce::Image fieldBackdrop;   // what's behind the grains, by look
+    unsigned tick = 0;     // the field's own clock, for twinkles and waves
     juce::Rectangle<int> glass;   // the screen's face, inside the bezel
     juce::Image bezel;            // the bezel and the empty glass, drawn once per size and theme
     float fieldShare = 0.36f, insetShare = 0.33f;
