@@ -364,7 +364,7 @@ void SiltEditor::wireModulation (FineSlider& s)
 void SiltEditor::showKnobMenu (FineSlider& s)
 {
     static constexpr float depths[] { 1.0f, 0.5f, 0.25f, 0.1f, -0.1f, -0.25f, -0.5f, -1.0f };
-    static const char* types[] { "WAVE", "RANDOM", "ENV", "FOLLOW", "MIDI" };
+    static const char* types[] { "WAVE", "RANDOM", "ENV", "FOLLOW", "MIDI", "MACRO" };
     const int target = s.target;
     juce::PopupMenu menu;
     bool any = false;

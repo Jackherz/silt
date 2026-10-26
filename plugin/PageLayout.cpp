@@ -151,10 +151,10 @@ std::vector<Entry> build (bool instrument)
         const auto id = [m] (const char* suffix) { return "m" + juce::String (m + 1) + suffix; };
         const Shown shownMod = [m] (const Context& c) { return c.modShown == m; };
         const auto type = [=] (int t) { return Shown ([=] (const Context& c) { return c.modShown == m && juce::roundToInt (c.v (id ("Type"))) == t; }); };
-        const auto wave = type (0), random = type (1), envelope = type (2), follow = type (3), midi = type (4);
+        const auto wave = type (0), random = type (1), envelope = type (2), follow = type (3), midi = type (4), macro = type (5);
         const Shown timed = [=] (const Context& c) { return wave (c) || random (c); };
 
-        menu (mod, 1, id ("Type"), "TYPE", { "WAVE", "RANDOM", "ENVELOPE", "FOLLOW", "MIDI" }, shownMod);
+        menu (mod, 1, id ("Type"), "TYPE", { "WAVE", "RANDOM", "ENVELOPE", "FOLLOW", "MIDI", "MACRO" }, shownMod);
         under (Kind::underButton, mod, 1, id ("Enable"), 50, {}, "ON", shownMod);
         under (Kind::underButton, mod, 2, id ("Voice"), 64, {}, "VOICE", shownMod);
 
@@ -179,6 +179,9 @@ std::vector<Entry> build (bool instrument)
         knob (mod, 4, id ("Gain"), "GAIN", follow);
 
         menu (mod, 2, id ("Source"), "SOURCE", { "VELOCITY", "NOTE", "MOD WHEEL", "AFTERTOUCH", "PITCH BEND" }, midi);
+
+        // MACRO: one knob that moves everything it's routed to.
+        knob (mod, 3, id ("Macro"), "MACRO", macro);
     }
     e.push_back ({ mod, 7, Kind::action, "!assign", "CONTROLLER", {}, "ASSIGN", 0, {} });
     return e;

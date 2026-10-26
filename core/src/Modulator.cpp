@@ -59,6 +59,7 @@ float Modulator::advance (const ModulatorParams& p, const ModContext& c) noexcep
         case ModType::random:   return randomStep (p, c);
         case ModType::envelope: return envelope (p, c);
         case ModType::follow:   return follow (p, c);
+        case ModType::macro:    return std::clamp (p.macro, 0.0f, 1.0f);
         case ModType::midi:
             switch (p.source)
             {

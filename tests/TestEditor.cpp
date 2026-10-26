@@ -73,7 +73,7 @@ TEST_CASE ("Every slot's shown control is the one the controller moves, in every
     {
         rig.silt.modShown.store (m);
         const auto id = "m" + juce::String (m + 1);
-        for (int type = 0; type < 5; ++type)
+        for (int type = 0; type < 6; ++type)
             for (int sync = 0; sync < 2; ++sync)
             {
                 rig.set ((id + "Type").toRawUTF8(), (float) type);

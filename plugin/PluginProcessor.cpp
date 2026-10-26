@@ -254,7 +254,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
         const auto id = [n] (const char* suffix) { return "m" + juce::String (n) + suffix; };
         const auto name = [n] (const char* what) { return "Mod " + juce::String (n) + " " + what; };
         layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("Type"), 1 }, name ("type"),
-                                                                  juce::StringArray { "Wave", "Random", "Envelope", "Follow", "MIDI" }, 0),
+                                                                  juce::StringArray { "Wave", "Random", "Envelope", "Follow", "MIDI", "Macro" }, 0),
                     withUnit (id ("Rate"), name ("rate"), skewed (0.01f, 50.0f, 1.0f), 1.0f, formatHz),
                     std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Sync"), 1 }, name ("sync"), false),
                     std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("Div"), 1 }, name ("rate (synced)"), divisionNames, quarter),
@@ -286,7 +286,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                     std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Enable"), 1 }, name ("on"), true),
                     // Per voice: each voice runs its own copy from its own note (grain
                     // parameters only; the effects follow the shared one).
-                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Voice"), 1 }, name ("per voice"), false));
+                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Voice"), 1 }, name ("per voice"), false),
+                    percent (id ("Macro"), name ("macro"), 0.0f));
     }
 
     // Capture and output
@@ -421,7 +422,7 @@ SiltProcessor::SiltProcessor()
         const auto p = [this, m] (const char* suffix) { return params.getRawParameterValue ("m" + juce::String (m + 1) + suffix); };
         modulatorRaw[(size_t) m] = { p ("Type"), p ("Rate"), p ("Sync"), p ("Div"), p ("Shape"), p ("Phase"), p ("Retrig"), p ("Smooth"), p ("Jitter"),
                                      p ("Attack"), p ("Decay"), p ("Sustain"), p ("Release"), p ("Repeat"), p ("FAttack"), p ("FRelease"), p ("Gain"), p ("Source"),
-                                     p ("Enable"), p ("Voice") };
+                                     p ("Enable"), p ("Voice"), p ("Macro") };
     }
 
     raw = std::make_unique<RawParams> ([this] (const char* id) -> std::atomic<float>*
@@ -924,7 +925,7 @@ silt::ModulatorParams SiltProcessor::readModulatorParams (int m) const noexcept
     const auto& r = modulatorRaw[(size_t) m];
     const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
     silt::ModulatorParams p;
-    p.type = (silt::ModType) juce::jlimit (0, 4, (int) v (r.type));
+    p.type = (silt::ModType) juce::jlimit (0, 5, (int) v (r.type));
     p.rateHz = v (r.rate);
     p.sync = v (r.sync) > 0.5f;
     p.syncQuarters = quartersFor (r.div);
@@ -942,6 +943,7 @@ silt::ModulatorParams SiltProcessor::readModulatorParams (int m) const noexcept
     p.followReleaseMs = v (r.followRelease);
     p.gainDb = v (r.gain);
     p.source = (silt::MidiSource) juce::jlimit (0, 4, (int) v (r.source));
+    p.macro = v (r.macro) * 0.01f;
     return p;
 }
 

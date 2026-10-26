@@ -9,8 +9,8 @@ namespace
 {
 const char* typeName (int type)
 {
-    static const char* names[] { "WAVE", "RANDOM", "ENV", "FOLLOW", "MIDI" };
-    return names[juce::jlimit (0, 4, type)];
+    static const char* names[] { "WAVE", "RANDOM", "ENV", "FOLLOW", "MIDI", "MACRO" };
+    return names[juce::jlimit (0, 5, type)];
 }
 
 int typeOf (SiltProcessor& silt, int m)

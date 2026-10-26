@@ -206,3 +206,16 @@ TEST_CASE ("MIDI sources pass through; note and bend are bipolar")
     p.source = MidiSource::velocity;
     CHECK_FALSE (Modulator::isBipolar (p));
 }
+
+TEST_CASE ("MACRO is its knob, 0 to 1")
+{
+    Modulator m;
+    m.reset();
+    ModulatorParams p;
+    p.type = ModType::macro;
+    p.macro = 0.37f;
+    CHECK (m.advance (p, context()) == 0.37f);
+    p.macro = 2.0f;
+    CHECK (m.advance (p, context()) == 1.0f);
+    CHECK_FALSE (Modulator::isBipolar (p));
+}

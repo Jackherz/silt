@@ -5,7 +5,7 @@
 namespace silt
 {
 
-enum class ModType { wave, random, envelope, follow, midi };
+enum class ModType { wave, random, envelope, follow, midi, macro };
 enum class MidiSource { velocity, note, modWheel, aftertouch, pitchBend };
 
 struct ModulatorParams
@@ -34,6 +34,9 @@ struct ModulatorParams
 
     // MIDI
     MidiSource source = MidiSource::velocity;
+
+    // MACRO: a knob, 0…1 (automatable, controller-mappable), routed like any source
+    float macro = 0.0f;
 };
 
 // What the modulators can see of a block: the host's clock, the notes and
@@ -58,7 +61,7 @@ struct ModContext
 
 // One modulation source. advance() steps it over a block and returns its value
 // at the block's end: −1…1 for bipolar sources (WAVE, RANDOM, note, pitch
-// bend), 0…1 for the rest. Plain state, no allocation: audio thread.
+// bend), 0…1 for the rest (MACRO is its knob). Plain state, no allocation: audio thread.
 class Modulator
 {
 public:

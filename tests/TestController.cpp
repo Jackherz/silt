@@ -457,3 +457,20 @@ TEST_CASE ("Per-voice routes don't reach effect parameters, which follow the sha
     CHECK_FALSE (rig.silt.isVoiceTarget (rig.silt.modulationTarget ("filterCutoff")));
     CHECK (rig.silt.isVoiceTarget (rig.silt.modulationTarget ("spray")));
 }
+
+TEST_CASE ("A MACRO modulator moves its routes with its knob")
+{
+    Rig rig;
+    rig.set ("m3Type", rig.silt.params.getParameter ("m3Type")->convertTo0to1 (5.0f));   // macro
+    rig.set ("filterCutoff", 0.2f);
+    const int t = rig.silt.modulationTarget ("filterCutoff");
+    rig.silt.setRouteAmount (2, t, 0.5f);
+    runBlocks (rig, 2);
+    CHECK_THAT (rig.silt.modulatedValue01 (t), WithinAbs (0.2, 1.0e-6));
+    rig.set ("m3Macro", 1.0f);   // knob fully up
+    runBlocks (rig, 2);
+    CHECK_THAT (rig.silt.modulatedValue01 (t), WithinAbs (0.7, 1.0e-5));
+    // The MOD page's knob 4 is the macro when the type is MACRO.
+    rig.silt.modShown.store (2);
+    CHECK (rig.silt.slotParameter (SiltProcessor::modPage, 3) == "m3Macro");
+}

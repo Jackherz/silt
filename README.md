@@ -74,8 +74,9 @@ per-line modulation and absorption filters; changing TIME glides like tape.
 **Modulation:** four modulators, each a WAVE (sine → triangle → saw → square, free
 or synced, phase, retrigger on notes), RANDOM (smooth to stepped, jitter, free or
 synced), ENVELOPE (ADSR from the notes played; REPEAT loops it while held), FOLLOW
-(the input's level) or MIDI (velocity, note, mod wheel, aftertouch, pitch bend).
-Design: `docs/mod-section-design.md`.
+(the input's level), MIDI (velocity, note, mod wheel, aftertouch, pitch bend) or
+MACRO (a knob, automatable and controller-mappable, that moves everything it's
+routed to). Design: `docs/mod-section-design.md`.
 
 - **The mod rail**, left of every page: a chip per modulator with its colour and
   number, type, a live meter and its route count. Click arms it (filled with its
