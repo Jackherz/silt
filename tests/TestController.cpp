@@ -1018,3 +1018,36 @@ TEST_CASE ("FEED records Silt's own output and plays it as the new sample")
     CHECK (*std::max_element (overview.maximum.begin(), overview.maximum.end()) > 0.05f);   // it heard the grains
     CHECK_FALSE (rig.silt.capturePreset ("x")->getChildByName ("PARAMS")->hasAttribute ("captureFeed"));
 }
+
+TEST_CASE ("UNDO takes a recorded or loaded sample back to the one before, and REDO brings it back")
+{
+    Rig rig;
+    REQUIRE (waitFor ([&] { return rig.silt.getFactorySample() == 0; }));   // the opening sample: not a step
+    CHECK_FALSE (rig.silt.canUndoRoutes());
+    loadSine (rig);
+    const auto sineName = rig.silt.getOverview().name;
+    CHECK (rig.silt.canUndoRoutes());
+
+    rig.set ("captureFeed", 1.0f);
+    rig.set ("captureBars", 0.0f);
+    rig.silt.armCapture();
+    juce::MidiBuffer on;
+    on.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+    runBlocks (rig, 200, on);
+    REQUIRE (waitFor ([&] { return rig.silt.getOverview().name.startsWith ("FEED"); }));
+    const auto feedName = rig.silt.getOverview().name;
+    CHECK (rig.silt.undoDescription().startsWith ("SAMPLE FEED"));
+
+    rig.silt.undoRoutes();
+    REQUIRE (waitFor ([&] { return rig.silt.getOverview().name == sineName; }));
+    CHECK_THAT (rig.silt.getOverview().seconds, WithinAbs (2.0, 0.01));
+
+    rig.silt.redoRoutes();
+    REQUIRE (waitFor ([&] { return rig.silt.getOverview().name == feedName; }));
+
+    // All the way back: the factory sample the instance opened with, in its key.
+    rig.silt.undoRoutes();
+    rig.silt.undoRoutes();
+    REQUIRE (waitFor ([&] { return rig.silt.getFactorySample() == 0; }));
+    CHECK (rootNote (rig) == 64.0f);
+}

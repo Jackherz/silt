@@ -259,7 +259,24 @@ private:
 
     // Gives the engine a new sample and keeps a message-side copy for the UI and state.
     static std::unique_ptr<silt::SampleBuffer> makeBuffer (const juce::AudioBuffer<float>& audio, double sampleRate);
-    void analyseThenInstall (std::unique_ptr<silt::SampleBuffer>, const juce::String& name);
+    // Analyses on the loader thread, then installs. rootNote ≥ 0 sets ROOT;
+    // record makes it an undo step (the sample before ↔ this one).
+    void analyseThenInstall (std::unique_ptr<silt::SampleBuffer>, const juce::String& name, int factory = -1,
+                             float rootNote = -1.0f, bool record = false);
+
+    // Undo for samples: what was loaded (audio, name, factory number, ROOT).
+    struct SampleSnapshot
+    {
+        juce::AudioBuffer<float> audio;
+        double rate = 0.0;
+        juce::String name;
+        int factory = -1;
+        float root = 60.0f;
+    };
+    class SampleChange;
+    std::shared_ptr<const SampleSnapshot> snapshotSample() const;
+    void restoreSample (const std::shared_ptr<const SampleSnapshot>&);
+    void recordSampleChange (std::shared_ptr<const SampleSnapshot> before);
     void installBuffer (std::unique_ptr<silt::SampleBuffer> analysed, const juce::String& name, int factory = -1);
     // Reads, decodes and analyses on the loader thread, then installs and sets
     // ROOT. onlyIfUnchanged: drop it if another sample or a state arrives first.
@@ -328,7 +345,10 @@ private:
     juce::uint32 lastGestureTime = 0;
     std::vector<float> routeSnapshot() const;
     void restoreRoutes (const std::vector<float>&) noexcept;
-    juce::UndoManager routeUndo { 0, 50 };
+    // Units: 1 per knob or route step; a sample step by its size (a unit per
+    // 64 KB), so old takes give way once they add up (about 125 MB), keeping
+    // at least the last 4 steps.
+    juce::UndoManager routeUndo { 2000, 4 };
     juce::StringArray randomExcluded { "m1Type", "m2Type", "m3Type", "m4Type" };
     juce::Random randomiser;
     int lastControllerRoute = -1;

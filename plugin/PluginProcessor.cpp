@@ -1943,7 +1943,8 @@ void SiltProcessor::timerCallback()
     if (state == CaptureState::done)
     {
         captureTarget.store (nullptr, std::memory_order_release);
-        analyseThenInstall (std::move (captureOwned), (capturingFeed ? "FEED " : "CAPTURE ") + juce::Time::getCurrentTime().formatted ("%H:%M:%S"));
+        analyseThenInstall (std::move (captureOwned), (capturingFeed ? "FEED " : "CAPTURE ") + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
+                            -1, -1.0f, true);
         captureState.store (CaptureState::idle, std::memory_order_release);
     }
     else if (state == CaptureState::cancelled)
@@ -2101,9 +2102,12 @@ void SiltProcessor::loadInBackground (std::function<std::unique_ptr<juce::AudioF
             if (weak == nullptr || (onlyIfUnchanged && (weak->sampleGeneration.load() != generation || weak->stateRestored.load())))
                 return;
             weak->lastLoadError.clear();
+            auto before = onlyIfUnchanged ? nullptr : weak->snapshotSample();   // the opening sample isn't a step
             weak->installBuffer (std::move (*buffer), name, factory);
             if (auto* root = weak->params.getParameter ("root"))
                 root->setValueNotifyingHost (root->convertTo0to1 ((float) rootNote));
+            if (before != nullptr)
+                weak->recordSampleChange (std::move (before));
         });
     });
 }
@@ -2120,19 +2124,88 @@ std::unique_ptr<silt::SampleBuffer> SiltProcessor::makeBuffer (const juce::Audio
 
 // Analysis (zero crossings and transients, for SNAP) takes a moment on long
 // samples, so it runs on the loader thread; the sample is installed after.
-void SiltProcessor::analyseThenInstall (std::unique_ptr<silt::SampleBuffer> buffer, const juce::String& name)
+void SiltProcessor::analyseThenInstall (std::unique_ptr<silt::SampleBuffer> buffer, const juce::String& name, int factory,
+                                        float rootNote, bool record)
 {
     juce::WeakReference<SiltProcessor> weak (this);
     auto holder = std::make_shared<std::unique_ptr<silt::SampleBuffer>> (std::move (buffer));   // moved on, not copied
-    loader.addJob ([weak, holder, name]
+    loader.addJob ([weak, holder, name, factory, rootNote, record]
     {
         (*holder)->analyse();
-        juce::MessageManager::callAsync ([weak, holder, name]
+        juce::MessageManager::callAsync ([weak, holder, name, factory, rootNote, record]
         {
-            if (weak != nullptr)
-                weak->installBuffer (std::move (*holder), name);
+            if (weak == nullptr)
+                return;
+            auto before = record ? weak->snapshotSample() : nullptr;
+            weak->installBuffer (std::move (*holder), name, factory);
+            if (auto* root = weak->params.getParameter ("root"); root != nullptr && rootNote >= 0.0f)
+                root->setValueNotifyingHost (root->convertTo0to1 (rootNote));
+            if (before != nullptr)
+                weak->recordSampleChange (std::move (before));
         });
     });
+}
+
+// --- sample undo -------------------------------------------------------------------------
+
+std::shared_ptr<const SiltProcessor::SampleSnapshot> SiltProcessor::snapshotSample() const
+{
+    auto s = std::make_shared<SampleSnapshot>();
+    {
+        const juce::ScopedLock sl (sampleLock);
+        s->audio = sampleCopy;
+        s->rate = sampleCopyRate;
+        s->name = sampleName;
+        s->factory = factorySample;
+    }
+    if (auto* root = params.getParameter ("root"))
+        s->root = root->convertFrom0to1 (root->getValue());
+    return s;
+}
+
+// Puts a remembered sample back (analysed on the loader thread, as a load is).
+void SiltProcessor::restoreSample (const std::shared_ptr<const SampleSnapshot>& s)
+{
+    if (s == nullptr || s->audio.getNumSamples() == 0)
+        return;
+    analyseThenInstall (makeBuffer (s->audio, s->rate), s->name, s->factory, s->root, false);
+}
+
+class SiltProcessor::SampleChange final : public juce::UndoableAction
+{
+public:
+    SampleChange (SiltProcessor& p, std::shared_ptr<const SampleSnapshot> b, std::shared_ptr<const SampleSnapshot> a)
+        : processor (p), before (std::move (b)), after (std::move (a)) {}
+
+    bool perform() override
+    {
+        if (first)
+            first = false;   // recorded after the sample went in: nothing to do yet
+        else
+            processor.restoreSample (after);
+        return true;
+    }
+    bool undo() override { processor.restoreSample (before); return true; }
+    int getSizeInUnits() override
+    {
+        const auto bytes = [] (const std::shared_ptr<const SampleSnapshot>& s)
+        { return s == nullptr ? 0 : (std::size_t) s->audio.getNumSamples() * (std::size_t) s->audio.getNumChannels() * sizeof (float); };
+        return 1 + (int) ((bytes (before) + bytes (after)) / 65536);
+    }
+
+private:
+    SiltProcessor& processor;
+    std::shared_ptr<const SampleSnapshot> before, after;
+    bool first = true;
+};
+
+void SiltProcessor::recordSampleChange (std::shared_ptr<const SampleSnapshot> before)
+{
+    auto after = snapshotSample();
+    routeUndo.beginNewTransaction ("SAMPLE " + after->name.toUpperCase());
+    lastGestureParameter = -1;
+    routeUndo.perform (new SampleChange (*this, std::move (before), std::move (after)));
+    lastGestureParameter = -1;   // the next change starts its own step
 }
 
 // Message thread. The buffer is already analysed.
