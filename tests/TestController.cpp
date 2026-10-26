@@ -864,3 +864,55 @@ TEST_CASE ("A depth dragged through 0 keeps its route's polarity; a removed rout
     CHECK_THAT (rig.silt.routeAmount (0, t), WithinAbs (-0.3, 1e-6));
     CHECK_FALSE (rig.silt.routeIsBipolar (0, t));
 }
+
+TEST_CASE ("RANDOM moves a page's slot controls by the amount, skips the excluded ones and is one undo step")
+{
+    Rig rig;
+    const int page = silt::layout::grain;
+    std::map<juce::String, float> before;
+    for (const auto* e : rig.silt.randomisable (page))
+        before[e->id] = rig.value (e->id.toRawUTF8());
+    REQUIRE (before.count ("spray") == 1);
+    CHECK (before.count ("rateMode") == 0);   // the mode under a slot stays
+
+    rig.silt.setRandomExcluded ("spray", true);
+    rig.silt.randomAmount.store (0.1f);
+    const int changed = rig.silt.randomisePage (page);
+    CHECK (changed > 0);
+    CHECK (rig.value ("spray") == before["spray"]);
+    for (const auto& [id, value] : before)
+        CHECK (std::abs (rig.value (id.toRawUTF8()) - value) <= 0.1f + 1.0e-4f);   // a knob goes at most 10% of the way
+
+    // One step back restores them all.
+    rig.silt.undoRoutes();
+    for (const auto& [id, value] : before)
+        CHECK_THAT (rig.value (id.toRawUTF8()), WithinAbs (value, 1.0e-6));
+
+    // At 100% the knobs land anywhere; menus and switches too.
+    rig.silt.randomAmount.store (1.0f);
+    float moved = 0.0f;
+    for (int i = 0; i < 5; ++i)
+    {
+        rig.silt.randomisePage (page);
+        moved = std::max (moved, std::abs (rig.value ("pitch") - before["pitch"]));
+    }
+    CHECK (moved > 0.2f);
+
+    // Exclusions and the amount are kept with the session.
+    juce::MemoryBlock state;
+    rig.silt.getStateInformation (state);
+    Rig restored;
+    restored.silt.setStateInformation (state.getData(), (int) state.getSize());
+    CHECK (restored.silt.isRandomExcluded ("spray"));
+    CHECK (restored.silt.isRandomExcluded ("m1Type"));
+    CHECK_THAT (restored.silt.randomAmount.load(), WithinAbs (1.0, 1e-6));
+}
+
+TEST_CASE ("RANDOM on the MOD page leaves the modulator types alone by default")
+{
+    Rig rig;
+    rig.silt.randomAmount.store (1.0f);
+    for (int i = 0; i < 10; ++i)
+        rig.silt.randomisePage (silt::layout::mod);
+    CHECK (rig.value ("m1Type") == 0.0f);
+}

@@ -18,6 +18,8 @@ struct EditorRig
 
     EditorRig()
     {
+        SiltEditor::tourOnFirstOpen = false;
+        silt::ui::Tour::remember = false;
         silt.enableAllBuses();
         silt.prepareToPlay (48000.0, 512);
         editor.reset (dynamic_cast<SiltEditor*> (silt.createEditor()));

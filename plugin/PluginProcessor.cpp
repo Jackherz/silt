@@ -1356,6 +1356,57 @@ void SiltProcessor::parameterGestureChanged (int index, bool starting)
     routeUndo.perform (new ParameterChange (*this, index, before, after));
 }
 
+std::vector<const silt::layout::Entry*> SiltProcessor::randomisable (int page) const
+{
+    using silt::layout::Kind;
+    const auto context = layoutContext();
+    std::vector<const silt::layout::Entry*> out;
+    for (const auto& e : silt::layout::entries (isInstrument))
+        if (e.page == page && (e.kind == Kind::knob || e.kind == Kind::menu || e.kind == Kind::button)
+            && ! e.id.startsWith ("!") && e.isShown (context) && params.getParameter (e.id) != nullptr)
+            out.push_back (&e);
+    return out;
+}
+
+int SiltProcessor::randomisePage (int page)
+{
+    const float amount = juce::jlimit (0.0f, 1.0f, randomAmount.load());
+    routeUndo.beginNewTransaction ("RANDOM " + juce::String (silt::layout::pageName (page)));
+    lastGestureParameter = -1;
+    int changed = 0;
+    for (const auto* e : randomisable (page))
+    {
+        if (isRandomExcluded (e->id))
+            continue;
+        auto* parameter = params.getParameter (e->id);
+        const float before = parameter->getValue();
+        float after = before;
+        if (e->kind == silt::layout::Kind::knob)
+            after = before + (randomiser.nextFloat() - before) * amount;
+        else if (randomiser.nextFloat() < amount)
+        {
+            const int steps = juce::jmax (2, parameter->getNumSteps());
+            after = (float) randomiser.nextInt (steps) / (float) (steps - 1);
+        }
+        after = parameter->convertTo0to1 (parameter->convertFrom0to1 (after));   // onto the parameter's steps
+        if (juce::exactlyEqual (before, after))
+            continue;
+        const juce::ScopedValueSetter<bool> quiet (replaying, true);
+        routeUndo.perform (new ParameterChange (*this, parameter->getParameterIndex(), before, after));
+        ++changed;
+    }
+    lastGestureParameter = -1;   // the next change starts its own step
+    return changed;
+}
+
+void SiltProcessor::setRandomExcluded (const juce::String& id, bool excluded)
+{
+    if (excluded)
+        randomExcluded.addIfNotAlreadyThere (id);
+    else
+        randomExcluded.removeString (id);
+}
+
 bool SiltProcessor::undoing (const std::function<bool()>& step)
 {
     lastGestureParameter = -1;   // the next change starts its own step
@@ -2096,6 +2147,8 @@ void SiltProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("modRoutes", routesToString(), nullptr);
     state.setProperty ("modShown", modShown.load(), nullptr);
     state.setProperty ("presetName", presetName, nullptr);
+    state.setProperty ("randomAmount", randomAmount.load(), nullptr);
+    state.setProperty ("randomExcluded", randomExcluded.joinIntoString (","), nullptr);
     if (editorWidth.load() > 0)
     {
         state.setProperty ("editorWidth", editorWidth.load(), nullptr);
@@ -2181,6 +2234,9 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
     modShown.store (juce::jlimit (0, numModulators - 1, (int) tree.getProperty ("modShown", 0)));
     routeUndo.clearUndoHistory();   // a loaded set starts its own history
     presetName = tree.getProperty ("presetName", "Init").toString();
+    randomAmount.store (juce::jlimit (0.0f, 1.0f, (float) tree.getProperty ("randomAmount", 0.5f)));
+    if (tree.hasProperty ("randomExcluded"))
+        randomExcluded = juce::StringArray::fromTokens (tree.getProperty ("randomExcluded").toString(), ",", "");
     editorWidth.store ((int) tree.getProperty ("editorWidth", 0));
     editorHeight.store ((int) tree.getProperty ("editorHeight", 0));
 

@@ -103,6 +103,8 @@ int main (int argc, char* argv[])
 
     play (silt, 3.0, true);
 
+    SiltEditor::tourOnFirstOpen = false;
+    silt::ui::Tour::remember = false;
     std::unique_ptr<juce::AudioProcessorEditor> editor (silt.createEditor());
     editor->setVisible (true);
     runMessageLoop (100);
@@ -124,6 +126,29 @@ int main (int argc, char* argv[])
         juce::FileOutputStream stream (file);
         juce::PNGImageFormat().writeImageToStream (image, stream);
         std::cout << file.getFullPathName() << "\n";
+    }
+
+    // Tour cards: the first, the effects and the movement steps (tour-1.png …).
+    if (auto* siltEditor = dynamic_cast<SiltEditor*> (editor.get()))
+    {
+        siltEditor->startTour();
+        silt::ui::Tour* tour = nullptr;
+        for (auto* child : editor->getChildren())
+            if (auto* t = dynamic_cast<silt::ui::Tour*> (child))
+                tour = t;
+        for (const int step : { 0, 2, 5, 7, 8 })
+        {
+            tour->go (step);
+            play (silt, 0.05, false);
+            runMessageLoop (80);
+            const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
+            const auto file = outDir.getChildFile ("tour-" + juce::String (step + 1) + ".png");
+            file.deleteFile();
+            juce::FileOutputStream stream (file);
+            juce::PNGImageFormat().writeImageToStream (image, stream);
+            std::cout << file.getFullPathName() << "\n";
+        }
+        tour->go (99);
     }
 
     // The route list, over the last page.

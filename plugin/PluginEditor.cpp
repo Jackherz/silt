@@ -4,6 +4,7 @@
 #include "ModColours.h"
 #include "PanelLook.h"
 #include "Presets.h"
+#include "RandomAmountBox.h"
 #include "ScreenInsets.h"
 
 using namespace silt::ui;
@@ -322,6 +323,20 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     };
     addAndMakeVisible (learnButton);
 
+    // RANDOM: the open page's controls, by the amount beside it; right-click
+    // (or Ctrl-click) for amounts and what to leave out.
+    randomButton.setTooltip ("Randomise this page's controls. Right-click: amount, and what to leave out");
+    randomButton.onClick = [this]
+    {
+        if (juce::ModifierKeys::getCurrentModifiers().isPopupMenu())
+            showRandomMenu();
+        else
+            randomise();
+    };
+    addAndMakeVisible (randomButton);
+    randomAmountBox = std::make_unique<RandomAmountBox> (silt);
+    addAndMakeVisible (*randomAmountBox);
+
     // UNDO / REDO: knob, menu, button and modulation changes (also Cmd/Ctrl+Z,
     // Shift+Cmd/Ctrl+Z, which some hosts keep for themselves).
     undoButton.onClick = [this] { stepUndo (false); };
@@ -354,6 +369,27 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     const int startPage = juce::jlimit (0, (int) pageTabs.size() - 1, silt.currentPage.load());
     pageTabs[(size_t) startPage].setToggleState (true, juce::dontSendNotification);
     showPage (startPage);
+
+    // The tour: ? in the header, and once by itself the first time.
+    tourButton.setTooltip ("A quick tour of Silt");
+    tourButton.onClick = [this] { startTour(); };
+    addAndMakeVisible (tourButton);
+    tour = std::make_unique<Tour>();
+    tour->showPage = [this] (int target)
+    {
+        pageTabs[(size_t) target].setToggleState (true, juce::dontSendNotification);
+        silt.currentPage.store (target);
+        showPage (target);
+    };
+    tour->onFinish = [this] { tour->showPage (pageBeforeTour); };
+    addChildComponent (*tour);
+    if (tourOnFirstOpen && ! Tour::seen())
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<SiltEditor> (this)]
+        {
+            if (safe != nullptr && safe->isShowing())
+                safe->startTour();
+        });
+
     startTimerHz (30);
 }
 
@@ -432,6 +468,7 @@ void SiltEditor::buildControl (const layout::Entry& entry)
 void SiltEditor::wireModulation (FineSlider& s)
 {
     s.target = silt.modulationTarget (s.getComponentID());
+    s.showMenu = [this, &s] { showKnobMenu (s); };   // every knob: RANDOM's exclude, and routes on targets
     if (s.target < 0)
         return;
     const int target = s.target;
@@ -457,7 +494,6 @@ void SiltEditor::wireModulation (FineSlider& s)
                                 : juce::String();
         repaint (header);
     };
-    s.showMenu = [this, &s] { showKnobMenu (s); };
     s.togglePolarity = [this, target, &s] (int m)
     {
         if (silt.routeAmount (m, target) == 0.0f)
@@ -498,9 +534,10 @@ void SiltEditor::showKnobMenu (FineSlider& s)
     static constexpr float depths[] { 1.0f, 0.5f, 0.25f, 0.1f, -0.1f, -0.25f, -0.5f, -1.0f };
     static const char* types[] { "WAVE", "RANDOM", "ENV", "FOLLOW", "MIDI", "MACRO" };
     const int target = s.target;
+    const auto id = s.getComponentID();
     juce::PopupMenu menu;
     bool any = false;
-    for (int m = 0; m < SiltProcessor::numModulators; ++m)
+    for (int m = 0; m < SiltProcessor::numModulators && target >= 0; ++m)
     {
         const float amount = silt.routeAmount (m, target);
         juce::PopupMenu depthsMenu;
@@ -523,15 +560,27 @@ void SiltEditor::showKnobMenu (FineSlider& s)
         item.colour = modColour (m).base;
         menu.addItem (std::move (item));
     }
+    if (target >= 0)
+    {
+        menu.addSeparator();
+        menu.addItem (1, "Clear all modulation on this knob", any);
+        menu.addItem (2, "Show all routes...");
+    }
     menu.addSeparator();
-    menu.addItem (1, "Clear all modulation on this knob", any);
-    menu.addItem (2, "Show all routes...");
+    menu.addItem (5, "Leave out of RANDOM", true, silt.isRandomExcluded (id));
+    menu.addSeparator();
     menu.addItem (3, "Undo " + silt.undoDescription().toLowerCase(), silt.canUndoRoutes());
     menu.addItem (4, "Redo " + silt.redoDescription().toLowerCase(), silt.canRedoRoutes());
 
     juce::Component::SafePointer<FineSlider> safe (&s);
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&s), [this, target, safe] (int chosen)
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&s), [this, target, id, safe] (int chosen)
     {
+        if (chosen == 5)
+        {
+            silt.setRandomExcluded (id, ! silt.isRandomExcluded (id));
+            repaint (pagePanel);
+            return;
+        }
         if (chosen == 1 || chosen >= 100)
             silt.beginRouteGesture();
         if (chosen == 1)
@@ -559,7 +608,6 @@ void SiltEditor::showKnobMenu (FineSlider& s)
     });
 }
 
-// One step back or forward, with a word in the LCD about what changed.
 // RESONATOR, FILTER, COLOR: the scope taps the module, reads ~21 ms past the latest rising zero
 // crossing, and draws what goes in against what comes out.
 void SiltEditor::updateScope()
@@ -597,6 +645,124 @@ void SiltEditor::chooseFile()
                           });
 }
 
+void SiltEditor::startTour()
+{
+    if (routeList->isVisible())
+        routeList->onClose();
+    pageBeforeTour = page;
+    tour->start (tourSteps());
+}
+
+// What the tour says, and where it points.
+std::vector<Tour::Step> SiltEditor::tourSteps()
+{
+    const auto bounds = [] (std::initializer_list<const juce::Component*> parts)
+    {
+        juce::Rectangle<int> r;
+        for (const auto* c : parts)
+            r = r.isEmpty() ? c->getBounds() : r.getUnion (c->getBounds());
+        return r;
+    };
+    std::vector<Tour::Step> steps;
+    steps.push_back ({ "Welcome to Silt",
+                       "Silt is a granular sampler. It plays a sound as a cloud of tiny overlapping slices called grains. "
+                       "Change how long they are, how often they start and where in the sound they come from, and one sample "
+                       "becomes pads, textures, rhythms or drones.\n\nThis tour takes about a minute.", {} });
+    steps.push_back ({ "The screen",
+                       "The waveform is your sample. Each white line is a grain playing right now, and the shaded band is the "
+                       "part of the sample grains come from. The strip below spreads the grains out by where they sit in the stereo field.",
+                       [this] { return screen->getBounds(); } });
+    if constexpr (SiltProcessor::isInstrument)
+        steps.push_back ({ "Getting sound in",
+                           "LOAD opens an audio file or one of the built-in samples, or drop a file on the screen. ARM records from "
+                           "your DAW's sidechain input for the length beside it. Then play notes: each note plays the sample at its pitch.",
+                           [this, bounds] { return bounds ({ &armButton, &loadButton }); } });
+    else
+        steps.push_back ({ "Getting sound in",
+                           "Silt FX turns the audio on its track into grains as it plays (MODE: LIVE on the PLAY page). "
+                           "For a sample instead, LOAD one or drop a file on the screen, set MODE to PITCH and play notes.",
+                           [this, bounds] { return bounds ({ &armButton, &loadButton }); } });
+    steps.push_back ({ "Pages",
+                       "Each tab is a page of up to eight controls. GRAIN and SHAPE make the grains, PITCH and PLAY decide how notes "
+                       "play them, then come the effects. Drag a knob to turn it (Shift: finer), double-click to reset. "
+                       "With an 8-knob MIDI controller, press LEARN once and its knobs follow whichever page is open.",
+                       [this, bounds] { return bounds ({ &pageTabs.front(), &pageTabs.back() }); } });
+    steps.push_back ({ "Start with these",
+                       "SIZE is how long each grain is, RATE how often they start, and SPRAY how far they scatter through the sample. "
+                       "Short and fast sounds glassy; long and slow smears into a pad.",
+                       [this] { return controlRow; }, layout::grain });
+    steps.push_back ({ "Effects",
+                       "RESONATOR, FILTER, COLOR and SPACE shape the sound after the grains. On the first three, the screen shows "
+                       "the sound going in (faint) and coming out (bright), so you can see what a knob does while you hear it.",
+                       [this] { return screen->scopeArea().translated (screen->getX(), screen->getY()); }, layout::color });
+    steps.push_back ({ "Chain",
+                       "CHAIN sets the order the effects run in. Drag a block to move it: COLOR after SPACE sounds quite "
+                       "different from COLOR before it.",
+                       [this] { return chainView->getBounds(); }, layout::chain });
+    steps.push_back ({ "Movement",
+                       "These four are modulators: waves, random, envelopes and more. Drag one onto a knob to make it move, or "
+                       "hold Alt and drag a knob. Rings round a knob show what's moving it, and MOD ROUTES lists everything.",
+                       [this] { return railArea; }, layout::mod });
+    steps.push_back ({ "Happy accidents",
+                       "RANDOM shakes up the open page. The box beside it sets how far, from a nudge to anything goes. "
+                       "Right-click a knob to leave it out. UNDO takes a step back if you don't like it.",
+                       [this, bounds] { return bounds ({ &randomButton, randomAmountBox.get() }); } });
+    steps.push_back ({ "Sounds",
+                       "Step through the factory presets with the arrows, or SAVE your own. A preset keeps every setting and "
+                       "the modulation, but not the sample.",
+                       [this] { return presetBar->getBounds(); } });
+    steps.push_back ({ "That's the tour",
+                       "Try this: pick a preset, play a chord, then press RANDOM on a page at 25% and keep what you like.\n\n"
+                       "Press ? any time to see this again.",
+                       [this] { return tourButton.getBounds(); } });
+    return steps;
+}
+
+void SiltEditor::randomise()
+{
+    const int changed = silt.randomisePage (page);
+    const juce::String name (layout::pageName (page));
+    flash = changed > 0 ? "RANDOM " + name + ": " + juce::String (changed) + (changed == 1 ? " CHANGE" : " CHANGES")
+                        : "RANDOM " + name + ": NOTHING TO CHANGE";
+    flashUntil = juce::Time::getMillisecondCounter() + 1500;
+    repaint();
+}
+
+void SiltEditor::showRandomMenu()
+{
+    static constexpr int amounts[] { 10, 25, 50, 75, 100 };
+    const auto entries = silt.randomisable (page);
+    juce::PopupMenu menu, leaveOut;
+    const int now = juce::roundToInt (silt.randomAmount.load() * 100.0f);
+    menu.addSectionHeader ("AMOUNT");
+    for (size_t i = 0; i < std::size (amounts); ++i)
+        menu.addItem (1 + (int) i, juce::String (amounts[i]) + (amounts[i] <= 10 ? "%  nudge" : amounts[i] == 100 ? "%  anything goes" : "%"),
+                      true, now == amounts[i]);
+    for (size_t i = 0; i < entries.size(); ++i)
+        leaveOut.addItem (100 + (int) i, entries[i]->label, true, silt.isRandomExcluded (entries[i]->id));
+    leaveOut.addSeparator();
+    leaveOut.addItem (10, "Leave all out");
+    leaveOut.addItem (11, "Include all");
+    menu.addSeparator();
+    menu.addSubMenu ("Leave out on " + juce::String (layout::pageName (page)), leaveOut, ! entries.empty());
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&randomButton), [this, entries] (int chosen)
+    {
+        if (chosen >= 1 && chosen <= (int) std::size (amounts))
+            randomAmountBox->set ((float) amounts[chosen - 1] / 100.0f);
+        else if (chosen == 10 || chosen == 11)
+            for (const auto* e : entries)
+                silt.setRandomExcluded (e->id, chosen == 10);
+        else if (chosen >= 100 && chosen - 100 < (int) entries.size())
+        {
+            const auto& id = entries[(size_t) chosen - 100]->id;
+            silt.setRandomExcluded (id, ! silt.isRandomExcluded (id));
+        }
+        repaint (pagePanel);
+    });
+}
+
+// One step back or forward, with a word in the LCD about what changed.
 void SiltEditor::stepUndo (bool redo)
 {
     const auto what = redo ? silt.redoDescription() : silt.undoDescription();
@@ -1060,8 +1226,10 @@ void SiltEditor::resized()
     header = r.removeFromTop (44);
     stripesArea = header.withTrimmedLeft (130).withWidth (180).withSizeKeepingCentre (180, 19);
     lcdArea = header.withTrimmedLeft (header.getWidth() - juce::jmin (420, header.getWidth() * 2 / 5)).reduced (8, 7);
-    presetBar->setBounds (juce::Rectangle<int>::leftTopRightBottom (stripesArea.getRight() + 16, header.getY(), lcdArea.getX() - 12, header.getBottom())
-                              .withSizeKeepingCentre (juce::jmin (330, lcdArea.getX() - 12 - stripesArea.getRight() - 16), 26));
+    tourButton.setBounds (lcdArea.removeFromLeft (30).withSizeKeepingCentre (26, 26));
+    lcdArea.removeFromLeft (8);
+    presetBar->setBounds (juce::Rectangle<int>::leftTopRightBottom (stripesArea.getRight() + 16, header.getY(), tourButton.getX() - 10, header.getBottom())
+                              .withSizeKeepingCentre (juce::jmin (330, tourButton.getX() - 10 - stripesArea.getRight() - 16), 26));
     r.removeFromTop (10);
 
     pagePanel = r.removeFromBottom (192);
@@ -1079,6 +1247,10 @@ void SiltEditor::resized()
     loadButton.setBounds (row.removeFromLeft (90));
     row.removeFromLeft (8);
     learnButton.setBounds (row.removeFromLeft (90));
+    row.removeFromLeft (8);
+    randomButton.setBounds (row.removeFromLeft (90));
+    row.removeFromLeft (4);
+    randomAmountBox->setBounds (row.removeFromLeft (52));
     if constexpr (SiltProcessor::isInstrument)
     {
         monitorButton.setBounds (row.removeFromRight (104).reduced (0, 4));
@@ -1100,6 +1272,8 @@ void SiltEditor::resized()
     rail->setBounds (railArea);
     controlRow = panel;
     routeList->setBounds (controlRow.reduced (2, 0));
+    if (tour != nullptr && tour->isRunning())   // the first layout comes before the tour exists
+        tour->setBounds (getLocalBounds());
 
     for (auto& c : controls)
     {
@@ -1245,7 +1419,22 @@ void SiltEditor::paint (juce::Graphics& g)
     g.setFont (panelFont (10.5f));
     for (auto& c : controls)
         if (c->entry->inSlot() && c->component().isVisible())
-            g.drawText (c->entry->label, slotBounds (c->entry->slot).withHeight (18).translated (0, 2), juce::Justification::centred);
+        {
+            const auto labelArea = slotBounds (c->entry->slot).withHeight (18).translated (0, 2);
+            g.drawText (c->entry->label, labelArea, juce::Justification::centred);
+            if (silt.isRandomExcluded (c->entry->id))
+            {
+                // Left out of RANDOM: a small crossed-out die after the label.
+                const float w = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), c->entry->label);
+                const auto die = juce::Rectangle<float> (8.0f, 8.0f).withCentre ({ (float) labelArea.getCentreX() + w * 0.5f + 9.0f, (float) labelArea.getCentreY() });
+                g.setColour (inkSoft);
+                g.drawRoundedRectangle (die, 1.5f, 1.0f);
+                g.fillEllipse (juce::Rectangle<float> (2.0f, 2.0f).withCentre (die.getCentre()));
+                g.setColour (rust);
+                g.drawLine (die.getX() - 1.5f, die.getBottom() + 1.5f, die.getRight() + 1.5f, die.getY() - 1.5f, 1.3f);
+                g.setColour (ink);
+            }
+        }
 
     if (page == layout::shape)
         paintPreview (g);

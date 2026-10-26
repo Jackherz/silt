@@ -87,7 +87,8 @@ set(SILT_PLUGIN_SOURCES
     plugin/PluginEditor.cpp
     plugin/PluginProcessor.cpp
     plugin/Presets.cpp
-    plugin/ScreenInsets.cpp)
+    plugin/ScreenInsets.cpp
+    plugin/Tour.cpp)
 
 # The factory samples (the one Silt opens with, and the rest of LOAD's list):
 # FLAC, peaks at -1 dBFS.

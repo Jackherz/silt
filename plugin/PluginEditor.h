@@ -3,6 +3,7 @@
 #include "ModPanel.h"
 #include "PageLayout.h"
 #include "PluginProcessor.h"
+#include "Tour.h"
 
 namespace silt::ui
 {
@@ -10,6 +11,7 @@ class PanelLook;
 class ChainView;
 class GrainScreen;
 class SampleGainBox;
+class RandomAmountBox;
 }
 class PresetBar;
 
@@ -30,6 +32,7 @@ class SiltEditor final : public juce::AudioProcessorEditor,
 {
 public:
     explicit SiltEditor (SiltProcessor&);
+    static inline bool tourOnFirstOpen = true;   // tests and the snapshot tool turn it off
     ~SiltEditor() override;
 
     void paint (juce::Graphics&) override;
@@ -45,6 +48,7 @@ public:
     void showPage (int page);
     void refreshLayout();                          // re-reads which alternatives each slot shows
     void showRoutes (int modulatorFilter = -1);    // the route list; −1 shows every modulator
+    void startTour();                              // from the ? button, and once on a first open
     bool routesShown() const;
     juce::String visibleParameterId (int page, int slot) const;   // for tests: what the slot shows
     juce::Slider* findKnob (const juce::String& parameterId);     // for tests
@@ -160,6 +164,14 @@ private:
     void stepUndo (bool redo);
     void chooseFile();   // LOAD's file chooser
     void updateScope();
+    std::vector<silt::ui::Tour::Step> tourSteps();
+    std::unique_ptr<silt::ui::Tour> tour;
+    juce::TextButton tourButton { "?" };
+    int pageBeforeTour = 0;
+    void randomise();        // the open page
+    void showRandomMenu();
+    juce::TextButton randomButton { "RANDOM" };
+    std::unique_ptr<silt::ui::RandomAmountBox> randomAmountBox;
     std::vector<float> scopeIn, scopeOut;
     unsigned scopeSeen = 0;
     bool screenShowsScope = false;

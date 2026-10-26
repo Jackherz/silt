@@ -81,6 +81,18 @@ public:
     // Message thread.
     void loadFile (const juce::File&);   // ROOT goes back to C3
 
+    // RANDOM: moves the controls in a page's slots (not the small mode
+    // controls under them) to random values, as one undo step. randomAmount
+    // (0–1) is how far: each knob goes that share of the way to a random
+    // value, and each menu or switch changes with that chance. Excluded
+    // parameters stay put; the modulator types start excluded. Both are
+    // saved with the session, not in presets. Message thread.
+    int randomisePage (int page);   // how many controls changed
+    std::vector<const silt::layout::Entry*> randomisable (int page) const;
+    std::atomic<float> randomAmount { 0.5f };
+    bool isRandomExcluded (const juce::String& id) const { return randomExcluded.contains (id); }
+    void setRandomExcluded (const juce::String& id, bool excluded);
+
     // CHAIN: the order RESONATOR, FILTER, COLOR and SPACE run in, as one of
     // the 24 orders ("chainOrder"). chainOrder gives the modules by position.
     enum Module { moduleResonator, moduleFilter, moduleColor, moduleSpace, numModules };
@@ -297,6 +309,8 @@ private:
     std::vector<float> routeSnapshot() const;
     void restoreRoutes (const std::vector<float>&) noexcept;
     juce::UndoManager routeUndo { 0, 50 };
+    juce::StringArray randomExcluded { "m1Type", "m2Type", "m3Type", "m4Type" };
+    juce::Random randomiser;
     int lastControllerRoute = -1;
     juce::uint32 lastControllerRouteTime = 0;
 
