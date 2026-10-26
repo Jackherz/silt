@@ -303,7 +303,8 @@ private:
     int followRoot = -1;   // audio thread: FOLLOW's lowest held note and the chord above it
     std::array<float, 8> followChord {};
     int followChordSize = 0;
-    bool spaceNoteStarted = false;   // a note began since SPACE last ran: restart the trace
+    bool spaceNoteStarted = false;
+    bool lastSelfFeed = false;   // audio thread: FEED was on last chunk   // a note began since SPACE last ran: restart the trace
     void writeScope (std::array<std::atomic<float>, scopeSize>&, const float* l, const float* r, int count) noexcept;
     float sampleGainNow = 1.0f;   // audio thread: the gain ramped to
 

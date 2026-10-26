@@ -180,6 +180,8 @@ void Engine::updateDrone (const GrainParams& p, const SampleBuffer* source,
                           const float* inLeft, const float* inRight, int numSamples) noexcept
 {
     const bool wanted = p.live && p.liveTrigger != LiveTrigger::off && heldNotes == 0 && source != nullptr;
+    // FEED has no input to follow: FOLLOW plays as ALWAYS.
+    const auto mode = p.selfFeed && p.liveTrigger == LiveTrigger::follow ? LiveTrigger::always : p.liveTrigger;
 
     if (! wanted)
     {
@@ -190,7 +192,7 @@ void Engine::updateDrone (const GrainParams& p, const SampleBuffer* source,
         return;
     }
 
-    if (p.liveTrigger == LiveTrigger::always)
+    if (mode == LiveTrigger::always)
     {
         if (droneVoice < 0 || voices[(size_t) droneVoice].isReleasing())
             startDrone (p, *source, 1.0f);
@@ -247,10 +249,45 @@ float feedbackClip (float x) noexcept
 
 // Writes this block's input into the ring (plan §4 "Grain-Output feedback"):
 // input plus the previous block's output × feedback, the feedback DC-blocked,
-// low-passed and soft-clipped so it settles instead of running away.
+// low-passed and soft-clipped so it settles instead of running away. FEED
+// leaves the input out: the ring holds only what the grains played.
 void Engine::writeLive (const float* inLeft, const float* inRight, int numSamples, const GrainParams& p) noexcept
 {
-    const float fb = (float) std::clamp (p.feedback, 0.0, 1.0);
+    const float fb = (float) std::clamp (p.feedback, 0.0, 1.2);
+    float gain = fb;
+    if (p.selfFeed)
+    {
+        inLeft = inRight = nullptr;
+
+        // Grains don't give back the level they read (gaps between them, their
+        // envelopes, sparse settings): compare the last block's output with the
+        // ring where the grains read, and make the difference up, so 100% holds,
+        // less fades and more grows into the clip at any density.
+        const int frames = live->getNumFrames();
+        const int count = std::min (lastOutCount, numSamples);
+        if (count > 0 && fb > 0.0f)
+        {
+            const int delay = (int) (p.liveDelayMs * 0.001 * live->getSampleRate());
+            double outPower = 0.0, ringPower = 0.0;
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const float* ring = live->getReadPointer (ch);
+                const auto& out = ch == 0 ? lastOutLeft : lastOutRight;
+                for (int i = 0; i < count; ++i)
+                {
+                    outPower += (double) out[(size_t) i] * out[(size_t) i];
+                    const float r = ring[((liveWrite - delay - count + i) % frames + frames) % frames];
+                    ringPower += (double) r * r;
+                }
+            }
+            if (outPower > 1.0e-12 && ringPower > 1.0e-12)
+            {
+                const float target = (float) std::clamp (std::sqrt (ringPower / outPower), 1.0, 4.0);
+                feedMakeup += (1.0f - std::exp (-(float) count / (0.3f * (float) live->getSampleRate()))) * (target - feedMakeup);
+            }
+        }
+        gain = fb * feedMakeup;
+    }
     const int frames = live->getNumFrames();
     const float* in[2] { inLeft, inRight != nullptr ? inRight : inLeft };
     const std::vector<float>* out[2] { &lastOutLeft, &lastOutRight };
@@ -269,7 +306,7 @@ void Engine::writeLive (const float* inLeft, const float* inRight, int numSample
                 dcIn[(size_t) ch] = back;
                 dcOut[(size_t) ch] = dc;
                 lowpass[(size_t) ch] += 0.5f * (dc - lowpass[(size_t) ch]);
-                x = feedbackClip (x + fb * lowpass[(size_t) ch]);
+                x = feedbackClip (x + gain * lowpass[(size_t) ch]);
             }
             ring[w] = x;
             if (++w == frames)
@@ -277,6 +314,31 @@ void Engine::writeLive (const float* inLeft, const float* inRight, int numSample
         }
     }
     liveWrite = (liveWrite + numSamples) % frames;
+}
+
+// FEED starting: a loop with nothing in it stays silent, so fill the ring
+// with the sample (repeated if it's shorter), placed so the grains, DELAY
+// behind the write head, start reading at its START: the part chosen, not
+// whatever (often a quiet tail) happens to end the file.
+void Engine::seedLive (const GrainParams& p) noexcept
+{
+    if (current == nullptr || live == nullptr || current->getNumFrames() == 0)
+        return;
+    const int frames = live->getNumFrames(), length = current->getNumFrames();
+    const auto delay = (long long) (p.liveDelayMs * 0.001 * live->getSampleRate());
+    const auto startFrame = (long long) (std::clamp (p.start, 0.0, 1.0) * (length - 1));
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        const float* from = current->getReadPointer (ch);
+        float* ring = live->getWritePointer (ch);
+        for (int back = 1; back <= frames; ++back)   // `back` frames behind the write head
+        {
+            const auto index = ((startFrame + delay - back) % length + length) % length;
+            ring[((liveWrite - back) % frames + frames) % frames] = from[index];
+        }
+    }
+    dcIn = dcOut = lowpass = {};
+    feedMakeup = 1.0f;
 }
 
 void Engine::allNotesOff() noexcept
@@ -291,6 +353,29 @@ void Engine::process (float* left, float* right, int numSamples,
                       const float* inLeft, const float* inRight,
                       const NoteEvent* events, int numEvents, const GrainParams& p) noexcept
 {
+    // Longer than prepared for: in pieces, so the ring, the grains' clock and
+    // the feedback stay in step (a ring write never runs past maxBlock).
+    if (numSamples > maxBlock)
+    {
+        std::array<NoteEvent, 128> part {};
+        int e = 0;
+        for (int start = 0; start < numSamples; start += maxBlock)
+        {
+            const int len = std::min (maxBlock, numSamples - start);
+            int n = 0;
+            for (; e < numEvents && events[e].sampleOffset < start + len && n < (int) part.size(); ++e, ++n)
+            {
+                part[(size_t) n] = events[e];
+                part[(size_t) n].sampleOffset = std::max (0, events[e].sampleOffset - start);   // a full batch spills to the next piece
+            }
+            auto piece = p;
+            piece.gridPpq = p.gridPpq + start * p.ppqPerSample;
+            process (left + start, right + start, len, inLeft != nullptr ? inLeft + start : nullptr,
+                     inRight != nullptr ? inRight + start : nullptr, part.data(), n, piece);
+        }
+        return;
+    }
+
     swapInPendingBuffer();
 
     std::fill (left, left + numSamples, 0.0f);
@@ -299,9 +384,12 @@ void Engine::process (float* left, float* right, int numSamples,
     // Live mode writes the whole block into the ring first. "Now" for grain
     // placement is where the write head was at each sample, so data up to the
     // block's end is always already there.
+    if (p.live && p.selfFeed && ! wasSelfFeeding)
+        seedLive (p);
+    wasSelfFeeding = p.live && p.selfFeed;
     const int now = liveWrite;
     if (p.live && ! p.freeze && live != nullptr)
-        writeLive (inLeft, inRight, std::min (numSamples, maxBlock), p);
+        writeLive (inLeft, inRight, numSamples, p);
     const SampleBuffer* source = p.live ? live.get() : current;
     updateDrone (p, source, inLeft, inRight, numSamples);
 

@@ -51,9 +51,10 @@ public:
 
     // Live mode: the ring's peaks by position and the write head, drawn as a
     // scrolling view with the newest audio at the right edge.
-    void setLive (bool isLive, bool isFrozen, float writeHead, const std::array<float, SiltProcessor::liveColumns>& peaks)
+    void setLive (bool isLive, bool isFrozen, float writeHead, const std::array<float, SiltProcessor::liveColumns>& peaks, bool feeding = false)
     {
         live = isLive;
+        selfFeed = feeding;
         frozen = isFrozen;
         writeShare = writeHead;
         livePeaks = peaks;
@@ -259,7 +260,7 @@ private:
 
         if (live)
         {
-            g.drawText (frozen ? "LIVE INPUT  FROZEN" : "LIVE INPUT", top, juce::Justification::centredLeft);
+            g.drawText (juce::String (selfFeed ? "FEED: SILT'S OWN SOUND" : "LIVE INPUT") + (frozen ? "  FROZEN" : ""), top, juce::Justification::centredLeft);
             g.drawText (juce::String (silt::Engine::ringSeconds, 0) + " S  NOW >", top, juce::Justification::centredRight);
             drawLiveWave (g, waveArea);
             g.setColour (screenLight.withAlpha (0.5f));
@@ -462,7 +463,7 @@ private:
     SiltProcessor::Overview overview;
     juce::Image waveCache;
     float displayGain = 1.0f;
-    bool live = false, frozen = false, transientsShown = false;
+    bool live = false, frozen = false, transientsShown = false, selfFeed = false;
     float writeShare = 0.0f;
     std::array<float, SiltProcessor::liveColumns> livePeaks {};
     float start = 0.0f, length = 1.0f;

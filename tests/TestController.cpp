@@ -999,7 +999,7 @@ TEST_CASE ("Per-voice SPREAD sets a chord's waves apart; at 0 they move together
     CHECK (std::abs (apart[1] - apart[2]) > 0.05f);
 }
 
-TEST_CASE ("FEED records Silt's own output and plays it as the new sample")
+TEST_CASE ("RESAMPLE records Silt's own output and plays it as the new sample")
 {
     Rig rig;
     loadSine (rig);
@@ -1009,7 +1009,7 @@ TEST_CASE ("FEED records Silt's own output and plays it as the new sample")
     juce::MidiBuffer on;
     on.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
     runBlocks (rig, 200, on);   // about 2.1 s; no host playing, so it starts at once
-    const auto loaded = [&] { return rig.silt.getOverview().name.startsWith ("FEED"); };
+    const auto loaded = [&] { return rig.silt.getOverview().name.startsWith ("RESAMPLE"); };
     for (int i = 0; i < 300 && ! loaded(); ++i)
         juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
     REQUIRE (loaded());
@@ -1034,9 +1034,9 @@ TEST_CASE ("UNDO takes a recorded or loaded sample back to the one before, and R
     juce::MidiBuffer on;
     on.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
     runBlocks (rig, 200, on);
-    REQUIRE (waitFor ([&] { return rig.silt.getOverview().name.startsWith ("FEED"); }));
+    REQUIRE (waitFor ([&] { return rig.silt.getOverview().name.startsWith ("RESAMPLE"); }));
     const auto feedName = rig.silt.getOverview().name;
-    CHECK (rig.silt.undoDescription().startsWith ("SAMPLE FEED"));
+    CHECK (rig.silt.undoDescription().startsWith ("SAMPLE RESAMPLE"));
 
     rig.silt.undoRoutes();
     REQUIRE (waitFor ([&] { return rig.silt.getOverview().name == sineName; }));

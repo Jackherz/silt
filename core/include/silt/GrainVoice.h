@@ -64,7 +64,11 @@ struct GrainParams
     // liveMargin (how far ahead of "now" a block can write).
     bool live = false;
     double liveDelayMs = 250.0;
-    double feedback = 0.0;         // 0…1: grain output written back into the ring
+    double feedback = 0.0;         // 0…1.2: grain output written back into the ring. In FEED the
+                                   // grains' losses are made up, so 1 holds, less fades and more
+                                   // grows into the feedback's soft clip
+    bool selfFeed = false;         // FEED: the ring takes only Silt's own output, not the input;
+                                   // seeded from the sample when it starts
     bool freeze = false;           // stop writing: grains play the frozen ring
     LiveTrigger liveTrigger = LiveTrigger::always;   // what plays grains while no keys are held
     double liveNow = 0.0, liveMargin = 0.0;

@@ -62,7 +62,7 @@ TEST_CASE ("Every slot's shown control is the one the controller moves, in every
             rig.set ("sizeSync", (float) sync);
             rig.checkAgreement ("rate mode / size sync");
         }
-    for (int keyMode = 0; keyMode < 2; ++keyMode)
+    for (int keyMode = 0; keyMode < 3; ++keyMode)
         for (int sync = 0; sync < 2; ++sync)
         {
             rig.set ("keyMode", (float) keyMode);
@@ -377,7 +377,7 @@ TEST_CASE ("The strip's controls fit without overlapping at the smallest size")
     EditorRig rig;
     rig.editor->setSize (860, 520);
     std::vector<juce::Rectangle<int>> boxes;
-    for (const auto* text : { "LOAD", "LEARN", "RANDOM", "FEED", "UNDO", "REDO", "MOD ROUTES" })
+    for (const auto* text : { "LOAD", "LEARN", "RANDOM", "RESAMPLE", "UNDO", "REDO", "MOD ROUTES" })
         for (auto* child : rig.editor->getChildren())
             if (auto* b = dynamic_cast<juce::TextButton*> (child); b != nullptr && b->getButtonText() == text)
                 boxes.push_back (b->getBounds());

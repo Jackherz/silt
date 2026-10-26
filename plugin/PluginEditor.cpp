@@ -290,10 +290,10 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     captureBars.addItemList ({ "1 BAR", "2 BARS", "4 BARS", "8 BARS" }, 1);
     addAndMakeVisible (captureBars);
     captureBarsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "captureBars", captureBars);
-    feedButton.setClickingTogglesState (true);
-    feedButton.setTooltip ("FEED: ARM records what Silt itself is playing (from the next bar), so the grains play their own sound");
-    addAndMakeVisible (feedButton);
-    feedAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "captureFeed", feedButton);
+    resampleButton.setClickingTogglesState (true);
+    resampleButton.setTooltip ("RESAMPLE: ARM records what Silt itself is playing (from the next bar) as the new sample");
+    addAndMakeVisible (resampleButton);
+    resampleAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "captureFeed", resampleButton);
 
     armButton.getProperties().set ("red", true);
     armButton.setColour (juce::TextButton::textColourOffId, onFrame);
@@ -1140,8 +1140,8 @@ juce::String SiltEditor::statusText() const
     using S = SiltProcessor::CaptureState;
     switch (silt.captureState.load())
     {
-        case S::armed: return juce::String (param ("captureFeed") > 0.5f ? "FEED " : "") + (silt.hostPlaying.load() ? "ARMED: WAITING FOR NEXT BAR" : "ARMED: STARTING");
-        case S::recording: return juce::String (param ("captureFeed") > 0.5f ? "FEED " : "") + "REC " + juce::String (juce::roundToInt (silt.captureProgress.load() * 100.0f)) + "%";
+        case S::armed: return juce::String (param ("captureFeed") > 0.5f ? "RESAMPLE " : "") + (silt.hostPlaying.load() ? "ARMED: WAITING FOR NEXT BAR" : "ARMED: STARTING");
+        case S::recording: return juce::String (param ("captureFeed") > 0.5f ? "RESAMPLE " : "") + "REC " + juce::String (juce::roundToInt (silt.captureProgress.load() * 100.0f)) + "%";
         case S::done:
         case S::cancelRequested:
         case S::cancelled:
@@ -1195,7 +1195,7 @@ void SiltEditor::timerCallback()
     const bool live = silt.liveMode.load();
     const bool frozen = param ("freeze") > 0.5f;
     if (live)
-        screen->setLive (true, frozen, silt.liveWriteShare.load(), silt.getLivePeaks());
+        screen->setLive (true, frozen, silt.liveWriteShare.load(), silt.getLivePeaks(), juce::roundToInt (param ("keyMode")) == 2);
     else
         screen->setLive (false, false, 0.0f, {});
     const bool moved = screen->setActivity (views, n, heads, hud);
@@ -1350,7 +1350,7 @@ void SiltEditor::resized()
     // together when the window is small.
     {
         struct Part { juce::Component* c; int width, gap; bool right; int trimY; };
-        std::vector<Part> parts { { &armButton, 100, 8, false, 0 }, { &captureBars, 100, 4, false, 4 }, { &feedButton, 60, 8, false, 0 },
+        std::vector<Part> parts { { &armButton, 100, 8, false, 0 }, { &captureBars, 100, 4, false, 4 }, { &resampleButton, 84, 8, false, 0 },
                                   { &loadButton, 80, 8, false, 0 }, { &learnButton, 80, 8, false, 0 },
                                   { &randomButton, 86, 4, false, 0 }, { randomAmountBox.get(), 52, 0, false, 0 } };
         if constexpr (SiltProcessor::isInstrument)

@@ -964,3 +964,88 @@ TEST_CASE ("Per-voice parameters: inactive is bit-identical; active reaches each
     CHECK (provider.started[0].first != provider.started[1].first);
     CHECK (provider.released.size() >= 2);
 }
+
+TEST_CASE ("FEED: the ring starts from the sample, ignores the input, and sustains past 100% feedback")
+{
+    // FEED with a given feedback: the level and peak of the last second of 12.
+    const auto feed = [] (double feedback, bool loudInput)
+    {
+        LiveEngine engine;
+        engine.setBuffer (makeSine (240.0, 2.0, 0.5f));
+        GrainParams p;
+        p.live = true;
+        p.selfFeed = true;
+        p.feedback = feedback;
+        p.liveDelayMs = 300.0;
+        p.grainCount = 12;
+        p.sizeMs = 200.0;
+        Random noise (5);
+        const auto out = renderLive (engine, p, (int) (12 * sampleRate),
+                                     [&] (int) { return loudInput ? 0.8f * noise.nextBipolar() : 0.0f; });
+        const std::vector<float> last (out.left.end() - (int) sampleRate, out.left.end());
+        double sum = 0.0;
+        for (float v : last)
+            sum += (double) v * v;
+        return std::make_pair ((float) std::sqrt (sum / (double) last.size()), peak (last));
+    };
+
+    // Seeded: sound from the start, with nothing coming in.
+    const auto [sustained, sustainedPeak] = feed (1.2, false);
+    CHECK (sustained > 0.02f);           // still going after 12 s: the top of FEEDBACK holds a drone
+    CHECK (sustainedPeak < 1.5f);        // and the soft clip holds it there, not running away
+
+    // The input makes no difference.
+    CHECK (std::abs (feed (1.2, true).first - sustained) < 1.0e-6f);
+
+    // No feedback: once the seed has gone round the 8 s ring, silence.
+    CHECK (feed (0.0, false).first < 1.0e-4f);
+}
+
+TEST_CASE ("A block longer than the engine was prepared for plays as the same pieces would")
+{
+    // Live mode reads the ring right behind the write head, so a long block
+    // has to keep the ring, the grains' clock and the feedback in step.
+    const auto render = [] (int block)
+    {
+        LiveEngine engine;   // prepared for 128
+        GrainParams p;
+        p.live = true;
+        p.feedback = 0.5;
+        p.liveDelayMs = 20.0;
+        const int total = (int) sampleRate;
+        std::vector<float> left ((size_t) total), right ((size_t) total), in ((size_t) total);
+        for (int i = 0; i < total; ++i)
+            in[(size_t) i] = 0.5f * (float) std::sin (6.283185307179586 * 230.3 * i / sampleRate);
+        for (int start = 0; start < total; start += block)
+        {
+            const int len = std::min (block, total - start);
+            engine.process (left.data() + start, right.data() + start, len, in.data() + start, in.data() + start, nullptr, 0, p);
+        }
+        return left;
+    };
+    const auto pieces = render (128), whole = render (1024);
+    float difference = 0.0f;
+    for (size_t i = 0; i < pieces.size(); ++i)
+        difference = std::max (difference, std::abs (pieces[i] - whole[i]));
+    CHECK (difference < 1.0e-6f);
+}
+
+TEST_CASE ("FEED makes up what the grains lose: at default settings 100% holds and 50% fades")
+{
+    const auto lastSecond = [] (double feedback)
+    {
+        LiveEngine engine;
+        engine.setBuffer (makeSine (240.0, 2.0, 0.5f));
+        GrainParams p;   // 20 grains a second, 100 ms each: gaps a plain loop would lose to
+        p.live = true;
+        p.selfFeed = true;
+        p.feedback = feedback;
+        const auto out = renderLive (engine, p, (int) (12 * sampleRate), [] (int) { return 0.0f; });
+        double sum = 0.0;
+        for (auto it = out.left.end() - (int) sampleRate; it != out.left.end(); ++it)
+            sum += (double) *it * *it;
+        return std::sqrt (sum / sampleRate);
+    };
+    CHECK (lastSecond (1.0) > 0.1);
+    CHECK (lastSecond (0.5) < 0.001);
+}

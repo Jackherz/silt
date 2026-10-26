@@ -185,15 +185,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                     juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int n, int) { return juce::String (n) + (n == 1 ? " head" : " heads"); })),
                 percent ("headSpread", "Head spread", 50.0f));
 
-    // Mode: the sample (PITCH) or the live input (LIVE: a granular delay).
+    // Mode: the sample (PITCH), the live input (LIVE: a granular delay), or
+    // Silt's own output (FEED: the same ring with no input, seeded from the
+    // sample, so the grains keep re-granulating what they play).
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "keyMode", 1 }, "Mode",
-                                                              juce::StringArray { "Pitch", "Live" },
+                                                              juce::StringArray { "Pitch", "Live", "Feed" },
                                                               SiltProcessor::isInstrument ? 0 : 1),
                 withUnit ("liveDelay", "Delay", skewed (10.0f, 4000.0f, 300.0f), 250.0f, formatMs),
                 std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "delaySync", 1 }, "Delay sync", false),
                 std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "delayDiv", 1 }, "Delay (synced)",
                                                               divisionNames, eighth),
-                percent ("feedback", "Feedback", 0.0f),
+                // To 120%: past 100% the loop sustains, held by its soft clip (a FEED drone).
+                withUnit ("feedback", "Feedback", Range (0.0f, 120.0f, 0.1f), 0.0f,
+                          [] (float v, int) { return juce::String (juce::roundToInt (v)) + "%"; }),
                 std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "freeze", 1 }, "Freeze", false),
                 // With no keys held: nothing, a constant voice, or the input playing the envelope.
                 std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "liveRun", 1 }, "No notes",
@@ -381,9 +385,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
     // Capture and output
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "captureBars", 1 }, "Capture length",
                                                               captureBarChoices, 1),
-                // FEED: ARM records Silt's own output (from the next bar), so the
-                // grains play what they just made.
-                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "captureFeed", 1 }, "Capture own output", false),
+                // RESAMPLE: ARM records Silt's own output (from the next bar) as the
+                // new sample. (The id is from when this was called FEED.)
+                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "captureFeed", 1 }, "Resample own output", false),
                 withUnit ("gain", "Output", Range (-48.0f, 12.0f, 0.1f), 0.0f, formatDb),
                 // The sample's own level, before the grains go anywhere: for samples
                 // that come in too loud or too soft (the screen's GAIN).
@@ -679,7 +683,8 @@ silt::GrainParams SiltProcessor::readParams (const float* voiceValues) const noe
     p.heads = juce::jlimit (1, 8, (int) v (raw->heads));
     p.headSpread = v (raw->headSpread) * 0.01;
 
-    p.live = (int) v (raw->keyMode) == 1;
+    p.live = (int) v (raw->keyMode) != 0;      // LIVE or FEED
+    p.selfFeed = (int) v (raw->keyMode) == 2;
     p.feedback = v (raw->feedback) * 0.01;
     p.freeze = v (raw->freeze) > 0.5;
     p.liveTrigger = (silt::LiveTrigger) juce::jlimit (0, 2, (int) v (raw->liveRun));
@@ -914,8 +919,8 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     captureSource.store (source, std::memory_order_relaxed);
     if (capture.getNumChannels() > 0)
         captureMeter.process (capture.getArrayOfReadPointers(), capture.getNumChannels(), numSamples);
-    const bool feeding = params.getRawParameterValue ("captureFeed")->load (std::memory_order_relaxed) > 0.5f;
-    if (! feeding)
+    const bool resampling = params.getRawParameterValue ("captureFeed")->load (std::memory_order_relaxed) > 0.5f;
+    if (! resampling)
         runCapture (capture, position ? &*position : nullptr);
 
     // Rendered in chunks of up to 64 samples: modulation updates per chunk and
@@ -1008,8 +1013,15 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         const float* inRight = capture.getNumChannels() > 1 ? capture.getReadPointer (1, start) : inLeft;
         engine.process (wet.getWritePointer (0), wet.getWritePointer (1), len, inLeft, inRight,
                         noteEvents.data() + (first - noteEvents.begin()), (int) (last - first), grainParams);
-        if (grainParams.live && ! grainParams.freeze)
+        if (grainParams.live && grainParams.selfFeed && ! lastSelfFeed)
+        {
+            // FEED just seeded the whole ring: the screen's picture of it too.
+            if (const auto* ring = engine.getLiveBuffer())
+                trackLivePeaks (engine.getLiveWritePosition(), ring->getNumFrames());
+        }
+        else if (grainParams.live && ! grainParams.freeze)
             trackLivePeaks (liveWriteBefore, len);
+        lastSelfFeed = grainParams.live && grainParams.selfFeed;
 
         // Sample gain, ramped across the chunk so moving it doesn't click.
         {
@@ -1101,9 +1113,9 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         }
     }
 
-    // FEED: the capture takes what Silt just played, sample for sample with
+    // RESAMPLE: the capture takes what Silt just played, sample for sample with
     // the block's position, so it still starts on the bar.
-    if (feeding)
+    if (resampling)
         runCapture (output, position ? &*position : nullptr);
 
     activeGrains.store (engine.getActiveGrainCount(), std::memory_order_relaxed);
@@ -1943,7 +1955,7 @@ void SiltProcessor::timerCallback()
     if (state == CaptureState::done)
     {
         captureTarget.store (nullptr, std::memory_order_release);
-        analyseThenInstall (std::move (captureOwned), (capturingFeed ? "FEED " : "CAPTURE ") + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
+        analyseThenInstall (std::move (captureOwned), (capturingFeed ? "RESAMPLE " : "CAPTURE ") + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
                             -1, -1.0f, true);
         captureState.store (CaptureState::idle, std::memory_order_release);
     }

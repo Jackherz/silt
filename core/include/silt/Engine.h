@@ -111,6 +111,9 @@ private:
     int liveWrite = 0, maxBlock = 4096;
     std::vector<float> lastOutLeft, lastOutRight;    // previous block's output, for feedback
     int lastOutCount = 0;
+    bool wasSelfFeeding = false;                     // FEED was on last block: seed the ring when it turns on
+    float feedMakeup = 1.0f;                         // FEED: what the grains lose per pass, made up (1…4)
+    void seedLive (const GrainParams&) noexcept;
     std::array<float, 2> dcIn {}, dcOut {}, lowpass {};
     int heldNotes = 0;
     int droneVoice = -1;                             // the voice playing with no keys held, if any
