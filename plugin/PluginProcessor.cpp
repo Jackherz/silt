@@ -1053,94 +1053,24 @@ void SiltProcessor::handleController (int number, int value) noexcept
         }
 }
 
-// Which parameter a page slot moves right now, matching the editor's layout.
+// Which parameter a page slot moves right now: the editor's page table, read
+// with the current parameter values.
 juce::String SiltProcessor::slotParameter (int page, int slot) const
 {
-    const auto v = [this] (const char* id)
+    return silt::layout::slotParameter (isInstrument, page, slot, layoutContext());
+}
+
+silt::layout::Context SiltProcessor::layoutContext() const
+{
+    silt::layout::Context c;
+    c.value = [this] (const juce::String& id)
     {
         const auto* value = params.getRawParameterValue (id);
         jassert (value != nullptr);   // a typo in an id
         return value != nullptr ? value->load() : 0.0f;
     };
-
-    switch (page)
-    {
-        case 0:   // GRAIN
-        {
-            const int rateMode = (int) v ("rateMode");
-            const char* ids[] { "pitch", nullptr, nullptr, "spray", "jitter", "reverse", "randAmp", "randPan" };
-            if (slot == 1)
-                return v ("sizeSync") > 0.5f ? "sizeDiv" : rateMode == 2 ? "grainSize" : "size";
-            if (slot == 2)
-                return rateMode == 1 ? "rateDiv" : rateMode == 2 ? "grains" : "rate";
-            return ids[slot];
-        }
-        case 1:   // SHAPE
-        {
-            const char* ids[] { "fade", "slant", "ease", "attack", "decay", "sustain", "release", "" };
-            return ids[slot];
-        }
-        case 2:   // PITCH
-        {
-            const char* ids[] { "randPitch", "scale", "key", "patternDepth", "patternSteps", "!newPattern", "heads", "headSpread" };
-            return ids[slot];
-        }
-        case 4:   // RESONATOR
-        {
-            const char* ids[] { "resTune", "resNotes", "resRange", "resDecay", "resBright", "resWidth", "resFollow", "resMix" };
-            return ids[slot];
-        }
-        case 5:   // FILTER
-        {
-            const char* ids[] { "filterMode", "filterCutoff", "filterReso", "filterMorph", "filterDrive", "filterEnv", "filterKey", "filterMix" };
-            return ids[slot];
-        }
-        case 6:   // COLOR
-        {
-            const char* ids[] { "colorDrive", "colorTone", "colorBits", "colorRate", "colorComp", "colorNoise", "colorWow", "colorMix" };
-            return ids[slot];
-        }
-        case 7:   // SPACE
-        {
-            const char* ids[] { nullptr, "spaceFeedback", "spaceDelay", "spaceSize", "spaceDecay", "spaceTone", "spaceShimmer", "spaceReverb" };
-            if (slot == 0)
-                return v ("spaceSync") > 0.5f ? "spaceDiv" : "spaceTime";
-            return ids[slot];
-        }
-        case modPage:   // MOD: the modulator shown, its type, five settings for that type, ASSIGN
-        {
-            const auto id = [this] (const char* suffix) { return "m" + juce::String (modShown.load() + 1) + suffix; };
-            if (slot == 0)
-                return "!modSelect";
-            if (slot == 1)
-                return id ("Type");
-            if (slot == 7)
-                return "!assign";
-            const bool synced = v (id ("Sync").toRawUTF8()) > 0.5f;
-            const char* rate = synced ? "Div" : "Rate";
-            const char* wave[] { "Shape", rate, "Phase", "Retrig", nullptr };
-            const char* random[] { "Smooth", rate, "Jitter", nullptr, nullptr };
-            const char* envelope[] { "Attack", "Decay", "Sustain", "Release", "Repeat" };
-            const char* follow[] { "FAttack", "FRelease", "Gain", nullptr, nullptr };
-            const char* midi[] { "Source", nullptr, nullptr, nullptr, nullptr };
-            const char* const* byType[] { wave, random, envelope, follow, midi };
-            const auto* suffix = byType[juce::jlimit (0, 4, (int) v (id ("Type").toRawUTF8()))][slot - 2];
-            return suffix != nullptr ? id (suffix) : juce::String();
-        }
-        case 3:   // PLAY
-        {
-            const bool live = (int) v ("keyMode") == 1;
-            const char* pitchIds[] { "keyMode", "start", "length", "scan", "endMode", "root", "gain", "mix" };
-            const char* liveIds[] { "keyMode", nullptr, "feedback", "freeze", "liveRun", "root", "gain", "mix" };
-            if (slot == 7 && isInstrument)
-                return {};
-            if (live && slot == 1)
-                return v ("delaySync") > 0.5f ? "delayDiv" : "liveDelay";
-            return live ? liveIds[slot] : pitchIds[slot];
-        }
-        default: break;
-    }
-    return {};
+    c.modShown = modShown.load();
+    return c;
 }
 
 void SiltProcessor::newPattern()

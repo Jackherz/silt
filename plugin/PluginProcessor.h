@@ -2,6 +2,8 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "PageLayout.h"
+
 #include <silt/Engine.h>
 #include <silt/Color.h>
 #include <silt/Filter.h>
@@ -61,7 +63,7 @@ public:
     // editor's (GRAIN / SHAPE / PITCH / PLAY), alternatives following the modes.
     // A knob takes over a parameter only once it reaches the parameter's value
     // (pickup), so switching pages never makes values jump.
-    static constexpr int numPages = 9, slotsPerPage = 8, modPage = 8;
+    static constexpr int numPages = silt::layout::numPages, slotsPerPage = 8, modPage = silt::layout::mod;
     std::atomic<int> currentPage { 0 };
     std::array<std::atomic<int>, slotsPerPage> knobCCs {};
     std::atomic<int> previousPageCC { 78 }, nextPageCC { 79 };
@@ -70,6 +72,7 @@ public:
     void startLearn() noexcept { learnStep.store (0); }
     void cancelLearn() noexcept { learnStep.store (-1); }
     juce::String slotParameter (int page, int slot) const;   // "" for an empty slot
+    silt::layout::Context layoutContext() const;             // the page table's view of the parameters
     void applyControllerMoves();                             // message thread (also the timer)
     void newPattern();
 

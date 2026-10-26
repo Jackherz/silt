@@ -4,7 +4,18 @@ A design proposal for the three things you asked about, written against the code
 today. Companion to [`review-2026-10-25.md`](review-2026-10-25.md); findings F1–F14 are
 referenced where they matter.
 
-Nothing here is implemented — this is the plan to agree on first.
+**Status, 26 Oct 2026: implemented** (phases 0–9), with these differences:
+
+- Clamped routes end in a stop across the ring rather than a striped arc.
+- The route list shows a route's span in the parameter's units ("480 Hz to 2.64 kHz")
+  rather than a delta ("+2.4 oct"), which reads the same for every parameter type.
+- Muting is also on the MOD page (an ON button under TYPE), not only the chip menu.
+- "Clear N routes…" from a chip's menu asks in a dialog; the hover × asks by a second click.
+- Routes saved on parameters that are no longer targets (choices, bools) are dropped
+  on load rather than listed, since nothing can apply them.
+- MOD slot 7 (ASSIGN) arms the shown modulator and lights only while that one is armed.
+
+Not done (§8, later): undo, macros, per-voice spread, cross-modulation, presets.
 
 ---
 

@@ -4,7 +4,7 @@
 //   silt_snapshot sample.wav out-folder [param=value ...] [route=mod:param:amount ...]
 //
 // Loads the sample, holds a note so grains are sounding, then writes one PNG
-// per page (grain.png, shape.png, pitch.png, play.png, resonator.png, filter.png, color.png, space.png, mod.png). Parameter values are in the
+// per page (grain.png, shape.png, pitch.png, play.png, resonator.png, filter.png, color.png, space.png, mod.png, then routes.png with the route list open). Parameter values are in the
 // parameter's own units (ms, %, st...).
 
 #include "../../plugin/PluginEditor.h"
@@ -64,6 +64,11 @@ int main (int argc, char* argv[])
     {
         const juce::String setting (argv[i]);
         const auto id = setting.upToFirstOccurrenceOf ("=", false, false);
+        if (id == "armed")   // armed=modulator (1–4)
+        {
+            silt.armedMod.store (setting.fromFirstOccurrenceOf ("=", false, false).getIntValue() - 1);
+            continue;
+        }
         if (id == "route")   // route=modulator:parameter:amount (modulator 1–4)
         {
             const auto parts = juce::StringArray::fromTokens (setting.fromFirstOccurrenceOf ("=", false, false), ":", "");
@@ -112,6 +117,19 @@ int main (int argc, char* argv[])
 
         const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
         const auto file = outDir.getChildFile (juce::String (name).toLowerCase() + ".png");
+        file.deleteFile();
+        juce::FileOutputStream stream (file);
+        juce::PNGImageFormat().writeImageToStream (image, stream);
+        std::cout << file.getFullPathName() << "\n";
+    }
+
+    // The route list, over the last page.
+    if (auto* siltEditor = dynamic_cast<SiltEditor*> (editor.get()))
+    {
+        siltEditor->showRoutes (-1);
+        runMessageLoop (120);
+        const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
+        const auto file = outDir.getChildFile ("routes.png");
         file.deleteFile();
         juce::FileOutputStream stream (file);
         juce::PNGImageFormat().writeImageToStream (image, stream);

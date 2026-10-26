@@ -78,6 +78,14 @@ FetchContent_Declare(clap_juce_extensions
     GIT_TAG 7adee3a1bd4684d4caa5601100e364abccff4b4d)
 FetchContent_MakeAvailable(juce clap_juce_extensions)
 
+# The plug-in's own sources, shared by both builds, the snapshot tool and the
+# plug-in tests.
+set(SILT_PLUGIN_SOURCES
+    plugin/ModPanel.cpp
+    plugin/PageLayout.cpp
+    plugin/PluginEditor.cpp
+    plugin/PluginProcessor.cpp)
+
 # Host check: loads a built VST3 and round-trips a sample through its state.
 juce_add_console_app(silt_hostcheck PRODUCT_NAME "silt-hostcheck")
 target_sources(silt_hostcheck PRIVATE tools/hostcheck/Main.cpp)
@@ -89,7 +97,7 @@ target_link_libraries(silt_hostcheck
 # Panel snapshots: builds the Silt instrument's processor and editor into a
 # console app that writes a PNG per page, for checking UI changes headlessly.
 juce_add_console_app(silt_snapshot PRODUCT_NAME "silt-snapshot")
-target_sources(silt_snapshot PRIVATE tools/snapshot/Main.cpp plugin/PluginProcessor.cpp plugin/PluginEditor.cpp)
+target_sources(silt_snapshot PRIVATE tools/snapshot/Main.cpp ${SILT_PLUGIN_SOURCES})
 target_compile_definitions(silt_snapshot PRIVATE
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1
     JucePlugin_Name="Silt" JucePlugin_IsSynth=1 JucePlugin_VersionString="${PROJECT_VERSION}")
@@ -100,7 +108,7 @@ target_link_libraries(silt_snapshot
 # Plug-in level tests: the instrument's processor built into a Catch2 runner.
 if(SILT_BUILD_TESTS)
     juce_add_console_app(silt_plugin_tests PRODUCT_NAME "silt-plugin-tests")
-    target_sources(silt_plugin_tests PRIVATE tests/TestController.cpp plugin/PluginProcessor.cpp plugin/PluginEditor.cpp)
+    target_sources(silt_plugin_tests PRIVATE tests/TestController.cpp tests/TestEditor.cpp ${SILT_PLUGIN_SOURCES})
     target_compile_definitions(silt_plugin_tests PRIVATE
         JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
         JucePlugin_Name="Silt" JucePlugin_IsSynth=1 JucePlugin_VersionString="${PROJECT_VERSION}")
@@ -140,9 +148,7 @@ function(silt_add_plugin target)
         CLAP_ID "${SILT_BUNDLE_PREFIX}.${ARG_BUNDLE_SUFFIX}"
         CLAP_FEATURES ${ARG_CLAP_FEATURES})
 
-    target_sources(${target} PRIVATE
-        plugin/PluginProcessor.cpp
-        plugin/PluginEditor.cpp)
+    target_sources(${target} PRIVATE ${SILT_PLUGIN_SOURCES})
 
     target_compile_definitions(${target} PUBLIC
         JUCE_WEB_BROWSER=0          # the WebView UI arrives with Spike B

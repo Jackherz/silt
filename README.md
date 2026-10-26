@@ -71,20 +71,44 @@ the delay's loop filters), SHIMMER (octave-up feedback in the reverb), REVERB (l
 The reverb is an 8-channel diffuser into an 8-line feedback delay network with
 per-line modulation and absorption filters; changing TIME glides like tape.
 
-**MOD page:** four modulators, each a WAVE (sine → triangle → saw → square, free or
-synced, phase, retrigger on notes), RANDOM (smooth to stepped, jitter, free or
+**Modulation:** four modulators, each a WAVE (sine → triangle → saw → square, free
+or synced, phase, retrigger on notes), RANDOM (smooth to stepped, jitter, free or
 synced), ENVELOPE (ADSR from the notes played; REPEAT loops it while held), FOLLOW
 (the input's level) or MIDI (velocity, note, mod wheel, aftertouch, pitch bend).
-**ASSIGN**: while it's on, turning or dragging any knob on any page (mouse or
-controller) sets how far the shown modulator moves it; double-click removes that
-route; right-click a knob to clear its modulation. Every parameter except mode
-switches, seeds and the modulators' own settings can be modulated. Rings round a
-knob show each route in its modulator's colour, with a dot where the value is
-now. Modulation updates every 64 samples (the knobs' own smoothing takes it from
-there) and routes are saved with the set. Global for now; per-voice spread is next.
+Design: `docs/mod-section-design.md`.
+
+- **The mod rail**, left of every page: a chip per modulator with its colour and
+  number, type, a live meter and its route count. Click arms it (filled with its
+  colour; click again to disarm), Shift-click only selects it, drag it onto a knob
+  to make a +25% route, hover × (twice) clears its routes, right-click to edit,
+  mute, show or clear. Keys 1–4 arm, Esc disarms. The header's four stripes are the
+  same four modulators as meters.
+- **Depth on any knob:** Alt-drag sets the depth of the armed modulator (or the
+  knob's only route, or the last one used); Shift+Alt is finer; it snaps to zero
+  near it. Alt+double-click removes it. Plain drag is always the value, and
+  double-click resets the value. Right-click a knob for each modulator's depth
+  (quick values, add, remove) in its colour.
+- **Rings** round a knob: an arc per route in its modulator's colour and texture
+  (solid, long dash, short dash, dotted), numbered at its far end, with a stop
+  where the range clamps it, and a dot where the value is now. Stepped parameters
+  show whole steps. An armed modulator draws a faint ring on every knob it can reach.
+- **ROUTES** (strip, or right-click): every route in one list, filtered by
+  modulator or page. Drag a depth (double-click to type it), see its span in the
+  parameter's units, × removes one, CLEAR ALL (twice) removes them all.
+- **Mute** a modulator (ON under TYPE, or the chip's menu): it contributes nothing
+  and keeps its routes.
+- **MOD page:** the shown modulator (click the banner for the next), its type, five
+  settings for that type, and ASSIGN, which arms it for the controller: turning a
+  controller knob on any page then sets that slot's depth (centre = none).
+
+Targets are the continuous and stepped parameters; switches (menus, buttons) and
+the modulators' own settings aren't. Modulation updates every 64 samples (the
+knobs' own smoothing takes it from there); routes are saved with the set. Global
+for now; per-voice spread is next.
 
 **8-knob controller:** a controller's 8 knobs move the 8 slots of the current page
-(GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER / COLOR / SPACE / MOD), following the modes; two buttons step pages; works with
+(GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER / COLOR / SPACE / MOD), following the modes
+(the editor and the controller read the same page table, and a test checks they agree); two buttons step pages; works with
 the window closed. Defaults: knobs CC 70–77, pages CC 78/79. **LEARN**: turn knobs 1–8,
 then press previous and next page. A knob takes over only when it reaches the
 parameter's value (pickup), so changing page never makes values jump. The mapping and
@@ -202,7 +226,11 @@ them in before the first public build; after that they never change.
 
 ```
 core/          engine code, plain C++ (no JUCE), shared by both plug-ins, tests and tools
-plugin/        the JUCE processor and editor, compiled once per build
+plugin/        the JUCE processor and editor, compiled once per build:
+               PageLayout (the page/slot table the editor and controller share),
+               PanelLook, GrainScreen, ModPanel (rail, banner, route list),
+               ModColours, Palette
+docs/          code review and the MOD section design
 tests/         Catch2 unit tests for core/
 tools/render/  offline renderer and the listening-set script
 ```

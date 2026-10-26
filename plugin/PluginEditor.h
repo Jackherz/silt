@@ -1,12 +1,28 @@
 #pragma once
 
+#include "ModPanel.h"
+#include "PageLayout.h"
 #include "PluginProcessor.h"
 
+namespace silt::ui
+{
+class PanelLook;
+class GrainScreen;
+}
+
 // The panel, drawn natively in the plan §5 palette. A screen on top shows the
-// sample and every sounding grain; below it, one page of controls at a time
-// (GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER / COLOR / SPACE / MOD), at most 8 each so a page maps onto an 8-knob controller.
+// sample and every sounding grain; below it, one page of controls at a time,
+// at most 8 each so a page maps onto an 8-knob controller, built from the page
+// table the controller also reads (PageLayout). Left of the page, the mod rail:
+// the four modulators, always in view.
+//
+// Modulation gestures (docs/mod-section-design.md): drag a knob for its value,
+// Alt-drag for the depth of the armed modulator (or the knob's only route),
+// right-click for its routes; drag a chip onto a knob to make a route; keys
+// 1–4 arm a modulator and Esc disarms.
 class SiltEditor final : public juce::AudioProcessorEditor,
                          public juce::FileDragAndDropTarget,
+                         public juce::DragAndDropContainer,
                          private juce::Timer
 {
 public:
@@ -14,143 +30,123 @@ public:
     ~SiltEditor() override;
 
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
     void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;
 
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void fileDragEnter (const juce::StringArray&, int, int) override { dragHover = true; repaint(); }
     void fileDragExit (const juce::StringArray&) override { dragHover = false; repaint(); }
     void filesDropped (const juce::StringArray& files, int, int) override;
 
-private:
-    enum class Page { grain, shape, pitch, play, resonator, filter, color, space, mod };
+    void showPage (int page);
+    void refreshLayout();                          // re-reads which alternatives each slot shows
+    void showRoutes (int modulatorFilter = -1);    // the route list; −1 shows every modulator
+    juce::String visibleParameterId (int page, int slot) const;   // for tests: what the slot shows
+    juce::Slider* findKnob (const juce::String& parameterId);     // for tests
 
-    // One control in the page row: a knob or a menu, its label, and its slot.
-    // A knob that moves ten times finer while Shift is held as the drag starts.
-    // While ASSIGN is on, dragging sets the modulation amount instead of the
-    // value; right-click offers to clear the knob's modulation.
-    struct FineSlider final : juce::Slider
+    // Which modulator Alt-drag sets on a knob: the armed one; else the knob's
+    // only route; else the last one used.
+    static int depthModulatorFor (int armed, const std::array<float, SiltProcessor::numModulators>& amounts, int lastUsed);
+
+    // A knob that moves ten times finer while Shift is held as the drag starts,
+    // sets a modulation depth on Alt-drag, and takes a mod chip dropped on it.
+    struct FineSlider final : juce::Slider, public juce::DragAndDropTarget
     {
         FineSlider() : juce::Slider (RotaryHorizontalVerticalDrag, TextBoxBelow) {}
 
-        std::function<bool()> assigning;               // dragging sets an amount
-        std::function<float()> amount;                 // the amount being set
-        std::function<void (float)> setAmount;
-        std::function<void()> showMenu;                // right-click
+        int target = -1;                                 // modulation target, −1: none
+        std::function<int()> depthModulator;
+        std::function<float (int modulator)> amountOf;
+        std::function<void (int modulator, float amount)> setAmount;
+        std::function<void (int modulator, bool dragging)> depthDragged;   // for the LCD readout
+        std::function<void()> showMenu;                  // right-click
+        int dropHover = -1;                              // a chip held over it
 
-        void mouseDown (const juce::MouseEvent& e) override
-        {
-            if (e.mods.isPopupMenu() && showMenu != nullptr)
-            {
-                showMenu();
-                return;
-            }
-            settingAmount = assigning != nullptr && assigning();
-            if (settingAmount)
-            {
-                amountAtStart = amount();
-                return;
-            }
-            setMouseDragSensitivity (e.mods.isShiftDown() ? 2500 : 250);
-            juce::Slider::mouseDown (e);
-        }
-        void mouseDrag (const juce::MouseEvent& e) override
-        {
-            if (settingAmount)
-                setAmount (juce::jlimit (-1.0f, 1.0f, amountAtStart - (float) e.getDistanceFromDragStartY() / (e.mods.isShiftDown() ? 1000.0f : 150.0f)));
-            else
-                juce::Slider::mouseDrag (e);
-        }
-        void mouseUp (const juce::MouseEvent& e) override
-        {
-            if (! settingAmount)
-                juce::Slider::mouseUp (e);
-            settingAmount = false;
-        }
-        void mouseDoubleClick (const juce::MouseEvent& e) override
-        {
-            if (assigning != nullptr && assigning())
-                setAmount (0.0f);   // ASSIGN on: double-click removes this modulator's route
-            else
-                juce::Slider::mouseDoubleClick (e);
-        }
+        // The depth gesture, also used directly by tests.
+        void beginDepth (int modulator);
+        void dragDepth (float pixelsUp, bool fine);
+        void endDepth();
+        bool isSettingDepth() const noexcept { return depthModulatorNow >= 0; }
+
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp (const juce::MouseEvent&) override;
+        void mouseDoubleClick (const juce::MouseEvent&) override;
+
+        bool isInterestedInDragSource (const SourceDetails&) override;
+        void itemDragEnter (const SourceDetails&) override;
+        void itemDragExit (const SourceDetails&) override;
+        void itemDropped (const SourceDetails&) override;
 
     private:
-        bool settingAmount = false;
+        int depthModulatorNow = -1;
         float amountAtStart = 0.0f;
     };
 
+private:
     struct Control
     {
-        FineSlider slider;
-        juce::ComboBox* menu = nullptr;    // set for menu slots instead of the slider
-        juce::Button* button = nullptr;    // set for button slots instead of the slider
-        juce::String label;
-        Page page = Page::grain;
-        int slot = 0;
-        std::function<bool()> shown;       // alternatives sharing a slot
-        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
+        const silt::layout::Entry* entry = nullptr;
+        std::unique_ptr<FineSlider> slider;
+        std::unique_ptr<juce::ComboBox> menu;
+        std::unique_ptr<juce::TextButton> button;
+        std::unique_ptr<silt::ui::ModBanner> banner;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sliderAttachment;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> menuAttachment;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> buttonAttachment;
 
-        juce::Component& component()
-        {
-            if (menu != nullptr)
-                return *menu;
-            if (button != nullptr)
-                return *button;
-            return slider;
-        }
+        juce::Component& component() const;
     };
 
-    class PanelLook;
-    class GrainScreen;
-
     void timerCallback() override;
-    Control& addKnob (Page, int slot, const char* paramId, const juce::String& label);
-    Control& addMenu (Page, int slot, juce::ComboBox&, const juce::String& label);
-    Control& addButton (Page, int slot, juce::Button&, const char* paramId, const juce::String& label);
-    Control& addAction (Page, int slot, juce::Button&, const juce::String& label);
-    void showPage (Page);
+    void buildControl (const silt::layout::Entry&);
+    void wireModulation (FineSlider&);
+    void showKnobMenu (FineSlider&);
+    void drawModulation (juce::Graphics&, juce::Slider&, juce::Point<float> centre, float radius, float position);
+    void selectModulator (int m, bool arm);
     void updateVisibility();
     juce::Rectangle<int> slotBounds (int slot) const;
     juce::String statusText() const;
     void paintPreview (juce::Graphics&);
+    void paintStripes (juce::Graphics&);
     float param (const char* id) const
     {
         const auto* value = silt.params.getRawParameterValue (id);
         jassert (value != nullptr);   // a typo in an id
         return value != nullptr ? value->load() : 0.0f;
     }
-    std::array<silt::GrainView, SiltProcessor::maxGrainViews> viewsScratch {};   // per editor, not shared
 
     SiltProcessor& silt;
-    std::unique_ptr<PanelLook> look;
-    std::unique_ptr<GrainScreen> screen;
+    std::unique_ptr<silt::ui::PanelLook> look;
+    std::unique_ptr<silt::ui::GrainScreen> screen;
+    silt::ui::ModActions modActions;
+    std::unique_ptr<silt::ui::ModRail> rail;
+    std::unique_ptr<silt::ui::RouteList> routeList;
+    juce::TooltipWindow tooltips { this, 600 };
 
     std::vector<std::unique_ptr<Control>> controls;
-    std::array<juce::TextButton, 9> pageTabs;
-    Page page = Page::grain;
+    std::array<juce::TextButton, silt::layout::numPages> pageTabs;
+    int page = 0;
+    std::vector<bool> shownNow;   // per control: what updateVisibility last showed
 
-    juce::TextButton armButton, loadButton { "LOAD" }, learnButton { "LEARN" }, sizeSyncButton { "SYNC" }, delaySyncButton { "SYNC" };
-    juce::TextButton freezeButton { "FREEZE" }, newPatternButton { "NEW" }, followButton { "FOLLOW" };
-    juce::TextButton spaceSyncButton { "SYNC" }, spaceFreezeButton { "FREEZE" };
-    juce::ComboBox modSelect;
-    std::array<juce::ComboBox, SiltProcessor::numModulators> modType, modSource;
-    std::array<juce::TextButton, SiltProcessor::numModulators> modSync, modRetrig, modRepeat;
-    juce::TextButton assignButton { "ASSIGN" };
-    int modShownSeen = -1;
-    void wireModulation (Control&);
-    void drawModulation (juce::Graphics&, juce::Slider&, juce::Point<float> centre, float radius, float position);
+    juce::TextButton armButton, loadButton { "LOAD" }, learnButton { "LEARN" }, routesButton { "ROUTES" };
     juce::ToggleButton monitorButton { "MONITOR" };
-    juce::ComboBox captureBars, endMode, rateMode, keyMode, liveTrigger, scaleMenu, keyMenu, snapMenu, resNotes, filterMode, spaceMode;
-    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>> menuAttachments;
-    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
+    juce::ComboBox captureBars;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureBarsAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> monitorAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
 
-    juce::Rectangle<int> header, strip, pagePanel, controlRow;
+    juce::Rectangle<int> header, stripesArea, strip, pagePanel, controlRow, railArea;
     int seenGeneration = -1;
     bool dragHover = false, screenWasLive = false;
-    int learnSeen = -1;
+    int learnSeen = -1, armedSeen = -2, modShownSeen = -1;
     float levelDb = -100.0f;
-    std::array<float, 7> previewSeen {};   // the values the SHAPE preview was last drawn with
+    std::array<float, 7> previewSeen {};               // the values the SHAPE preview was last drawn with
+    std::array<float, SiltProcessor::numModulators> stripesSeen {};
+    int lastUsedMod = 0;
+    juce::String depthReadout;                         // shown in the LCD during a depth drag
+    std::array<silt::GrainView, SiltProcessor::maxGrainViews> viewsScratch {};   // per editor, not shared
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SiltEditor)
 };
