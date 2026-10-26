@@ -450,15 +450,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         for (auto& tab : pageTabs)
             tab.getProperties().set ("help", "!tab");
     }
-    helpWatcher.onHover = [this] (const juce::String& id)
-    {
-        const auto text = id.isEmpty() ? juce::String() : helpFor (id);
-        if (text != hoverHelp)
-        {
-            hoverHelp = text;
-            repaint (lcdArea);
-        }
-    };
+    helpWatcher.onHover = [this] (const juce::String& id) { showHelpFor (id); };
     addMouseListener (&helpWatcher, true);
 
     setWantsKeyboardFocus (true);
@@ -646,15 +638,8 @@ void SiltEditor::wireModulation (FineSlider& s)
             hint = "MOD " + juce::String (m + 1) + ": DRAG RING FOR DEPTH, SHIFT+ALT-CLICK " + (silt.routeIsBipolar (m, target) ? "+" : juce::String::charToString ((juce::juce_wchar) 0x00b1));
         else if (m >= 0)
             hint = "MOD " + juce::String (m + 1) + ": DRAG THIS RING TO MODULATE";
-        else if (m == -1)
-        {
-            bool routed = false;
-            for (int other = 0; other < SiltProcessor::numModulators; ++other)
-                routed = routed || silt.routeAmount (other, target) != 0.0f;
-            hint = routed ? juce::String ("DRAG A COLOURED RING FOR ITS DEPTH")
-                 : silt.armedMod.load() >= 0 ? juce::String()
-                 : juce::String ("DROP A MOD CHIP HERE, OR ARM ONE AND DRAG THE RING");
-        }
+        // Over the knob itself (m == −1) there's no ring hint: the LCD shows
+        // the knob's own hover help instead.
         if (hint != hoverHint)
         {
             hoverHint = hint;
@@ -810,6 +795,16 @@ void SiltEditor::restyle()
     applyGrainLook();
     sendLookAndFeelChange();
     repaint();
+}
+
+void SiltEditor::showHelpFor (const juce::String& id)
+{
+    const auto text = id.isEmpty() ? juce::String() : helpFor (id);
+    if (text != hoverHelp)
+    {
+        hoverHelp = text;
+        repaint (lcdArea);
+    }
 }
 
 // The grain field's look: the one chosen in the ? menu, or the theme's own.
@@ -1333,12 +1328,17 @@ juce::String SiltEditor::statusText() const
         return depthReadout;
     if (flash.isNotEmpty() && juce::Time::getMillisecondCounter() < flashUntil)
         return flash;
-    if (hoverHint.isNotEmpty())
-        return hoverHint;
 
     if (const int step = silt.learnStep.load(); step >= 0)
         return step < SiltProcessor::slotsPerPage ? "LEARN: TURN KNOB " + juce::String (step + 1)
              : step == 8 ? juce::String ("LEARN: PRESS PREVIOUS PAGE") : juce::String ("LEARN: PRESS NEXT PAGE");
+
+    // Under the mouse: a modulation ring's hint, else the part's own help.
+    // Both outrank the standing messages below, which come back on leaving.
+    if (hoverHint.isNotEmpty())
+        return hoverHint;
+    if (hoverHelpOn && hoverHelp.isNotEmpty())
+        return hoverHelp;
 
     if (const int m = silt.armedMod.load(); m >= 0)
         return "MOD " + juce::String (m + 1) + " ARMED: DRAG A KNOB'S OUTER RING";
@@ -1356,9 +1356,6 @@ juce::String SiltEditor::statusText() const
 
     if (silt.lastLoadError.isNotEmpty())
         return silt.lastLoadError;
-
-    if (hoverHelpOn && hoverHelp.isNotEmpty())
-        return hoverHelp;
 
     juce::String source;
     switch (silt.captureSource.load())

@@ -56,6 +56,8 @@ public:
     void setTheme (int index);                     // one of themes(), kept for this computer
     bool routesShown() const;
     juce::String visibleParameterId (int page, int slot) const;   // for tests: what the slot shows
+    juce::String displayText() const { return statusText(); }     // for tests: what the LCD says
+    void showHelpFor (const juce::String& id);                     // hover help for a part (empty: none)
     juce::Slider* findKnob (const juce::String& parameterId);     // for tests
 
     // Which modulator Alt-drag sets on a knob: the armed one; else the knob's

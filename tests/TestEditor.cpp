@@ -431,3 +431,35 @@ TEST_CASE ("Every control on every page has a line of hover help, short enough f
             CHECK (text.length() <= 48);
         }
 }
+
+TEST_CASE ("Over a knob the LCD gives its help; over a ring, the ring's hint; armed or not")
+{
+    EditorRig rig;
+    rig.editor->setSize (1040, 600);
+    auto* knob = dynamic_cast<SiltEditor::FineSlider*> (rig.editor->findKnob ("spray"));
+    REQUIRE (knob != nullptr);
+    rig.silt.setRouteAmount (0, rig.silt.modulationTarget ("spray"), 0.3f);
+
+    for (const int armed : { -1, 1 })
+    {
+        rig.silt.armedMod.store (armed);
+        INFO ("armed " << armed);
+
+        // The knob itself: its own help.
+        rig.editor->showHelpFor ("spray");
+        knob->ringHover (-1);
+        CHECK (rig.editor->displayText() == silt::ui::helpFor ("spray"));
+
+        // One of its rings: what that ring does.
+        knob->ringHover (0);
+        CHECK (rig.editor->displayText().startsWith ("MOD 1:"));
+
+        // Off it: the standing message comes back.
+        knob->ringHover (-2);
+        rig.editor->showHelpFor ({});
+        if (armed >= 0)
+            CHECK (rig.editor->displayText().contains ("ARMED"));
+        else
+            CHECK (rig.editor->displayText().contains ("BPM"));
+    }
+}
