@@ -80,6 +80,12 @@ int main (int argc, char* argv[])
             silt.layoutInset.store (parts[3].getFloatValue());
             continue;
         }
+        if (id == "view")   // view=from,to: the waveform zoomed to that part (shares)
+        {
+            const auto parts = juce::StringArray::fromTokens (setting.fromFirstOccurrenceOf ("=", false, false), ",", "");
+            SiltEditor::startZoom = { parts[0].getFloatValue(), parts[1].getFloatValue() };
+            continue;
+        }
         if (id == "grainview")   // grainview=index (0 dots, 1 stars, 2 shore, 3 film, 4 clouds)
         {
             SiltEditor::startGrainView = setting.fromFirstOccurrenceOf ("=", false, false).getIntValue();

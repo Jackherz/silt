@@ -260,9 +260,23 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     screen->addAndMakeVisible (*dragOut);
 
     // SLICE: move, add and remove slices on the waveform (MANUAL from then on).
+    // Each drag, add or remove is one undo step.
+    screen->onSliceDrag = [this] (bool starting) { starting ? silt.beginSliceEdit() : silt.endSliceEdit(); };
     screen->onSliceMove = [this] (int index, float share) { silt.moveSlice (index, share); screen->setSlices (silt.sliceMarks()); };
-    screen->onSliceAdd = [this] (float share) { silt.addSlice (share); screen->setSlices (silt.sliceMarks()); };
-    screen->onSliceRemove = [this] (int index) { silt.removeSlice (index); screen->setSlices (silt.sliceMarks()); };
+    screen->onSliceAdd = [this] (float share)
+    {
+        silt.beginSliceEdit();
+        silt.addSlice (share);
+        silt.endSliceEdit();
+        screen->setSlices (silt.sliceMarks());
+    };
+    screen->onSliceRemove = [this] (int index)
+    {
+        silt.beginSliceEdit();
+        silt.removeSlice (index);
+        silt.endSliceEdit();
+        screen->setSlices (silt.sliceMarks());
+    };
 
     // Right-click the screen: the sample tools.
     screen->onMenu = [this]
@@ -457,6 +471,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     }
     helpWatcher.onHover = [this] (const juce::String& id) { showHelpFor (id); };
     addMouseListener (&helpWatcher, true);
+    screen->setView (startZoom.x, startZoom.y);
 
     setWantsKeyboardFocus (true);
     const int w = silt.editorWidth.load(), h = silt.editorHeight.load();   // before the limits resize us

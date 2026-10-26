@@ -1171,3 +1171,29 @@ TEST_CASE ("SLICE: moving, adding and removing a slice makes them MANUAL, kept w
     for (size_t i = 0; i < marks.size(); ++i)
         CHECK_THAT (again[i], WithinAbs (marks[i], 1e-5));
 }
+
+TEST_CASE ("SLICE: each slice edit is one undo step, back to EQUAL at the start")
+{
+    Rig rig;
+    loadSine (rig);
+    rig.set ("keyMode", rig.silt.params.getParameter ("keyMode")->convertTo0to1 (3.0f));
+    rig.set ("sliceCount", rig.silt.params.getParameter ("sliceCount")->convertTo0to1 (4.0f));
+    runBlocks (rig, 1);
+    const auto mode = [&] { return juce::roundToInt (rig.silt.params.getParameter ("sliceMode")->convertFrom0to1 (rig.value ("sliceMode"))); };
+
+    rig.silt.beginSliceEdit();   // a drag: several moves, one step
+    rig.silt.moveSlice (1, 0.3f);
+    rig.silt.moveSlice (1, 0.4f);
+    rig.silt.endSliceEdit();
+    rig.silt.beginSliceEdit();
+    rig.silt.addSlice (0.9f);
+    rig.silt.endSliceEdit();
+    REQUIRE (rig.silt.sliceMarks().size() == 5);
+
+    REQUIRE (rig.silt.undoRoutes());   // the add
+    CHECK (rig.silt.sliceMarks().size() == 4);
+    CHECK_THAT (rig.silt.sliceMarks()[1], WithinAbs (0.4, 1e-4));
+    REQUIRE (rig.silt.undoRoutes());   // the whole drag
+    CHECK (mode() == 0);   // EQUAL again
+    CHECK_THAT (rig.silt.sliceMarks()[1], WithinAbs (0.25, 1e-4));
+}

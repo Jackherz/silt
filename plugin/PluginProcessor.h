@@ -168,6 +168,9 @@ public:
     void removeSlice (int index);
     std::vector<float> manualSlices() const;
     void setManualSlices (std::vector<float>);
+    // Slice edits between these are one undo step (the slices and SLICE BY).
+    void beginSliceEdit();
+    void endSliceEdit();
 
     // Sounding grains for the screen. The audio thread publishes a snapshot
     // about 60 times a second; readGrainViews copies the latest (lock-free,
@@ -276,7 +279,7 @@ public:
 
 private:
     static constexpr int stateVersion = 2;
-    static constexpr int overviewColumns = 1024;
+    static constexpr int overviewColumns = 32768;   // fine enough for the screen zoomed in 32×
 
     static BusesProperties makeBuses();
     juce::AudioBuffer<float> findCaptureBus (juce::AudioBuffer<float>& buffer, CaptureSource& source);
@@ -342,6 +345,16 @@ private:
     mutable std::array<float, 128> sliceScratch {};      // audio thread: this chunk's copy, for GrainParams
     void makeSlicesManual();
     float minimumSliceGap() const;   // the shortest slice, as a share of the sample (256 samples)
+    struct SliceState
+    {
+        std::vector<float> marks;
+        float mode = 0.0f;
+        bool sameAs (const SliceState& o) const { return marks == o.marks && juce::exactlyEqual (mode, o.mode); }
+    };
+    SliceState sliceState() const;
+    void restoreSlices (const SliceState&);
+    SliceState sliceEditStart;
+    class SliceChange;
     bool lastSelfFeed = false;   // audio thread: FEED was on last chunk   // a note began since SPACE last ran: restart the trace
     void writeScope (std::array<std::atomic<float>, scopeSize>&, const float* l, const float* r, int count) noexcept;
     float sampleGainNow = 1.0f;   // audio thread: the gain ramped to

@@ -2517,6 +2517,55 @@ void SiltProcessor::setManualSlices (std::vector<float> marks)
     sliceCountManual.store ((int) kept.size(), std::memory_order_release);
 }
 
+SiltProcessor::SliceState SiltProcessor::sliceState() const
+{
+    return { manualSlices(), params.getParameter ("sliceMode")->getValue() };
+}
+
+void SiltProcessor::restoreSlices (const SliceState& s)
+{
+    setManualSlices (s.marks);
+    if (auto* mode = params.getParameter ("sliceMode"))
+        mode->setValueNotifyingHost (s.mode);
+}
+
+class SiltProcessor::SliceChange final : public juce::UndoableAction
+{
+public:
+    SliceChange (SiltProcessor& p, SliceState b, SliceState a) : processor (p), before (std::move (b)), after (std::move (a)) {}
+    bool perform() override
+    {
+        if (first)
+            first = false;   // recorded after the edit: nothing to do yet
+        else
+            processor.restoreSlices (after);
+        return true;
+    }
+    bool undo() override { processor.restoreSlices (before); return true; }
+    int getSizeInUnits() override { return 1; }
+
+private:
+    SiltProcessor& processor;
+    SliceState before, after;
+    bool first = true;
+};
+
+void SiltProcessor::beginSliceEdit() { sliceEditStart = sliceState(); }
+
+void SiltProcessor::endSliceEdit()
+{
+    auto now = sliceState();
+    if (now.sameAs (sliceEditStart))
+        return;
+    routeUndo.beginNewTransaction ("SLICES");
+    lastGestureParameter = -1;
+    {
+        const juce::ScopedValueSetter<bool> quiet (replaying, true);
+        routeUndo.perform (new SliceChange (*this, sliceEditStart, std::move (now)));
+    }
+    lastGestureParameter = -1;
+}
+
 // From EQUAL or AT HITS: their slices become MANUAL's, then the edit applies.
 void SiltProcessor::makeSlicesManual()
 {

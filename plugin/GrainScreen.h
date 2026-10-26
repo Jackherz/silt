@@ -13,9 +13,88 @@ namespace silt::ui
 // pan apart: left to right is where in the sample a grain plays (spray
 // scatters it sideways), top to bottom is where it sits in the stereo field
 // (random pan spreads it up and down).
+// The screen's ZOOM: how far in the waveform is zoomed; click to fit it all.
+class ZoomReadout final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    ZoomReadout()
+    {
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        setRepaintsOnMouseActivity (true);
+        setTooltip ("Scroll on the waveform to zoom in and out (Shift: move along); click here to see it all");
+        setSize (78, 16);
+    }
+
+    std::function<void()> onClick;
+    float zoom = 1.0f;
+
+    void paint (juce::Graphics& g) override
+    {
+        if (isMouseOver (true))
+        {
+            g.setColour (screenLight.withAlpha (0.35f));
+            g.fillRect (getLocalBounds());
+        }
+        const bool zoomed = zoom > 1.01f;
+        g.setColour (zoomed ? screenLime : screenPale.withAlpha (0.6f));
+        g.setFont (monoFont (12.0f));
+        g.drawText ("ZOOM " + juce::String (zoom, zoom < 10.0f ? 1 : 0) + "X", getLocalBounds(), juce::Justification::centred);
+    }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (onClick && ! e.mouseWasDraggedSinceMouseDown())
+            onClick();
+    }
+};
+
 class GrainScreen final : public juce::Component
 {
 public:
+    GrainScreen()
+    {
+        zoomBox.onClick = [this] { setView (0.0f, 1.0f); };
+        addAndMakeVisible (zoomBox);
+    }
+
+    // Zoom: the part of the sample in view, as shares (the UI's own: not saved).
+    static constexpr float maxZoom = 32.0f;
+    void setView (float from, float to)
+    {
+        const float span = juce::jlimit (1.0f / maxZoom, 1.0f, to - from);
+        from = juce::jlimit (0.0f, 1.0f - span, from);
+        if (juce::approximatelyEqual (from, viewStart) && juce::approximatelyEqual (from + span, viewEnd))
+            return;
+        viewStart = from;
+        viewEnd = from + span;
+        waveCache = {};
+        field = {};
+        zoomBox.zoom = 1.0f / span;
+        zoomBox.repaint();
+        repaint();
+    }
+    float getZoom() const noexcept { return 1.0f / (viewEnd - viewStart); }
+
+    // Scroll on the waveform: zoom around the mouse; Shift (or a sideways
+    // swipe): move along. Not in Live mode, which always shows the whole ring.
+    void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override
+    {
+        if (live || overview.minimum.empty())
+            return;
+        const float span = viewEnd - viewStart;
+        const float sideways = e.mods.isShiftDown() ? wheel.deltaY : wheel.deltaX;
+        if (std::abs (sideways) > 0.0f)
+        {
+            const float move = -sideways * span * 0.5f;
+            setView (viewStart + move, viewEnd + move);
+            return;
+        }
+        const float anchor = waveShareAt (e.position.x);
+        const float wider = std::pow (0.5f, wheel.deltaY * (wheel.isReversed ? -4.0f : 4.0f));
+        const float newSpan = juce::jlimit (1.0f / maxZoom, 1.0f, span * wider);
+        const float along = (anchor - viewStart) / span;
+        setView (anchor - along * newSpan, anchor - along * newSpan + newSpan);
+    }
+
     void setOverview (SiltProcessor::Overview o)
     {
         overview = std::move (o);
@@ -53,6 +132,8 @@ public:
     // scrolling view with the newest audio at the right edge.
     void setLive (bool isLive, bool isFrozen, float writeHead, const std::array<float, SiltProcessor::liveColumns>& peaks, bool feeding = false)
     {
+        if (isLive && ! live)
+            setView (0.0f, 1.0f);   // the ring is always shown whole
         live = isLive;
         selfFeed = feeding;
         frozen = isFrozen;
@@ -153,6 +234,7 @@ public:
     // or anywhere else on the waveform to add one.
     std::function<void()> onMenu;
     std::function<void (int index, float share)> onSliceMove;
+    std::function<void (bool starting)> onSliceDrag;   // a drag's start and end: one undo step
     std::function<void (float share)> onSliceAdd;
     std::function<void (int index)> onSliceRemove;
 
@@ -166,13 +248,20 @@ public:
             return;
         }
         draggingSlice = sliceAt (e.position);
+        if (draggingSlice >= 0 && onSliceDrag)
+            onSliceDrag (true);
     }
     void mouseDrag (const juce::MouseEvent& e) override
     {
         if (draggingSlice >= 0 && onSliceMove)
             onSliceMove (draggingSlice, waveShareAt (e.position.x));
     }
-    void mouseUp (const juce::MouseEvent&) override { draggingSlice = -1; }
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        if (draggingSlice >= 0 && onSliceDrag)
+            onSliceDrag (false);
+        draggingSlice = -1;
+    }
     void mouseDoubleClick (const juce::MouseEvent& e) override
     {
         if (slices.empty() || live || ! waveRect().toFloat().contains (e.position))
@@ -403,25 +492,37 @@ private:
         g.drawText (juce::String (overview.seconds, 2) + " S", top, juce::Justification::centredRight);
 
         drawWave (g, waveArea);
+        if (viewEnd - viewStart < 0.999f)
+        {
+            // Zoomed: a thin bar along the bottom shows which part is in view.
+            const auto track = waveArea.toFloat().removeFromBottom (3.0f);
+            g.setColour (screenLight.withAlpha (0.35f));
+            g.fillRect (track);
+            g.setColour (screenLime.withAlpha (0.85f));
+            g.fillRect (track.withX (track.getX() + track.getWidth() * viewStart).withWidth (juce::jmax (4.0f, track.getWidth() * (viewEnd - viewStart))));
+        }
         if (transientsShown)
         {
             // The transients SNAP can land on: ticks along the top of the waveform.
             g.setColour (screenLime.withAlpha (0.8f));
             for (float t : overview.transients)
             {
-                const float x = (float) waveArea.getX() + t * (float) waveArea.getWidth();
-                g.fillRect (x, (float) waveArea.getY(), 1.0f, 7.0f);
+                const float x = toX (t, waveArea);
+                if (x >= (float) waveArea.getX() && x <= (float) waveArea.getRight())
+                    g.fillRect (x, (float) waveArea.getY(), 1.0f, 7.0f);
             }
         }
         drawRegion (g, waveArea, rollArea);
         if (! slices.empty())
         {
             // The slices: a line at each start, numbered while there's room.
-            const float spacing = (float) waveArea.getWidth() * (slices.size() > 1 ? slices[1] - slices[0] : 1.0f);
+            const float spacing = (float) waveArea.getWidth() * (slices.size() > 1 ? slices[1] - slices[0] : 1.0f) / (viewEnd - viewStart);
             g.setFont (monoFont (9.0f));
             for (size_t i = 0; i < slices.size(); ++i)
             {
-                const float x = (float) waveArea.getX() + slices[i] * (float) waveArea.getWidth();
+                const float x = toX (slices[i], waveArea);
+                if (x < (float) waveArea.getX() || x > (float) waveArea.getRight())
+                    continue;
                 g.setColour (screenLime.withAlpha (0.55f));
                 g.fillRect (x, (float) waveArea.getY(), 1.0f, (float) waveArea.getHeight());
                 if (spacing > 16.0f)
@@ -446,11 +547,21 @@ private:
             juce::Graphics c (waveCache);
             const float mid = (float) area.getHeight() * 0.5f, half = (float) area.getHeight() * 0.48f;
             const int cols = (int) overview.minimum.size();
+            // The columns in view, each pixel taking the loudest of those under it.
             // At the sample gain: columns pushed past full scale are drawn red.
+            const double first = viewStart * cols, perPixel = (viewEnd - viewStart) * cols / juce::jmax (1, area.getWidth());
             for (int x = 0; x < area.getWidth(); ++x)
             {
-                const auto i = (size_t) juce::jlimit (0, cols - 1, x * cols / juce::jmax (1, area.getWidth()));
-                const float hi = overview.maximum[i] * displayGain, lo = overview.minimum[i] * displayGain;
+                const int c0 = juce::jlimit (0, cols - 1, (int) (first + x * perPixel));
+                const int c1 = juce::jlimit (c0 + 1, cols, (int) (first + (x + 1) * perPixel));
+                float hi = 0.0f, lo = 0.0f;
+                for (int col = c0; col < c1; ++col)
+                {
+                    hi = juce::jmax (hi, overview.maximum[(size_t) col]);
+                    lo = juce::jmin (lo, overview.minimum[(size_t) col]);
+                }
+                hi *= displayGain;
+                lo *= displayGain;
                 const bool clipped = hi > 1.0f || lo < -1.0f;
                 const float top = mid - juce::jmin (1.0f, hi) * half;
                 const float bottom = mid - juce::jmax (-1.0f, lo) * half;
@@ -476,6 +587,14 @@ private:
         g.drawVerticalLine (area.getRight() - 1, (float) area.getY(), (float) area.getBottom());
     }
 
+    // Where a share of the sample sits across an area: through the zoom, or
+    // in Live mode through the scrolling ring.
+    float toX (float share, juce::Rectangle<int> area) const
+    {
+        const float across = live ? xOf (share) : (share - viewStart) / (viewEnd - viewStart);
+        return (float) area.getX() + across * (float) area.getWidth();
+    }
+
     // Live view: x (0 = oldest, 1 = newest) to a share of the ring, and back.
     float shareAt (float x) const
     {
@@ -491,8 +610,8 @@ private:
     void drawRegion (juce::Graphics& g, juce::Rectangle<int> wave, juce::Rectangle<int> roll)
     {
         // Dim what's outside the region, on both the waveform and the roll.
-        const auto x0 = (float) wave.getX() + start * (float) wave.getWidth();
-        const auto x1 = juce::jmin ((float) wave.getRight(), x0 + length * (float) wave.getWidth());
+        const auto x0 = juce::jmax ((float) wave.getX(), toX (start, wave));
+        const auto x1 = juce::jlimit (x0, (float) wave.getRight(), toX (start + length, wave));
         const auto full = wave.getUnion (roll).toFloat();
         g.setColour (screenBlue.withAlpha (0.72f));
         g.fillRect (full.withRight (x0));
@@ -542,7 +661,7 @@ private:
         {
             const auto& v = views[(size_t) i];
             const float level = juce::jlimit (0.0f, 1.0f, v.level);
-            const float x = (live ? xOf (v.position) : v.position) * (float) w;
+            const float x = (live ? xOf (v.position) : (v.position - viewStart) / (viewEnd - viewStart)) * (float) w;
             const auto hash = (std::uint32_t) (v.voice * 131u + v.slot * 2654435761u);
             const float own = ((float) (hash % 1000u) / 1000.0f - 0.5f) * 0.5f;   // ±25% of the height
             const float y = juce::jmap (juce::jlimit (-1.0f, 1.0f, v.pan * 0.85f + own), -1.0f, 1.0f, laneTop, laneBottom);
@@ -690,7 +809,6 @@ private:
 
     void drawGrains (juce::Graphics& g, juce::Rectangle<int> wave, juce::Rectangle<int> roll)
     {
-        const float w = (float) wave.getWidth();
         const float mid = (float) wave.getCentreY(), half = (float) wave.getHeight() * 0.5f;
         constexpr int lanes = 16;
         const float laneH = (float) roll.getHeight() / lanes;
@@ -715,7 +833,7 @@ private:
             const auto& v = views[(size_t) i];
             const float level = juce::jlimit (0.0f, 1.0f, v.level);
             const float alpha = 0.25f + 0.75f * level;
-            const float x = (float) wave.getX() + (live ? xOf (v.position) : v.position) * w;
+            const float x = toX (v.position, wave);
 
             // On the waveform: a line at the read position, as tall as the grain is loud.
             g.setColour ((v.reversed ? screenLime : juce::Colours::white).withAlpha (alpha * 0.8f));
@@ -728,7 +846,9 @@ private:
         {
             if (p < 0.0f)
                 continue;
-            const float x = (float) wave.getX() + (live ? xOf (p) : p) * w;
+            const float x = toX (p, wave);
+            if (x < (float) wave.getX() || x > (float) wave.getRight())
+                continue;
             juce::Path marker;
             marker.addTriangle (x - 4.0f, (float) wave.getY() - 1.0f, x + 4.0f, (float) wave.getY() - 1.0f, x, (float) wave.getY() + 6.0f);
             g.fillPath (marker);
@@ -752,7 +872,7 @@ private:
         int best = -1;
         float nearest = 6.0f;
         for (size_t i = 0; i < slices.size(); ++i)
-            if (const float d = std::abs (wave.getX() + slices[i] * wave.getWidth() - p.x); d < nearest)
+            if (const float d = std::abs (toX (slices[i], waveRect()) - p.x); d < nearest)
             {
                 nearest = d;
                 best = (int) i;
@@ -762,7 +882,7 @@ private:
     float waveShareAt (float x) const   // a share of the sample, from a point on the waveform
     {
         const auto wave = waveRect().toFloat();
-        return juce::jlimit (0.0f, 1.0f, (x - wave.getX()) / juce::jmax (1.0f, wave.getWidth()));
+        return juce::jlimit (0.0f, 1.0f, viewStart + (viewEnd - viewStart) * (x - wave.getX()) / juce::jmax (1.0f, wave.getWidth()));
     }
     float writeShare = 0.0f;
     std::array<float, SiltProcessor::liveColumns> livePeaks {};
@@ -772,6 +892,8 @@ private:
     std::array<float, silt::Engine::numVoices> heads {};
     juce::String hud;
     juce::Image field;     // the grain field with its trails
+    float viewStart = 0.0f, viewEnd = 1.0f;
+    ZoomReadout zoomBox;
     FieldLook look = FieldLook::dots;
     juce::Image fieldBackdrop;   // what's behind the grains, by look
     unsigned tick = 0;     // the field's own clock, for twinkles and waves

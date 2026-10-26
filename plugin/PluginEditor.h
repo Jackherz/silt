@@ -37,6 +37,7 @@ public:
     static inline bool tourOnFirstOpen = true;   // tests and the snapshot tool turn it off
     static inline int startTheme = -1;           // ≥ 0: this theme, not the saved one (the snapshot tool)
     static inline int startGrainView = -2;       // ≥ −1: this grain view, not the saved one (the snapshot tool)
+    static inline juce::Point<float> startZoom { 0.0f, 1.0f };   // the waveform's view on opening (the snapshot tool)
     ~SiltEditor() override;
 
     void paint (juce::Graphics&) override;
