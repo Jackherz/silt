@@ -302,6 +302,7 @@ private:
     int lastNote = -1;           // the last note played, for FOLLOW and KEY (audio thread)
     bool lastLive = false;
     std::atomic<float>* sampleGain = nullptr;
+    std::atomic<float>* captureFeedRaw = nullptr;
     int chainNow = 0;          // audio thread: the order running, and its fade
     float chainFade = 1.0f;
     std::array<std::atomic<float>, scopeSize> scopeIn {}, scopeOut {};
@@ -426,6 +427,7 @@ private:
     int samplesSinceGrainViews = 0;
 
     void trackLivePeaks (int writeStart, int count) noexcept;
+    void refreshAllLivePeaks() noexcept;
     std::array<std::atomic<float>, liveColumns> livePeaks {};
     int liveColumn = -1;            // audio thread only
     float liveColumnPeak = 0.0f;

@@ -73,6 +73,8 @@ private:
         const auto key = juce::String (w) + "x" + juce::String (h) + "@" + juce::String (scale, 2);
         if (const auto it = faces.find (key); it != faces.end())
             return it->second;
+        if (faces.size() >= 4)
+            faces.clear();   // a window being resized passes through many sizes: keep just the latest few
 
         auto& image = faces[key];
         image = juce::Image (juce::Image::ARGB, juce::roundToInt ((float) w * scale), juce::roundToInt ((float) h * scale), true);

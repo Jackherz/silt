@@ -1051,3 +1051,50 @@ TEST_CASE ("UNDO takes a recorded or loaded sample back to the one before, and R
     REQUIRE (waitFor ([&] { return rig.silt.getFactorySample() == 0; }));
     CHECK (rootNote (rig) == 64.0f);
 }
+
+TEST_CASE ("Fuzz: every parameter at random, notes coming and going, odd block sizes and rates: always finite and in range")
+{
+    juce::Random random (20261027);
+    for (const double rate : { 44100.0, 96000.0 })
+        for (const int block : { 1, 37, 333, 2048 })
+        {
+            Rig rig;
+            loadSine (rig);
+            rig.silt.setRouteAmount (0, rig.silt.modulationTarget ("pitch"), 0.5f);
+            rig.silt.setRouteAmount (1, rig.silt.modulationTarget ("filterCutoff"), -0.7f);
+            rig.silt.prepareToPlay (rate, block);
+            juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), block);
+            const int blocks = (int) (rate * 0.6) / block + 1;
+            bool finite = true;
+            float peak = 0.0f;
+            for (int b = 0; b < blocks; ++b)
+            {
+                // Every few blocks: a handful of parameters jump anywhere (modes and switches too).
+                if (b % juce::jmax (1, 4096 / block) == 0)
+                    for (int i = 0; i < 12; ++i)
+                    {
+                        auto* p = rig.silt.getParameters()[random.nextInt (rig.silt.getParameters().size())];
+                        p->setValue (random.nextFloat());
+                    }
+                juce::MidiBuffer midi;
+                if (random.nextInt (8) == 0)
+                    midi.addEvent (juce::MidiMessage::noteOn (1, 36 + random.nextInt (48), (juce::uint8) (1 + random.nextInt (126))), random.nextInt (block));
+                if (random.nextInt (8) == 0)
+                    midi.addEvent (juce::MidiMessage::noteOff (1, 36 + random.nextInt (48)), random.nextInt (block));
+                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    for (int i = 0; i < block; ++i)
+                        buffer.setSample (ch, i, 0.3f * std::sin ((float) (b * block + i) * 0.05f));   // something on the inputs
+                rig.silt.processBlock (buffer, midi);
+                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    for (int i = 0; i < block; ++i)
+                    {
+                        const float v = buffer.getSample (ch, i);
+                        finite = finite && std::isfinite (v);
+                        peak = std::max (peak, std::abs (v));
+                    }
+            }
+            INFO ("rate " << rate << ", block " << block);
+            CHECK (finite);
+            CHECK (peak <= 1.0f);
+        }
+}

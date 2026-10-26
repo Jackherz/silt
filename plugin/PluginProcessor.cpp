@@ -543,6 +543,7 @@ SiltProcessor::SiltProcessor()
     for (auto* parameter : getParameters())
         parameter->addListener (this);
     sampleGain = params.getRawParameterValue ("sampleGain");
+    captureFeedRaw = params.getRawParameterValue ("captureFeed");   // looked up once: a name lookup can allocate
 
     raw = std::make_unique<RawParams> ([this] (const char* id) -> std::atomic<float>*
     {
@@ -919,7 +920,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     captureSource.store (source, std::memory_order_relaxed);
     if (capture.getNumChannels() > 0)
         captureMeter.process (capture.getArrayOfReadPointers(), capture.getNumChannels(), numSamples);
-    const bool resampling = params.getRawParameterValue ("captureFeed")->load (std::memory_order_relaxed) > 0.5f;
+    const bool resampling = captureFeedRaw->load (std::memory_order_relaxed) > 0.5f;
     if (! resampling)
         runCapture (capture, position ? &*position : nullptr);
 
@@ -1016,8 +1017,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         if (grainParams.live && grainParams.selfFeed && ! lastSelfFeed)
         {
             // FEED just seeded the whole ring: the screen's picture of it too.
-            if (const auto* ring = engine.getLiveBuffer())
-                trackLivePeaks (engine.getLiveWritePosition(), ring->getNumFrames());
+            refreshAllLivePeaks();
         }
         else if (grainParams.live && ! grainParams.freeze)
             trackLivePeaks (liveWriteBefore, len);
@@ -2245,6 +2245,29 @@ void SiltProcessor::installBuffer (std::unique_ptr<silt::SampleBuffer> buffer, c
 
     engine.setBuffer (std::move (buffer));
     ++sampleGeneration;
+}
+
+// Audio thread, once when FEED seeds the ring: every column's peak, a column
+// at a time (vector min/max), not sample by sample.
+void SiltProcessor::refreshAllLivePeaks() noexcept
+{
+    const auto* ring = engine.getLiveBuffer();
+    if (ring == nullptr)
+        return;
+    const int frames = ring->getNumFrames();
+    for (int c = 0; c < liveColumns; ++c)
+    {
+        const int from = (int) ((juce::int64) c * frames / liveColumns);
+        const int to = juce::jmax (from + 1, (int) ((juce::int64) (c + 1) * frames / liveColumns));
+        float peak = 0.0f;
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const auto range = juce::FloatVectorOperations::findMinAndMax (ring->getReadPointer (ch) + from, to - from);
+            peak = juce::jmax (peak, -range.getStart(), range.getEnd());
+        }
+        livePeaks[(size_t) c].store (peak, std::memory_order_relaxed);
+    }
+    liveColumn = -1;
 }
 
 // Audio thread: the peak of each 1/liveColumns of the ring, as it's written,

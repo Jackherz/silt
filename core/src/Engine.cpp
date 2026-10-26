@@ -327,14 +327,24 @@ void Engine::seedLive (const GrainParams& p) noexcept
     const int frames = live->getNumFrames(), length = current->getNumFrames();
     const auto delay = (long long) (p.liveDelayMs * 0.001 * live->getSampleRate());
     const auto startFrame = (long long) (std::clamp (p.start, 0.0, 1.0) * (length - 1));
+    // Walk the ring from its oldest frame (just after the write head) to the
+    // newest, and the sample alongside, wrapping each by hand: no division per
+    // frame, as this runs on the audio thread.
+    const int oldest = liveWrite;   // `frames` behind the head is the head itself
+    const auto startIndex = ((startFrame + delay - frames) % length + length) % length;
     for (int ch = 0; ch < 2; ++ch)
     {
         const float* from = current->getReadPointer (ch);
         float* ring = live->getWritePointer (ch);
-        for (int back = 1; back <= frames; ++back)   // `back` frames behind the write head
+        int to = oldest;
+        auto index = (int) startIndex;
+        for (int i = 0; i < frames; ++i)
         {
-            const auto index = ((startFrame + delay - back) % length + length) % length;
-            ring[((liveWrite - back) % frames + frames) % frames] = from[index];
+            ring[to] = from[index];
+            if (++to == frames)
+                to = 0;
+            if (++index == length)
+                index = 0;
         }
     }
     dcIn = dcOut = lowpass = {};
