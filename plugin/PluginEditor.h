@@ -113,7 +113,13 @@ private:
     juce::Rectangle<int> slotBounds (int slot) const;
     juce::String statusText() const;
     void paintPreview (juce::Graphics&);
-    float param (const char* id) const { return silt.params.getRawParameterValue (id)->load(); }
+    float param (const char* id) const
+    {
+        const auto* value = silt.params.getRawParameterValue (id);
+        jassert (value != nullptr);   // a typo in an id
+        return value != nullptr ? value->load() : 0.0f;
+    }
+    std::array<silt::GrainView, SiltProcessor::maxGrainViews> viewsScratch {};   // per editor, not shared
 
     SiltProcessor& silt;
     std::unique_ptr<PanelLook> look;

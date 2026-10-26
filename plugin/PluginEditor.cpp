@@ -740,8 +740,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     assignButton.setClickingTogglesState (false);
     assignButton.onClick = [this]
     {
-        silt.assigning.store (silt.assigning.load() >= 0 ? -1 : silt.modShown.load());
-        assignButton.setToggleState (silt.assigning.load() >= 0, juce::dontSendNotification);
+        silt.armedMod.store (silt.armedMod.load() >= 0 ? -1 : silt.modShown.load());
+        assignButton.setToggleState (silt.armedMod.load() >= 0, juce::dontSendNotification);
         repaint (header);
     };
 
@@ -903,11 +903,11 @@ void SiltEditor::wireModulation (Control& c)
     if (target < 0)
         return;
     auto& s = c.slider;
-    s.assigning = [this] { return silt.assigning.load() >= 0; };
-    s.amount = [this, target] { return silt.routeAmount (juce::jmax (0, silt.assigning.load()), target); };
+    s.assigning = [this] { return silt.armedMod.load() >= 0; };
+    s.amount = [this, target] { return silt.routeAmount (juce::jmax (0, silt.armedMod.load()), target); };
     s.setAmount = [this, target, &s] (float amount)
     {
-        silt.setRouteAmount (silt.assigning.load(), target, amount);
+        silt.setRouteAmount (silt.armedMod.load(), target, amount);
         s.repaint();
     };
     s.showMenu = [this, target, &s]
@@ -929,7 +929,7 @@ void SiltEditor::wireModulation (Control& c)
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&s), [this, target, &s] (int chosen)
         {
             if (chosen == 99)
-                silt.clearRoutes (target);
+                silt.clearRoutesOnTarget (target);
             else if (chosen >= 1 && chosen <= SiltProcessor::numModulators)
                 silt.setRouteAmount (chosen - 1, target, 0.0f);
             s.repaint();
@@ -965,7 +965,7 @@ void SiltEditor::drawModulation (juce::Graphics& g, juce::Slider& slider, juce::
         juce::Path arc;
         const float r = radius + 3.0f * (float) ring++;
         arc.addCentredArc (centre.x, centre.y, r, r, 0.0f, angleFor (lo), angleFor (hi), true);
-        g.setColour (colours[(size_t) m].withAlpha (silt.assigning.load() == m ? 1.0f : 0.85f));
+        g.setColour (colours[(size_t) m].withAlpha (silt.armedMod.load() == m ? 1.0f : 0.85f));
         g.strokePath (arc, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
     if (! any)
@@ -1025,7 +1025,7 @@ juce::String SiltEditor::statusText() const
         return step < SiltProcessor::slotsPerPage ? "LEARN: TURN KNOB " + juce::String (step + 1)
              : step == 8 ? juce::String ("LEARN: PRESS PREVIOUS PAGE") : juce::String ("LEARN: PRESS NEXT PAGE");
 
-    if (const int m = silt.assigning.load(); m >= 0)
+    if (const int m = silt.armedMod.load(); m >= 0)
         return "ASSIGN MOD " + juce::String (m + 1) + ": TURN OR DRAG A KNOB";
 
     using S = SiltProcessor::CaptureState;
@@ -1069,7 +1069,7 @@ void SiltEditor::timerCallback()
     screen->setTransientsShown (param ("snap") > 1.5f);
 
     // The grains: the screen only repaints while something is moving.
-    static std::array<silt::GrainView, SiltProcessor::maxGrainViews> views;
+    auto& views = viewsScratch;
     const int n = silt.readGrainViews (views);
     std::array<float, silt::Engine::numVoices> heads {};
     int voices = 0;
@@ -1115,7 +1115,7 @@ void SiltEditor::timerCallback()
         modSelect.setSelectedItemIndex (shown, juce::dontSendNotification);
         updateVisibility();
     }
-    assignButton.setToggleState (silt.assigning.load() >= 0, juce::dontSendNotification);
+    assignButton.setToggleState (silt.armedMod.load() >= 0, juce::dontSendNotification);
     for (auto& c : controls)
         if (c->menu == nullptr && c->button == nullptr && c->slider.isVisible())
             if (const int t = silt.modulationTarget (c->slider.getComponentID()); t >= 0)

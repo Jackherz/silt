@@ -110,16 +110,32 @@ public:
     // Modulation (MOD page): four modulators; a route gives one modulator an
     // amount (−1…1 of the parameter's range) on one target parameter. Routes are
     // edited on the message thread and read by the audio thread (atomics).
+    //
+    // Targets are the continuous and stepped (integer) parameters. Switch-like
+    // ones (choices and bools), seeds and the modulators' own settings aren't:
+    // a route there would jump between modes and has no ring to show it.
     static constexpr int numModulators = 4, maxTargets = 160, modulationInterval = 64;
     int modulationTarget (const juce::String& parameterId) const;   // −1: not a modulation target
+    int numTargets() const noexcept { return (int) targets.size(); }
+    juce::RangedAudioParameter& targetParameter (int target) const { return *targets[(size_t) target].parameter; }
+    bool isSteppedTarget (int target) const;                         // an integer parameter
     float routeAmount (int modulator, int target) const noexcept;
     void setRouteAmount (int modulator, int target, float amount) noexcept;
-    void clearRoutes (int target) noexcept;
+    void clearRoutesOnTarget (int target) noexcept;
+    void clearRoutesForModulator (int modulator) noexcept;
+    int routeCount (int modulator) const noexcept;
+    struct Route { int modulator, target; float amount; };
+    std::vector<Route> allRoutes() const;                            // in panel order, then modulator
+    juce::String depthText (int modulator, int target) const;       // "+37%  (1.00 kHz … 2.64 kHz)"
     float modulatedValue01 (int target) const noexcept;             // where modulation has it now
     silt::ModulatorParams readModulatorParams (int modulator) const noexcept;
-    std::array<std::atomic<float>, numModulators> modOutputs {};    // each modulator's latest value
+    bool isModulatorEnabled (int modulator) const noexcept;         // muted: contributes nothing, routes kept
+    std::array<std::atomic<float>, numModulators> modOutputs {};    // each modulator's latest value (0 if muted)
     std::atomic<int> modShown { 0 };                                // the modulator the MOD page shows
-    std::atomic<int> assigning { -1 };                              // ≥ 0: knobs set this modulator's amounts
+    std::atomic<int> armedMod { -1 };                               // ≥ 0: controller knobs set this modulator's depth
+
+    // The editor's size, saved with the set.
+    std::atomic<int> editorWidth { 0 }, editorHeight { 0 };
 
     // Read by the editor on the message thread.
     silt::LevelMeter captureMeter;
@@ -177,8 +193,9 @@ private:
     struct ModulatorRaw
     {
         std::atomic<float>* type, *rate, *sync, *div, *shape, *phase, *retrig, *smooth, *jitter;
-        std::atomic<float>* attack, *decay, *sustain, *release, *repeat, *followAttack, *followRelease, *gain, *source;
+        std::atomic<float>* attack, *decay, *sustain, *release, *repeat, *followAttack, *followRelease, *gain, *source, *enable;
     };
+    std::array<bool, 128> heldKeys {};   // audio thread: which notes are down, so repeats don't miscount
     std::array<ModulatorRaw, numModulators> modulatorRaw {};
     double currentSampleRate = 48000.0;
 

@@ -281,7 +281,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                     withUnit (id ("FRelease"), name ("follow release"), skewed (1.0f, 3000.0f, 200.0f), 200.0f, formatMs),
                     withUnit (id ("Gain"), name ("follow gain"), Range (-24.0f, 24.0f, 0.1f), 0.0f, formatDb),
                     std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("Source"), 1 }, name ("MIDI source"),
-                                                                  juce::StringArray { "Velocity", "Note", "Mod wheel", "Aftertouch", "Pitch bend" }, 0));
+                                                                  juce::StringArray { "Velocity", "Note", "Mod wheel", "Aftertouch", "Pitch bend" }, 0),
+                    // Muted: contributes nothing; its routes are kept.
+                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Enable"), 1 }, name ("on"), true));
     }
 
     // Capture and output
@@ -381,19 +383,22 @@ SiltProcessor::SiltProcessor()
     : AudioProcessor (makeBuses()),
       params (*this, nullptr, "SILT", makeParameters())
 {
-    // Modulation targets: every parameter but mode switches, seeds and the
-    // modulators' own settings. Each gets a modulated copy, which is what the
-    // audio code reads.
-    const juce::StringArray fixed { "keyMode", "captureBars", "monitor", "sizeSync", "delaySync", "spaceSync",
-                                    "rateMode", "filterMode", "patternSeed" };
+    // Modulation targets: continuous and stepped parameters (see the header).
+    // Each gets a modulated copy, which is what the audio code reads.
     for (auto* parameter : getParameters())
         if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter))
         {
             const auto id = ranged->getParameterID();
             const bool modulator = id.length() > 1 && id[0] == 'm' && juce::CharacterFunctions::isDigit (id[1]);
-            if (fixed.contains (id) || modulator)
+            const bool switchLike = dynamic_cast<juce::AudioParameterChoice*> (ranged) != nullptr
+                                 || dynamic_cast<juce::AudioParameterBool*> (ranged) != nullptr;
+            if (switchLike || modulator || id == "patternSeed")
                 continue;
-            jassert (targets.size() < (size_t) maxTargets);
+            if (targets.size() >= (size_t) maxTargets)
+            {
+                jassertfalse;   // raise maxTargets; past it, parameters simply aren't targets
+                break;
+            }
             targetIndex[id] = (int) targets.size();
             targets.push_back ({ ranged, params.getRawParameterValue (id) });
         }
@@ -404,7 +409,8 @@ SiltProcessor::SiltProcessor()
     {
         const auto p = [this, m] (const char* suffix) { return params.getRawParameterValue ("m" + juce::String (m + 1) + suffix); };
         modulatorRaw[(size_t) m] = { p ("Type"), p ("Rate"), p ("Sync"), p ("Div"), p ("Shape"), p ("Phase"), p ("Retrig"), p ("Smooth"), p ("Jitter"),
-                                     p ("Attack"), p ("Decay"), p ("Sustain"), p ("Release"), p ("Repeat"), p ("FAttack"), p ("FRelease"), p ("Gain"), p ("Source") };
+                                     p ("Attack"), p ("Decay"), p ("Sustain"), p ("Release"), p ("Repeat"), p ("FAttack"), p ("FRelease"), p ("Gain"), p ("Source"),
+                                     p ("Enable") };
     }
 
     raw = std::make_unique<RawParams> ([this] (const char* id) -> std::atomic<float>*
@@ -728,6 +734,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     if (allOff)
     {
         engine.allNotesOff();
+        heldKeys.fill (false);
         modContext.heldNotes = 0;
     }
 
@@ -758,16 +765,24 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         for (auto it = first; it != last; ++it)
         {
             it->sampleOffset -= start;
+            // Held keys as a set, so a repeated note-on for a key already down
+            // (arps, clip retriggers) can't leave the count stuck above zero.
+            auto& held = heldKeys[(size_t) juce::jlimit (0, 127, it->note)];
             if (it->isNoteOn)
             {
                 lastNote = it->note;
                 modContext.noteStarted = true;
                 modContext.note = it->note;
                 modContext.velocity = it->velocity;
-                ++modContext.heldNotes;
+                if (! held)
+                    ++modContext.heldNotes;
+                held = true;
             }
-            else
+            else if (held)
+            {
+                held = false;
                 modContext.heldNotes = juce::jmax (0, modContext.heldNotes - 1);
+            }
         }
         float peak = 0.0f;
         for (int ch = 0; ch < capture.getNumChannels(); ++ch)
@@ -858,7 +873,9 @@ void SiltProcessor::applyModulation() noexcept
     for (int m = 0; m < numModulators; ++m)
     {
         const auto mp = readModulatorParams (m);
-        value[(size_t) m] = modulators[(size_t) m].advance (mp, modContext);
+        value[(size_t) m] = modulators[(size_t) m].advance (mp, modContext);   // runs muted too, so unmuting picks up in step
+        if (! isModulatorEnabled (m))
+            value[(size_t) m] = 0.0f;
         modOutputs[(size_t) m].store (value[(size_t) m], std::memory_order_relaxed);
     }
 
@@ -922,10 +939,59 @@ void SiltProcessor::setRouteAmount (int modulator, int target, float amount) noe
         routeAmounts[(size_t) modulator * maxTargets + (size_t) target].store (juce::jlimit (-1.0f, 1.0f, amount), std::memory_order_relaxed);
 }
 
-void SiltProcessor::clearRoutes (int target) noexcept
+void SiltProcessor::clearRoutesOnTarget (int target) noexcept
 {
     for (int m = 0; m < numModulators; ++m)
         setRouteAmount (m, target, 0.0f);
+}
+
+void SiltProcessor::clearRoutesForModulator (int modulator) noexcept
+{
+    for (int t = 0; t < numTargets(); ++t)
+        setRouteAmount (modulator, t, 0.0f);
+}
+
+int SiltProcessor::routeCount (int modulator) const noexcept
+{
+    int n = 0;
+    for (int t = 0; t < numTargets(); ++t)
+        n += routeAmount (modulator, t) != 0.0f ? 1 : 0;
+    return n;
+}
+
+std::vector<SiltProcessor::Route> SiltProcessor::allRoutes() const
+{
+    std::vector<Route> routes;
+    for (int t = 0; t < numTargets(); ++t)
+        for (int m = 0; m < numModulators; ++m)
+            if (const float amount = routeAmount (m, t); amount != 0.0f)
+                routes.push_back ({ m, t, amount });
+    return routes;
+}
+
+bool SiltProcessor::isSteppedTarget (int target) const
+{
+    return dynamic_cast<juce::AudioParameterInt*> (targets[(size_t) target].parameter) != nullptr;
+}
+
+bool SiltProcessor::isModulatorEnabled (int modulator) const noexcept
+{
+    return modulatorRaw[(size_t) modulator].enable->load (std::memory_order_relaxed) > 0.5f;
+}
+
+// The depth as a percentage of the range, then the span it moves the value
+// over in the parameter's own units (both ways for bipolar sources).
+juce::String SiltProcessor::depthText (int modulator, int target) const
+{
+    const float amount = routeAmount (modulator, target);
+    auto& p = *targets[(size_t) target].parameter;
+    const float base = p.getValue();
+    const bool bipolar = silt::Modulator::isBipolar (readModulatorParams (modulator));
+    const float lo = juce::jlimit (0.0f, 1.0f, base + (bipolar ? -std::abs (amount) : juce::jmin (0.0f, amount)));
+    const float hi = juce::jlimit (0.0f, 1.0f, base + (bipolar ? std::abs (amount) : juce::jmax (0.0f, amount)));
+    const int percent = juce::roundToInt (amount * 100.0f);
+    const auto sign = bipolar ? juce::String::charToString ((juce::juce_wchar) 0x00b1) : (percent > 0 ? juce::String ("+") : juce::String());
+    return sign + juce::String (bipolar ? std::abs (percent) : percent) + "%  (" + p.getText (lo, 0) + " to " + p.getText (hi, 0) + ")";
 }
 
 float SiltProcessor::modulatedValue01 (int target) const noexcept
@@ -990,7 +1056,12 @@ void SiltProcessor::handleController (int number, int value) noexcept
 // Which parameter a page slot moves right now, matching the editor's layout.
 juce::String SiltProcessor::slotParameter (int page, int slot) const
 {
-    const auto v = [this] (const char* id) { return params.getRawParameterValue (id)->load(); };
+    const auto v = [this] (const char* id)
+    {
+        const auto* value = params.getRawParameterValue (id);
+        jassert (value != nullptr);   // a typo in an id
+        return value != nullptr ? value->load() : 0.0f;
+    };
 
     switch (page)
     {
@@ -1108,7 +1179,7 @@ void SiltProcessor::applyControllerMoves()
 
         // ASSIGN on and on another page: a knob sets this modulator's amount on
         // its slot's parameter, centre = none (no pickup needed: it's relative to nothing).
-        if (const int m = assigning.load(); m >= 0 && page != modPage && ! id.startsWith ("!"))
+        if (const int m = armedMod.load(); m >= 0 && page != modPage && ! id.startsWith ("!"))
         {
             if (const int t = modulationTarget (id); t >= 0)
                 setRouteAmount (m, t, juce::jlimit (-1.0f, 1.0f, (float) (value - 64) / 63.0f));
@@ -1126,7 +1197,7 @@ void SiltProcessor::applyControllerMoves()
         if (id == "!assign")   // a button: ASSIGN on or off for the shown modulator
         {
             if (value > 63 && last <= 63)
-                assigning.store (assigning.load() >= 0 ? -1 : modShown.load());
+                armedMod.store (armedMod.load() >= 0 ? -1 : modShown.load());
             last = value;
             return;
         }
@@ -1422,6 +1493,11 @@ void SiltProcessor::getStateInformation (juce::MemoryBlock& destData)
                 routes.add (juce::String (m) + ":" + targets[t].parameter->getParameterID() + ":" + juce::String (amount, 4));
     state.setProperty ("modRoutes", routes.joinIntoString (";"), nullptr);
     state.setProperty ("modShown", modShown.load(), nullptr);
+    if (editorWidth.load() > 0)
+    {
+        state.setProperty ("editorWidth", editorWidth.load(), nullptr);
+        state.setProperty ("editorHeight", editorHeight.load(), nullptr);
+    }
 
     juce::MemoryBlock flac;
     {
@@ -1499,6 +1575,8 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
             setRouteAmount (parts[0].getIntValue(), modulationTarget (parts[1]), parts[2].getFloatValue());
     }
     modShown.store (juce::jlimit (0, numModulators - 1, (int) tree.getProperty ("modShown", 0)));
+    editorWidth.store ((int) tree.getProperty ("editorWidth", 0));
+    editorHeight.store ((int) tree.getProperty ("editorHeight", 0));
 
     if (flac.isEmpty())
         return;

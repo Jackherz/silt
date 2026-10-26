@@ -160,8 +160,10 @@ auval -v aumu Slti SltA
 auval -v aumf Sltf SltA
 ```
 
-CI (`.github/workflows/build.yml`) builds on macOS and Windows and runs pluginval on
-both VST3 builds.
+CI (`.github/workflows/build.yml`) builds on macOS: unit tests, pluginval on both VST3
+builds and the state round trip. A Linux job builds just the JUCE-free core and its
+tests (`-DSILT_CORE_ONLY=ON`) as a portability check. Windows rejoins the matrix once
+its branch lands.
 
 ## Spike A: does Ableton feed the instrument a sidechain?
 

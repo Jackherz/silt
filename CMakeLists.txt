@@ -18,15 +18,10 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET 12.0 CACHE STRING "")
 option(SILT_COPY_AFTER_BUILD "Install plug-ins into the user plug-in folders after building" ON)
 
 include(FetchContent)
-FetchContent_Declare(juce
-    GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-    GIT_TAG 8.0.14
-    GIT_SHALLOW TRUE)
-# Pinned past the 0.26.0 tag: that release doesn't build against JUCE 8.0.11+.
-FetchContent_Declare(clap_juce_extensions
-    GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git
-    GIT_TAG 7adee3a1bd4684d4caa5601100e364abccff4b4d)
-FetchContent_MakeAvailable(juce clap_juce_extensions)
+
+# The engine and its tests alone, without JUCE: a quick portability check
+# (CI runs it on Linux).
+option(SILT_CORE_ONLY "Build only the JUCE-free core and its tests" OFF)
 
 # Identity. PROVISIONAL until the first public build (plan D2/D3). After that
 # these never change: hosts store them in every saved project.
@@ -68,6 +63,20 @@ if(SILT_BUILD_TESTS)
     include(Catch)
     catch_discover_tests(silt_tests)
 endif()
+
+if(SILT_CORE_ONLY)
+    return()
+endif()
+
+FetchContent_Declare(juce
+    GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+    GIT_TAG 8.0.14
+    GIT_SHALLOW TRUE)
+# Pinned past the 0.26.0 tag: that release doesn't build against JUCE 8.0.11+.
+FetchContent_Declare(clap_juce_extensions
+    GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git
+    GIT_TAG 7adee3a1bd4684d4caa5601100e364abccff4b4d)
+FetchContent_MakeAvailable(juce clap_juce_extensions)
 
 # Host check: loads a built VST3 and round-trips a sample through its state.
 juce_add_console_app(silt_hostcheck PRODUCT_NAME "silt-hostcheck")
