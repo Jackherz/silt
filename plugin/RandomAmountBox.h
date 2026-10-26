@@ -18,11 +18,15 @@ public:
 
     void paint (juce::Graphics& g) override
     {
+        // A sunk window, like the knobs' value boxes.
         const auto r = getLocalBounds().toFloat().reduced (0.5f, 4.5f);
-        g.setColour (lcdGreen);
+        g.setColour (lcdGreen.darker (0.8f));
         g.fillRect (r);
-        g.setColour (ink);
-        g.drawRect (r, 1.0f);
+        const auto face = r.reduced (1.0f);
+        g.setGradientFill (juce::ColourGradient (lcdGreen.darker (0.12f), 0.0f, face.getY(), lcdGreen.brighter (0.04f), 0.0f, face.getBottom(), false));
+        g.fillRect (face);
+        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.3f), 0.0f, face.getY(), juce::Colours::transparentBlack, 0.0f, face.getY() + 4.0f, false));
+        g.fillRect (face.withHeight (4.0f));
         g.setColour (lcdText);
         g.setFont (monoFont (13.0f));
         g.drawText (juce::String (juce::roundToInt (silt.randomAmount.load() * 100.0f)) + "%", r, juce::Justification::centred);

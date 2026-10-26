@@ -16,7 +16,7 @@ namespace
 {
 constexpr int defaultWidth = 1040, defaultHeight = 600;
 constexpr int slotsPerRow = 8;
-constexpr float degreesPerUnit = 300.0f;   // a knob's travel
+constexpr float degreesPerUnit = 270.0f;   // a knob's travel, from about 7 o'clock to 5
 } // namespace
 
 // --- FineSlider ------------------------------------------------------------------------
@@ -208,7 +208,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     : AudioProcessorEditor (p), silt (p),
       look (std::make_unique<PanelLook>()), screen (std::make_unique<GrainScreen>())
 {
-    applyTheme (startTheme >= 0 ? startTheme : settingsFile()->getIntValue ("theme", 0));
+    applyTheme (startTheme >= 0 ? startTheme : settingsFile()->getIntValue ("theme", defaultTheme));
     look->applyColours();
     setLookAndFeel (look.get());
     look->drawModulation = [this] (juce::Graphics& g, juce::Slider& s, juce::Point<float> c, float r, float pos) { drawModulation (g, s, c, r, pos); };
@@ -691,6 +691,7 @@ void SiltEditor::setTheme (int index)
 void SiltEditor::restyle()
 {
     look->applyColours();
+    look->clearKnobCache();
     armButton.setColour (juce::TextButton::textColourOffId, onFrame);
     for (auto* key : { &resampleButton, &learnButton })
         key->setColour (juce::TextButton::textColourOnId, ink);
@@ -958,15 +959,16 @@ void SiltEditor::showRoutes (int modulatorFilter)
 // Each route is an arc round the knob from its value to how far the modulator
 // can take it (both ways for bipolar sources), in the modulator's colour and
 // texture, numbered at its far end; a stop at the end shows where the range
-// clamps it. A dot shows where modulation has the value now. Higher values are
-// anticlockwise: the skirt turns so the value sits under the marker.
+// clamps it. A dot shows where modulation has the value now. The scale is
+// fixed, as the knob's ticks are: higher values clockwise.
 void SiltEditor::drawModulation (juce::Graphics& g, juce::Slider& slider, juce::Point<float> centre, float radius, float position)
 {
     auto* fine = dynamic_cast<FineSlider*> (&slider);
     if (fine == nullptr || fine->target < 0)
         return;
     const int target = fine->target;
-    const auto angleFor = [position] (float value) { return juce::degreesToRadians ((position - value) * degreesPerUnit); };
+    juce::ignoreUnused (position);
+    const auto angleFor = [] (float value) { return juce::degreesToRadians (-0.5f * degreesPerUnit + value * degreesPerUnit); };
     const auto ringRadius = [radius] (int ring) { return radius + 3.0f * (float) ring; };
     auto& parameter = silt.targetParameter (target);
     const bool stepped = silt.isSteppedTarget (target);
@@ -1572,9 +1574,10 @@ void SiltEditor::paintPreview (juce::Graphics& g)
     auto cell = slotBounds (slotsPerRow - 1).reduced (10, 8).toFloat();
     const auto drawCurve = [&g] (juce::Rectangle<float> box, const juce::Path& curve, const char* caption)
     {
-        g.setColour (ink);
+        g.setColour (lcdGreen.darker (0.8f));
         g.fillRect (box);
-        g.setColour (lcdGreen);
+        drawSunk (g, box.reduced (1.0f), lcdGreen);
+        g.setColour (lcdText);
         g.strokePath (curve, juce::PathStrokeType (1.5f));
         g.setFont (monoFont (9.0f));
         g.drawText (caption, box.reduced (4, 2), juce::Justification::topLeft);

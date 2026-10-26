@@ -168,7 +168,7 @@ void Tour::paint (juce::Graphics& g)
     shade.setUsingNonZeroWinding (false);
     g.setColour (frame.withAlpha (0.72f));
     g.fillPath (shade);
-    g.setColour (lcdGreen);
+    g.setColour (screenLime);
     for (const auto& r : spots)
         g.drawRoundedRectangle (r.toFloat(), 8.0f, 2.5f);
 

@@ -364,7 +364,7 @@ TEST_CASE ("The tour lets clicks through to the parts it lights, and nowhere els
 
 TEST_CASE ("A theme changes the palette, and Cream puts it back")
 {
-    const auto cream = silt::ui::chassis;
+    const auto cream = juce::Colour (silt::ui::themes()[0].chassis);
     silt::ui::applyTheme (1);
     CHECK (silt::ui::currentThemeIndex() == 1);
     CHECK (silt::ui::chassis != cream);

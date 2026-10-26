@@ -32,191 +32,100 @@ public:
         setColour (juce::TextButton::textColourOnId, bone);
     }
 
-    // A guitar control knob, seen from above: a black skirt printed 0–10 that
-    // turns with the value, a gold metal cap, and a fixed marker at the top.
-    // The number under the marker is the value, as on a guitar.
-    //
-    // Each knob is worn in its own way, like well-used, badly kept gear: dust
-    // settled round its base (more below), a tarnished cap with scratches and a
-    // fingertip-polished edge, faded numbers and nicks in the skirt. The wear
-    // comes from a seed per parameter, so it's the same every time.
-    //
-    // Drawing all that wear is costly, so it's drawn once per knob into two
-    // images: a fixed one (shadow, dust, skirt, the cap's shading) and a turning
-    // one (rim nicks and the marks on the cap), which is pasted rotated to the
-    // knob's angle. Only the numbers (kept upright) and the marker are drawn live.
+    // A flat cream knob with depth: a recessed collar with ticks cut round
+    // it, a domed cap lit from above-left that casts a shadow on the panel,
+    // and a dot pressed into the cap at the value. The scale is fixed and the
+    // cap turns: 0 at about 7 o'clock, full at 5 (270°). All but the dot is
+    // drawn once per size and theme.
     void drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos,
                            float, float, juce::Slider& slider) override
     {
         const auto bounds = juce::Rectangle<int> (x, y, w, h).toFloat();
         const float scale = juce::jmax (1.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
-        const auto& cache = cacheFor (slider, w, h, scale);
+        g.drawImage (faceFor (w, h, scale), bounds);
 
         const auto centre = bounds.getCentre().translated (0.0f, 3.0f);
-        const float skirt = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f - 8.0f;
-        const float cap = skirt * 0.6f;
-        const float turn = juce::degreesToRadians (pos * 10.0f * degreesPerNumber);
-
-        g.drawImage (cache.fixed, bounds);
-        g.drawImageTransformed (cache.turning, juce::AffineTransform::scale (1.0f / scale)
-                                                   .translated (bounds.getX(), bounds.getY())
-                                                   .rotated (turn, centre.x, centre.y));
-
-        // Numbers 0–10 round the skirt, turning with the value: the current
-        // value's number sits at 12 o'clock, under the marker.
-        g.setFont (juce::Font (juce::FontOptions (juce::jlimit (7.0f, 10.0f, skirt * 0.24f), juce::Font::bold)));
-        const float numberRadius = (skirt + cap) * 0.5f + 1.0f;
-        for (int n = 0; n <= 10; ++n)
-        {
-            const float angle = juce::degreesToRadians (((float) n - 10.0f * pos) * -degreesPerNumber);
-            g.setColour (juce::Colour (0xffe4d9bd).withAlpha (cache.numberAlpha[(size_t) n]));
-            g.drawText (juce::String (n), juce::Rectangle<float> (16.0f, 10.0f).withCentre (centre.getPointOnCircumference (numberRadius, angle)),
-                        juce::Justification::centred);
-        }
-
-        // The fixed marker above the knob.
-        juce::Path marker;
-        const float top = centre.y - skirt - 2.0f;
-        marker.addTriangle (centre.x - 4.0f, top - 5.0f, centre.x + 4.0f, top - 5.0f, centre.x, top);
-        g.setColour (rust);
-        g.fillPath (marker);
+        const float collar = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f - 8.0f;
+        const float cap = collar * capShare;
+        const float size = juce::jmax (4.0f, cap * 0.24f);
+        const auto dot = juce::Rectangle<float> (size, size).withCentre (centre.translated (0.0f, -1.0f)
+                             .getPointOnCircumference (cap * 0.62f, juce::degreesToRadians (-135.0f + 270.0f * pos)));
+        g.setColour (juce::Colours::white.withAlpha (0.6f));
+        g.fillEllipse (dot.translated (0.0f, 0.8f));   // its lower lip catches the light: it's pressed in
+        g.setColour (knobDot);
+        g.fillEllipse (dot);
 
         if (drawModulation != nullptr)
-            drawModulation (g, slider, centre, skirt + 4.0f, pos);
+            drawModulation (g, slider, centre, collar + 4.0f, pos);
     }
 
     // Draws a knob's modulation over it (the editor knows the routes).
     std::function<void (juce::Graphics&, juce::Slider&, juce::Point<float>, float, float)> drawModulation;
 
+    void clearKnobCache() { faces.clear(); }   // after a theme change
+
 private:
-    static constexpr float degreesPerNumber = 30.0f;   // 0–10 over 300°, like a guitar knob
+    static constexpr float capShare = 0.68f;   // the cap's radius against the collar's
+    std::map<juce::String, juce::Image> faces;
 
-    struct KnobCache
+    const juce::Image& faceFor (int w, int h, float scale)
     {
-        juce::Image fixed, turning;
-        std::array<float, 11> numberAlpha {};
-        int width = 0, height = 0;
-        float scale = 0.0f;
-    };
-    std::map<juce::String, KnobCache> knobCaches;
+        const auto key = juce::String (w) + "x" + juce::String (h) + "@" + juce::String (scale, 2);
+        if (const auto it = faces.find (key); it != faces.end())
+            return it->second;
 
-    const KnobCache& cacheFor (juce::Slider& slider, int w, int h, float scale)
-    {
-        auto& cache = knobCaches[slider.getComponentID()];
-        if (cache.width == w && cache.height == h && juce::approximatelyEqual (cache.scale, scale))
-            return cache;
+        auto& image = faces[key];
+        image = juce::Image (juce::Image::ARGB, juce::roundToInt ((float) w * scale), juce::roundToInt ((float) h * scale), true);
+        juce::Graphics g (image);
+        g.addTransform (juce::AffineTransform::scale (scale));
 
-        cache.width = w;
-        cache.height = h;
-        cache.scale = scale;
-        const int pw = juce::roundToInt ((float) w * scale), ph = juce::roundToInt ((float) h * scale);
-        cache.fixed = juce::Image (juce::Image::ARGB, pw, ph, true);
-        cache.turning = juce::Image (juce::Image::ARGB, pw, ph, true);
-
-        juce::Random wear (slider.getComponentID().hashCode64());
-        const auto spot = [&wear] (float lo, float hi) { return lo + wear.nextFloat() * (hi - lo); };
         const auto centre = juce::Point<float> ((float) w * 0.5f, (float) h * 0.5f + 3.0f);
-        const float skirt = (float) juce::jmin (w, h) * 0.5f - 8.0f;
-        const float cap = skirt * 0.6f;
-        constexpr float twoPi = juce::MathConstants<float>::twoPi;
+        const float collar = (float) juce::jmin (w, h) * 0.5f - 8.0f;
+        const float cap = collar * capShare;
+        const auto collarBox = juce::Rectangle<float> (collar * 2.0f, collar * 2.0f).withCentre (centre);
 
+        // The collar: a recess, shaded where its rim hides the light, with a
+        // faint light lip along the bottom.
+        g.setGradientFill (juce::ColourGradient (knobCollar.darker (0.4f), 0.0f, collarBox.getY(), knobCollar.brighter (0.12f), 0.0f, collarBox.getBottom(), false));
+        g.fillEllipse (collarBox);
+        g.setColour (juce::Colours::white.withAlpha (0.1f));
+        juce::Path lip;
+        lip.addCentredArc (centre.x, centre.y, collar - 0.5f, collar - 0.5f, 0.0f, juce::MathConstants<float>::pi * 0.6f, juce::MathConstants<float>::pi * 1.4f, true);
+        g.strokePath (lip, juce::PathStrokeType (1.0f));
+
+        // Ticks round the collar: 21, a long one every five.
+        for (int n = 0; n <= 20; ++n)
         {
-            juce::Graphics g (cache.fixed);
-            g.addTransform (juce::AffineTransform::scale (scale));
-
-            // Dust on the panel round the base: specks and a few fibres, heavier below.
-            for (int i = 0; i < 80; ++i)
-            {
-                const float angle = spot (0.0f, twoPi);
-                const float below = 0.5f + 0.5f * std::cos (angle);   // 1 at 6 o'clock
-                if (wear.nextFloat() > 0.35f + 0.65f * below)
-                    continue;
-                const auto at = centre.getPointOnCircumference (skirt + spot (-0.5f, 9.0f), angle);
-                const float size = spot (0.7f, 2.2f);
-                g.setColour (juce::Colour (0xff7d7061).withAlpha (spot (0.25f, 0.6f)));
-                g.fillEllipse (juce::Rectangle<float> (size, size).withCentre (at));
-            }
-            for (int i = 0; i < 3; ++i)
-            {
-                const float angle = spot (2.0f, 4.3f);   // lower half
-                const auto from = centre.getPointOnCircumference (skirt + spot (1.0f, 5.0f), angle);
-                g.setColour (juce::Colour (0xff8a7d6c).withAlpha (0.35f));
-                g.drawLine (juce::Line<float> (from, from.translated (spot (-5.0f, 5.0f), spot (-2.0f, 2.0f))), 0.6f);
-            }
-
-            // Shadow, skirt and its rim.
-            g.setColour (juce::Colours::black.withAlpha (0.22f));
-            g.fillEllipse (juce::Rectangle<float> (skirt * 2.0f, skirt * 2.0f).withCentre (centre.translated (1.5f, 2.5f)));
-            g.setColour (knobCap);
-            g.fillEllipse (juce::Rectangle<float> (skirt * 2.0f, skirt * 2.0f).withCentre (centre));
-            g.setColour (knobSkirt);
-            g.drawEllipse (juce::Rectangle<float> (skirt * 2.0f - 1.0f, skirt * 2.0f - 1.0f).withCentre (centre), 1.0f);
-
-            // The gold cap: old brass, darker toward the rim, no shine. Its shading
-            // is here, not in the turning layer, so the light doesn't turn with it.
-            const auto capBounds = juce::Rectangle<float> (cap * 2.0f, cap * 2.0f).withCentre (centre);
-            g.setGradientFill (juce::ColourGradient (juce::Colour (0xffc9b178), centre.x - cap * 0.3f, centre.y - cap * 0.4f,
-                                                     juce::Colour (0xff7a6236), capBounds.getRight(), capBounds.getBottom(), true));
-            g.fillEllipse (capBounds);
-            g.setColour (juce::Colour (0xff4f3f22));
-            g.drawEllipse (capBounds, 1.2f);
+            const bool major = n % 5 == 0;
+            const float angle = juce::degreesToRadians (-135.0f + 13.5f * (float) n);
+            const float outer = collar - 3.0f, inner = outer - (major ? collar * 0.17f : collar * 0.09f);
+            g.setColour (knobTick.withAlpha (major ? 0.9f : 0.45f));
+            g.drawLine (juce::Line<float> (centre.getPointOnCircumference (inner, angle), centre.getPointOnCircumference (outer, angle)), major ? 1.6f : 1.1f);
         }
 
-        // Some numbers are rubbed thin.
-        for (auto& alpha : cache.numberAlpha)
-            alpha = wear.nextFloat() < 0.3f ? spot (0.35f, 0.6f) : spot (0.75f, 0.95f);
-
+        // The cap's shadow, soft and cast down.
+        const auto capCentre = centre.translated (0.0f, -1.0f);
+        for (int i = 0; i < 4; ++i)
         {
-            juce::Graphics g (cache.turning);
-            g.addTransform (juce::AffineTransform::scale (scale));
-
-            // Nicks in the skirt's rim.
-            for (int i = 0; i < 3; ++i)
-            {
-                const float angle = spot (0.0f, twoPi);
-                juce::Path chip;
-                chip.addCentredArc (centre.x, centre.y, skirt - 1.0f, skirt - 1.0f, 0.0f, angle, angle + spot (0.08f, 0.22f), true);
-                g.setColour (juce::Colour (0xff6b6157).withAlpha (0.7f));
-                g.strokePath (chip, juce::PathStrokeType (1.4f));
-            }
-
-            // The marks on the cap, which turn with it.
-            const auto capBounds = juce::Rectangle<float> (cap * 2.0f, cap * 2.0f).withCentre (centre);
-
-            // Tarnish: a few broad, faint patches that dull the brass unevenly.
-            for (int i = 0; i < 3; ++i)
-            {
-                const auto at = centre.getPointOnCircumference (cap * spot (0.2f, 0.7f), spot (0.0f, twoPi));
-                const float size = cap * spot (0.8f, 1.3f);
-                for (float layer : { 1.0f, 0.65f })   // two layers soften the edge
-                {
-                    g.setColour (juce::Colour (0xff4a3a1e).withAlpha (spot (0.03f, 0.06f)));
-                    g.fillEllipse (juce::Rectangle<float> (size * layer, size * layer * 0.8f).withCentre (at));
-                }
-            }
-
-            // Scratches across the cap, and an edge fingertips have polished.
-            {
-                juce::Graphics::ScopedSaveState clip (g);
-                juce::Path capShape;
-                capShape.addEllipse (capBounds);
-                g.reduceClipRegion (capShape);
-                for (int i = 0; i < 6; ++i)
-                {
-                    const float angle = spot (0.0f, twoPi);
-                    const auto from = centre.getPointOnCircumference (cap * spot (0.0f, 0.9f), angle);
-                    const auto to = from.getPointOnCircumference (cap * spot (0.3f, 1.1f), angle + spot (1.0f, 2.2f));
-                    g.setColour ((i % 2 == 0 ? juce::Colour (0xfff0e2b4) : juce::Colour (0xff3e3018)).withAlpha (spot (0.12f, 0.3f)));
-                    g.drawLine (juce::Line<float> (from, to), spot (0.4f, 0.8f));
-                }
-                juce::Path rub;
-                const float rubAt = spot (-0.8f, 0.8f);
-                rub.addCentredArc (centre.x, centre.y, cap - 1.5f, cap - 1.5f, 0.0f, rubAt, rubAt + spot (0.6f, 1.2f), true);
-                g.setColour (juce::Colour (0xffe6d39a).withAlpha (0.35f));
-                g.strokePath (rub, juce::PathStrokeType (1.5f));
-            }
+            const float r = cap + 3.0f - (float) i;
+            g.setColour (juce::Colours::black.withAlpha (0.13f));
+            g.fillEllipse (juce::Rectangle<float> (r * 2.0f, r * 2.0f).withCentre (capCentre.translated (0.0f, 3.5f)));
         }
-        return cache;
+
+        // The cap: domed, lit from above-left, darker toward its edge.
+        const auto capBox = juce::Rectangle<float> (cap * 2.0f, cap * 2.0f).withCentre (capCentre);
+        juce::ColourGradient dome (knobFace.brighter (0.35f), capCentre.x - cap * 0.3f, capCentre.y - cap * 0.4f,
+                                   knobFace.darker (0.28f), capCentre.x + cap * 0.75f, capCentre.y + cap * 0.95f, true);
+        dome.addColour (0.35, knobFace);
+        g.setGradientFill (dome);
+        g.fillEllipse (capBox);
+        g.setColour (juce::Colours::white.withAlpha (0.7f));
+        juce::Path shine;
+        shine.addCentredArc (capCentre.x, capCentre.y, cap - 1.2f, cap - 1.2f, 0.0f, -juce::MathConstants<float>::pi * 0.45f, juce::MathConstants<float>::pi * 0.2f, true);
+        g.strokePath (shine, juce::PathStrokeType (1.0f));
+        g.setColour (juce::Colours::black.withAlpha (0.35f));
+        g.drawEllipse (capBox, 1.0f);
+        return image;
     }
 
 public:
@@ -275,9 +184,9 @@ public:
     }
 
     // Value boxes and menus: sunk displays, shaded along the top edge.
-    void drawSunkBox (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour face, juce::Colour edge)
+    void drawSunkBox (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour face, juce::Colour)
     {
-        g.setColour (edge);
+        g.setColour (face.darker (0.8f));   // its own edge, a shade of the window: no bright outline on a dark theme
         g.fillRect (r);
         const auto inner = r.reduced (1.0f);
         g.setGradientFill (juce::ColourGradient (face.darker (0.12f), 0.0f, inner.getY(), face.brighter (0.04f), 0.0f, inner.getBottom(), false));
