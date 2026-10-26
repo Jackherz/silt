@@ -92,9 +92,10 @@ int main (int argc, char* argv[])
     }
 
     silt.loadFile (sample);
-    for (int i = 0; i < 50 && silt.getSampleGeneration() == 0; ++i)
+    const auto loaded = [&] { return silt.getOverview().name == sample.getFileNameWithoutExtension(); };
+    for (int i = 0; i < 50 && ! loaded(); ++i)
         runMessageLoop (20);
-    if (silt.getSampleGeneration() == 0)
+    if (! loaded())
     {
         std::cerr << "couldn't load " << sample.getFullPathName() << "\n";
         return 1;

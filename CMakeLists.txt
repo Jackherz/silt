@@ -88,6 +88,17 @@ set(SILT_PLUGIN_SOURCES
     plugin/Presets.cpp
     plugin/ScreenInsets.cpp)
 
+# The factory samples (the one Silt opens with, and the rest of LOAD's list):
+# FLAC, peaks at -1 dBFS.
+juce_add_binary_data(silt_samples
+    HEADER_NAME SiltSamples.h
+    NAMESPACE SiltSamples
+    SOURCES
+        resources/samples/ahhh-progression.flac
+        resources/samples/keys-drone.flac
+        resources/samples/rain-bells.flac
+        resources/samples/guitar-harmonics.flac)
+
 # Host check: loads a built VST3 and round-trips a sample through its state.
 juce_add_console_app(silt_hostcheck PRODUCT_NAME "silt-hostcheck")
 target_sources(silt_hostcheck PRIVATE tools/hostcheck/Main.cpp)
@@ -104,7 +115,7 @@ target_compile_definitions(silt_snapshot PRIVATE
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1
     JucePlugin_Name="Silt" JucePlugin_IsSynth=1 JucePlugin_VersionString="${PROJECT_VERSION}")
 target_link_libraries(silt_snapshot
-    PRIVATE silt_core juce::juce_audio_utils
+    PRIVATE silt_core silt_samples juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
 # Plug-in level tests: the instrument's processor built into a Catch2 runner.
@@ -115,7 +126,7 @@ if(SILT_BUILD_TESTS)
         JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1
         JucePlugin_Name="Silt" JucePlugin_IsSynth=1 JucePlugin_VersionString="${PROJECT_VERSION}")
     target_link_libraries(silt_plugin_tests
-        PRIVATE silt_core juce::juce_audio_utils Catch2::Catch2WithMain
+        PRIVATE silt_core silt_samples juce::juce_audio_utils Catch2::Catch2WithMain
         PUBLIC juce::juce_recommended_config_flags)
     catch_discover_tests(silt_plugin_tests)
 endif()
@@ -160,6 +171,7 @@ function(silt_add_plugin target)
     target_link_libraries(${target}
         PRIVATE
             silt_core
+            silt_samples
             juce::juce_audio_utils
         PUBLIC
             juce::juce_recommended_config_flags

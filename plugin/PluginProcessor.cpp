@@ -1,5 +1,30 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "SiltSamples.h"
+
+namespace
+{
+// The factory samples (resources/samples), with the note each plays at as
+// recorded: ROOT is set to it when one loads.
+struct FactorySample
+{
+    const char* name;
+    const char* data;
+    int size;
+    int root;
+};
+
+const std::array<FactorySample, 4>& factorySamples()
+{
+    static const std::array<FactorySample, 4> list { {
+        { "Ahhh Progression", SiltSamples::ahhhprogression_flac, SiltSamples::ahhhprogression_flacSize, 64 },   // E minor
+        { "Keys Drone", SiltSamples::keysdrone_flac, SiltSamples::keysdrone_flacSize, 55 },                     // G
+        { "Rain Bells", SiltSamples::rainbells_flac, SiltSamples::rainbells_flacSize, 63 },                     // D sharp
+        { "Guitar Harmonics", SiltSamples::guitarharmonics_flac, SiltSamples::guitarharmonics_flacSize, 59 },   // B minor
+    } };
+    return list;
+}
+} // namespace
 
 namespace
 {
@@ -475,6 +500,10 @@ SiltProcessor::SiltProcessor()
         knobCCs[i].store (70 + (int) i);   // a common default for 8-knob controllers
     lastKnobValue.fill (-1);
     startTimerHz (30);
+
+    // A new instance opens with the first factory sample, unless the host
+    // restores a state (or a sample arrives) before it's ready.
+    loadInBackground ([] { return openFactorySample (0); }, factorySampleName (0), 0, factorySamples()[0].root, true);
 }
 
 SiltProcessor::~SiltProcessor()
@@ -1427,9 +1456,8 @@ bool SiltProcessor::isModulatorPerVoice (int m) const noexcept
 
 namespace
 {
-// Session settings, not part of a sound.
-// Session and sample settings, not part of a sound.
-bool inPresets (const juce::String& id) { return id != "monitor" && id != "captureBars" && id != "sampleGain"; }
+// Session and sample settings (ROOT is the sample's key), not part of a sound.
+bool inPresets (const juce::String& id) { return id != "monitor" && id != "captureBars" && id != "sampleGain" && id != "root"; }
 } // namespace
 
 std::unique_ptr<juce::XmlElement> SiltProcessor::capturePreset (const juce::String& name) const
@@ -1713,17 +1741,51 @@ std::unique_ptr<juce::AudioBuffer<float>> SiltProcessor::decode (juce::AudioForm
 
 void SiltProcessor::loadFile (const juce::File& file)
 {
-    juce::WeakReference<SiltProcessor> weak (this);
+    loadInBackground ([this, file] { return std::unique_ptr<juce::AudioFormatReader> (formats.createReaderFor (file)); },
+                      file.getFileNameWithoutExtension(), -1, 60, false);
+}
 
-    loader.addJob ([this, weak, file]
+int SiltProcessor::numFactorySamples() { return (int) factorySamples().size(); }
+
+juce::String SiltProcessor::factorySampleName (int index)
+{
+    return factorySamples()[(size_t) juce::jlimit (0, numFactorySamples() - 1, index)].name;
+}
+
+void SiltProcessor::loadFactorySample (int index)
+{
+    index = juce::jlimit (0, numFactorySamples() - 1, index);
+    loadInBackground ([index] { return openFactorySample (index); }, factorySampleName (index), index, factorySamples()[(size_t) index].root, false);
+}
+
+int SiltProcessor::getFactorySample() const
+{
+    const juce::ScopedLock sl (sampleLock);
+    return factorySample;
+}
+
+std::unique_ptr<juce::AudioFormatReader> SiltProcessor::openFactorySample (int index)
+{
+    const auto& f = factorySamples()[(size_t) index];
+    return std::unique_ptr<juce::AudioFormatReader> (
+        juce::FlacAudioFormat().createReaderFor (new juce::MemoryInputStream (f.data, (size_t) f.size, false), true));
+}
+
+void SiltProcessor::loadInBackground (std::function<std::unique_ptr<juce::AudioFormatReader>()> open, const juce::String& name,
+                                      int factory, int rootNote, bool onlyIfUnchanged)
+{
+    juce::WeakReference<SiltProcessor> weak (this);
+    const int generation = sampleGeneration.load();
+
+    loader.addJob ([this, weak, open, name, factory, rootNote, onlyIfUnchanged, generation]
     {
-        std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+        const auto reader = open();
         if (reader == nullptr)
         {
-            juce::MessageManager::callAsync ([weak, file]
+            juce::MessageManager::callAsync ([weak, name]
             {
                 if (weak != nullptr)
-                    weak->lastLoadError = "CAN'T READ " + file.getFileName().toUpperCase();
+                    weak->lastLoadError = "CAN'T READ " + name.toUpperCase();
             });
             return;
         }
@@ -1732,13 +1794,14 @@ void SiltProcessor::loadFile (const juce::File& file)
         auto buffer = std::make_shared<std::unique_ptr<silt::SampleBuffer>> (makeBuffer (*decode (*reader), reader->sampleRate));
         (*buffer)->analyse();
 
-        juce::MessageManager::callAsync ([weak, buffer, file]
+        juce::MessageManager::callAsync ([weak, buffer, name, factory, rootNote, onlyIfUnchanged, generation]
         {
-            if (weak != nullptr)
-            {
-                weak->lastLoadError.clear();
-                weak->installBuffer (std::move (*buffer), file.getFileNameWithoutExtension());
-            }
+            if (weak == nullptr || (onlyIfUnchanged && (weak->sampleGeneration.load() != generation || weak->stateRestored.load())))
+                return;
+            weak->lastLoadError.clear();
+            weak->installBuffer (std::move (*buffer), name, factory);
+            if (auto* root = weak->params.getParameter ("root"))
+                root->setValueNotifyingHost (root->convertTo0to1 ((float) rootNote));
         });
     });
 }
@@ -1771,7 +1834,7 @@ void SiltProcessor::analyseThenInstall (std::unique_ptr<silt::SampleBuffer> buff
 }
 
 // Message thread. The buffer is already analysed.
-void SiltProcessor::installBuffer (std::unique_ptr<silt::SampleBuffer> buffer, const juce::String& name)
+void SiltProcessor::installBuffer (std::unique_ptr<silt::SampleBuffer> buffer, const juce::String& name, int factory)
 {
     const int frames = buffer->getNumFrames();
     const double rate = buffer->getSampleRate();
@@ -1784,6 +1847,7 @@ void SiltProcessor::installBuffer (std::unique_ptr<silt::SampleBuffer> buffer, c
             sampleCopy.copyFrom (ch, 0, buffer->getReadPointer (ch), frames);
         sampleCopyRate = rate;
         sampleName = name;
+        factorySample = factory;
         encodedSample.reset();
     }
 
@@ -1919,9 +1983,15 @@ void SiltProcessor::getStateInformation (juce::MemoryBlock& destData)
     }
 
     juce::MemoryBlock flac;
+    state.removeProperty ("factorySample", nullptr);
     {
         const juce::ScopedLock sl (sampleLock);
-        if (sampleCopy.getNumSamples() > 0)
+        if (factorySample >= 0)
+        {
+            state.setProperty ("factorySample", factorySample, nullptr);   // built in: no need to carry the audio
+            state.setProperty ("sampleName", sampleName, nullptr);
+        }
+        else if (sampleCopy.getNumSamples() > 0)
         {
             if (encodedSample.isEmpty())
             {
@@ -1972,8 +2042,10 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
     if (xml == nullptr || ! xml->hasTagName (params.state.getType()))
         return;
 
+    stateRestored.store (true);
     auto tree = juce::ValueTree::fromXml (*xml);
     const auto name = tree.getProperty ("sampleName").toString();
+    const int factory = tree.getProperty ("factorySample", -1);
     params.replaceState (tree);
 
     if (const auto ccs = juce::StringArray::fromTokens (tree.getProperty ("knobCCs").toString(), ",", ""); ccs.size() == slotsPerPage)
@@ -1992,18 +2064,18 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
     editorWidth.store ((int) tree.getProperty ("editorWidth", 0));
     editorHeight.store ((int) tree.getProperty ("editorHeight", 0));
 
-    if (flac.isEmpty())
-        return;
-
-    std::unique_ptr<juce::AudioFormatReader> reader (
-        juce::FlacAudioFormat().createReaderFor (new juce::MemoryInputStream (flac, true), true));
+    std::unique_ptr<juce::AudioFormatReader> reader;
+    if (! flac.isEmpty())
+        reader.reset (juce::FlacAudioFormat().createReaderFor (new juce::MemoryInputStream (flac, true), true));
+    else if (factory >= 0 && factory < numFactorySamples())
+        reader = openFactorySample (factory);
     if (reader == nullptr)
         return;
 
     const auto audio = decode (*reader);
     auto buffer = makeBuffer (*audio, reader->sampleRate);
     buffer->analyse();   // on the host's thread: hosts restore state off the audio thread
-    installBuffer (std::move (buffer), name);
+    installBuffer (std::move (buffer), name, flac.isEmpty() ? factory : -1);
 
     const juce::ScopedLock sl (sampleLock);
     encodedSample = flac;

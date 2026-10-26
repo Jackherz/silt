@@ -156,6 +156,7 @@ private:
     juce::String flash;                                // a moment's message in the LCD
     juce::uint32 flashUntil = 0;
     void stepUndo (bool redo);
+    void chooseFile();   // LOAD's file chooser
     juce::ToggleButton monitorButton { "MONITOR" };
     juce::ComboBox captureBars;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> captureBarsAttachment;

@@ -79,7 +79,15 @@ public:
     void newPattern();
 
     // Message thread.
-    void loadFile (const juce::File&);
+    void loadFile (const juce::File&);   // ROOT goes back to C3
+
+    // Factory samples, built in: LOAD lists them, and a new instance opens
+    // with the first. Loading one sets ROOT to its key. A state saves one by
+    // its number rather than as audio.
+    static int numFactorySamples();
+    static juce::String factorySampleName (int index);
+    void loadFactorySample (int index);
+    int getFactorySample() const;   // the factory sample loaded, or −1
     void armCapture();
     void cancelCapture();
     bool isAudioFile (const juce::File&) const;
@@ -211,7 +219,12 @@ private:
     // Gives the engine a new sample and keeps a message-side copy for the UI and state.
     static std::unique_ptr<silt::SampleBuffer> makeBuffer (const juce::AudioBuffer<float>& audio, double sampleRate);
     void analyseThenInstall (std::unique_ptr<silt::SampleBuffer>, const juce::String& name);
-    void installBuffer (std::unique_ptr<silt::SampleBuffer> analysed, const juce::String& name);
+    void installBuffer (std::unique_ptr<silt::SampleBuffer> analysed, const juce::String& name, int factory = -1);
+    // Reads, decodes and analyses on the loader thread, then installs and sets
+    // ROOT. onlyIfUnchanged: drop it if another sample or a state arrives first.
+    void loadInBackground (std::function<std::unique_ptr<juce::AudioFormatReader>()> open, const juce::String& name,
+                           int factory, int rootNote, bool onlyIfUnchanged);
+    static std::unique_ptr<juce::AudioFormatReader> openFactorySample (int index);
     std::unique_ptr<juce::AudioBuffer<float>> decode (juce::AudioFormatReader&) const;
 
     silt::Engine engine;
@@ -309,6 +322,8 @@ private:
     double sampleCopyRate = 0.0;
     juce::String sampleName;
     juce::MemoryBlock encodedSample;   // FLAC, cached for state saves
+    int factorySample = -1;            // which factory sample this is, or −1
+    std::atomic<bool> stateRestored { false };
     std::vector<int> sampleZeroCrossings, sampleTransients;   // the sample's analysis, for the screen
     std::atomic<int> sampleGeneration { 0 };
 

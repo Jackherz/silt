@@ -279,15 +279,22 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     };
     addAndMakeVisible (armButton);
 
+    // LOAD: a file, or one of the built-in samples.
     loadButton.onClick = [this]
     {
-        chooser = std::make_unique<juce::FileChooser> ("Load a sample", juce::File(), "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg");
-        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                              [this] (const juce::FileChooser& fc)
-                              {
-                                  if (fc.getResult().existsAsFile())
-                                      silt.loadFile (fc.getResult());
-                              });
+        juce::PopupMenu menu;
+        menu.addItem (1, "Load file...");
+        menu.addSectionHeader ("FACTORY SAMPLES");
+        const int current = silt.getFactorySample();
+        for (int i = 0; i < SiltProcessor::numFactorySamples(); ++i)
+            menu.addItem (100 + i, SiltProcessor::factorySampleName (i), true, i == current);
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&loadButton), [this] (int chosen)
+        {
+            if (chosen >= 100)
+                silt.loadFactorySample (chosen - 100);
+            else if (chosen == 1)
+                chooseFile();
+        });
     };
     addAndMakeVisible (loadButton);
 
@@ -540,6 +547,17 @@ void SiltEditor::showKnobMenu (FineSlider& s)
 }
 
 // One step back or forward, with a word in the LCD about what changed.
+void SiltEditor::chooseFile()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Load a sample", juce::File(), "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [this] (const juce::FileChooser& fc)
+                          {
+                              if (fc.getResult().existsAsFile())
+                                  silt.loadFile (fc.getResult());
+                          });
+}
+
 void SiltEditor::stepUndo (bool redo)
 {
     const auto what = redo ? silt.redoDescription() : silt.undoDescription();

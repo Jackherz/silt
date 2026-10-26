@@ -382,10 +382,12 @@ void loadSine (Rig& rig)
         writer->writeFromAudioSampleBuffer (sine, 0, sine.getNumSamples());
     }
     rig.silt.loadFile (file);
-    for (int i = 0; i < 300 && rig.silt.getSampleGeneration() == 0; ++i)
+    // The factory sample a new instance opens with may land first: wait for this one.
+    const auto loaded = [&] { return rig.silt.getOverview().name == file.getFileNameWithoutExtension(); };
+    for (int i = 0; i < 300 && ! loaded(); ++i)
         juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
     file.deleteFile();
-    REQUIRE (rig.silt.getSampleGeneration() > 0);
+    REQUIRE (loaded());
     runBlocks (rig, 2);   // the engine picks the buffer up
 }
 
@@ -687,4 +689,61 @@ TEST_CASE ("WAVE RATE runs through zero: STOP in the middle, backwards below")
         if (e.id == "m1Rev")
             revShown = e.isShown (context);
     CHECK (revShown);
+}
+
+namespace
+{
+bool waitFor (const std::function<bool()>& done)
+{
+    for (int i = 0; i < 300 && ! done(); ++i)
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    return done();
+}
+
+float rootNote (Rig& rig)
+{
+    auto* root = rig.silt.params.getParameter ("root");
+    return root->convertFrom0to1 (root->getValue());
+}
+} // namespace
+
+TEST_CASE ("A new instance opens with the first factory sample, in its key; a state keeps it by number")
+{
+    Rig rig;
+    REQUIRE (waitFor ([&] { return rig.silt.getFactorySample() == 0; }));
+    CHECK (rig.silt.getOverview().name == SiltProcessor::factorySampleName (0));
+    CHECK (rig.silt.getOverview().seconds > 5.0);
+    CHECK (rootNote (rig) == 64.0f);   // E
+    CHECK (rig.silt.capturePreset ("x")->getChildByName ("PARAMS")->hasAttribute ("root") == false);
+
+    juce::MemoryBlock state;
+    rig.silt.getStateInformation (state);
+    CHECK (state.getSize() < 100000);   // no audio: it's built in
+
+    Rig restored;
+    restored.silt.setStateInformation (state.getData(), (int) state.getSize());
+    CHECK (restored.silt.getFactorySample() == 0);
+    CHECK (restored.silt.getOverview().seconds > 5.0);
+}
+
+TEST_CASE ("LOAD's factory samples set ROOT; a file sets it back to C; a restored state isn't replaced")
+{
+    Rig rig;
+    rig.silt.loadFactorySample (2);
+    REQUIRE (waitFor ([&] { return rig.silt.getFactorySample() == 2; }));
+    CHECK (rig.silt.getOverview().name == "Rain Bells");
+    CHECK (rootNote (rig) == 63.0f);
+
+    loadSine (rig);
+    CHECK (rig.silt.getFactorySample() == -1);
+    CHECK (rootNote (rig) == 60.0f);
+
+    // A state with a user sample, restored before the default sample is ready, stays.
+    juce::MemoryBlock state;
+    rig.silt.getStateInformation (state);
+    Rig restored;
+    restored.silt.setStateInformation (state.getData(), (int) state.getSize());
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (500);
+    CHECK (restored.silt.getFactorySample() == -1);
+    CHECK_THAT (restored.silt.getOverview().seconds, WithinAbs (2.0, 0.01));
 }
