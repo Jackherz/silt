@@ -97,6 +97,7 @@ public:
         repaint();
     }
     float getZoom() const noexcept { return 1.0f / (viewEnd - viewStart); }
+    float getViewStart() const noexcept { return viewStart; }
 
     // Scroll on the waveform: zoom around the mouse; Shift (or a sideways
     // swipe): move along. Not in Live mode, which always shows the whole ring.
@@ -270,10 +271,24 @@ public:
     void mouseDown (const juce::MouseEvent& e) override
     {
         draggingSlice = -1;
+        draggingBar = false;
         if (e.mods.isPopupMenu())
         {
             if (onMenu)
                 onMenu();
+            return;
+        }
+        if (onScrollBar (e.position))
+        {
+            // On the thumb: hold it where it was taken; elsewhere on the bar:
+            // centre the view there, then drag from the middle.
+            const auto track = scrollTrack();
+            const auto thumb = thumbIn (track);
+            if (! thumb.contains (e.position.x, thumb.getCentreY()))
+                scrollTo (e.position.x - thumb.getWidth() * 0.5f);
+            barGrab = e.position.x - thumbIn (track).getX();
+            draggingBar = true;
+            repaint();
             return;
         }
         draggingSlice = sliceAt (e.position);
@@ -282,6 +297,11 @@ public:
     }
     void mouseDrag (const juce::MouseEvent& e) override
     {
+        if (draggingBar)
+        {
+            scrollTo (e.position.x - barGrab);
+            return;
+        }
         if (draggingSlice >= 0 && onSliceMove)
             onSliceMove (draggingSlice, waveShareAt (e.position.x));
     }
@@ -290,6 +310,11 @@ public:
         if (draggingSlice >= 0 && onSliceDrag)
             onSliceDrag (false);
         draggingSlice = -1;
+        if (draggingBar)
+        {
+            draggingBar = false;
+            repaint();
+        }
     }
     void mouseDoubleClick (const juce::MouseEvent& e) override
     {
@@ -305,7 +330,8 @@ public:
     }
     void mouseMove (const juce::MouseEvent& e) override
     {
-        setMouseCursor (sliceAt (e.position) >= 0 ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
+        setMouseCursor (onScrollBar (e.position) ? juce::MouseCursor::DraggingHandCursor
+                        : sliceAt (e.position) >= 0 ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
     }
 
     // How the grains are drawn below the waveform; each theme has its own.
@@ -334,6 +360,27 @@ public:
             repaint();
         }
     }
+
+    // The zoom's scroll bar, along the waveform's bottom edge (only when zoomed).
+    static constexpr float scrollBarHeight = 6.0f;
+    juce::Rectangle<float> scrollTrack() const { return waveRect().toFloat().removeFromBottom (scrollBarHeight); }
+    juce::Rectangle<float> thumbIn (juce::Rectangle<float> track) const
+    {
+        return track.withX (track.getX() + track.getWidth() * viewStart).withWidth (juce::jmax (8.0f, track.getWidth() * (viewEnd - viewStart)));
+    }
+    bool onScrollBar (juce::Point<float> p) const
+    {
+        return ! live && viewEnd - viewStart < 0.999f && scrollTrack().expanded (0.0f, 4.0f).contains (p);
+    }
+    void scrollTo (float thumbX)   // the thumb's left edge, in pixels
+    {
+        const auto track = scrollTrack();
+        const float span = viewEnd - viewStart;
+        const float from = (thumbX - track.getX()) / juce::jmax (1.0f, track.getWidth());
+        setView (from, from + span);
+    }
+    bool draggingBar = false;
+    float barGrab = 0.0f;   // where on the thumb it was taken
 
     // Where the waveform is (as paintScreen lays it out).
     juce::Rectangle<int> waveRect() const
@@ -523,12 +570,13 @@ private:
         drawWave (g, waveArea);
         if (viewEnd - viewStart < 0.999f)
         {
-            // Zoomed: a thin bar along the bottom shows which part is in view.
-            const auto track = waveArea.toFloat().removeFromBottom (3.0f);
-            g.setColour (screenLight.withAlpha (0.35f));
-            g.fillRect (track);
-            g.setColour (screenLime.withAlpha (0.85f));
-            g.fillRect (track.withX (track.getX() + track.getWidth() * viewStart).withWidth (juce::jmax (4.0f, track.getWidth() * (viewEnd - viewStart))));
+            // Zoomed: a bar along the bottom shows which part is in view; drag
+            // it (or click along it) to move through the sample.
+            const auto track = waveArea.toFloat().removeFromBottom (scrollBarHeight);
+            g.setColour (juce::Colours::black.withAlpha (0.45f));
+            g.fillRoundedRectangle (track, scrollBarHeight * 0.5f);
+            g.setColour (screenLime.withAlpha (draggingBar ? 1.0f : 0.8f));
+            g.fillRoundedRectangle (thumbIn (track), scrollBarHeight * 0.5f);
         }
         if (transientsShown)
         {

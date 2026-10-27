@@ -1,6 +1,7 @@
 // Editor-level tests: the panel the controller drives, and the modulation
 // gestures. The editor is built headlessly, as the snapshot tool does.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -490,4 +491,41 @@ TEST_CASE ("A right-click on a page key opens its menu without pressing it or ch
     CHECK_FALSE (filterKey->getToggleState());
     CHECK (rig.silt.currentPage.load() == silt::layout::grain);
     juce::PopupMenu::dismissAllActiveMenus();
+}
+
+#include "../plugin/GrainScreen.h"
+
+TEST_CASE ("Zoomed in, the bar under the waveform scrolls through the sample")
+{
+    juce::ScopedJuceInitialiser_GUI juce;
+    silt::ui::GrainScreen screen;
+    screen.setBounds (0, 0, 1000, 400);
+    SiltProcessor::Overview overview;
+    overview.minimum.assign (1000, -0.5f);
+    overview.maximum.assign (1000, 0.5f);
+    overview.seconds = 10.0;
+    screen.setOverview (overview);
+    screen.setView (0.0f, 0.25f);
+
+    const auto track = screen.scrollTrack();
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    const auto event = [&] (float x, float fromX)
+    {
+        const auto now = juce::Time::getCurrentTime();
+        return juce::MouseEvent (source, { x, track.getCentreY() }, {}, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                 &screen, &screen, now, { fromX, track.getCentreY() }, now, 1, x != fromX);
+    };
+    // Take the thumb at its middle and drag it a quarter of the way along.
+    const float grab = track.getX() + track.getWidth() * 0.125f;
+    screen.mouseDown (event (grab, grab));
+    screen.mouseDrag (event (grab + track.getWidth() * 0.25f, grab));
+    screen.mouseUp (event (grab + track.getWidth() * 0.25f, grab));
+    CHECK (screen.getViewStart() == Catch::Approx (0.25f).margin (0.01f));
+    CHECK (screen.getZoom() == Catch::Approx (4.0f).margin (0.01f));   // moving keeps the zoom
+
+    // A click along the bar, off the thumb: the view centres there.
+    const float far = track.getX() + track.getWidth() * 0.9f;
+    screen.mouseDown (event (far, far));
+    screen.mouseUp (event (far, far));
+    CHECK (screen.getViewStart() == Catch::Approx (0.75f).margin (0.01f));   // as far as it goes
 }
