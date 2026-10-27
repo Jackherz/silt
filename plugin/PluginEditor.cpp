@@ -1576,6 +1576,15 @@ void SiltEditor::timerCallback()
         tabTintSeen = tint;
         repaint (tray);
     }
+    else if (tint > 0 && (tint >> 4) != 0)
+    {
+        // The wash follows the modulator: redraw when it has moved.
+        if (const float level = modLevel01 (armed); std::abs (level - tabWashSeen) > 0.01f)
+        {
+            tabWashSeen = level;
+            repaint (tray);
+        }
+    }
     if (armed != armedSeen || shown != modShownSeen)
     {
         armedSeen = armed;
@@ -1964,6 +1973,13 @@ void SiltEditor::paint (juce::Graphics& g)
     }
 }
 
+// A modulator's value now as 0…1 (bipolar ones from their −1…1), 0 if muted.
+float SiltEditor::modLevel01 (int modulator) const
+{
+    const float v = juce::jlimit (-1.0f, 1.0f, silt.modOutputs[(size_t) modulator].load());
+    return silt::Modulator::isBipolar (silt.readModulatorParams (modulator)) ? 0.5f * (v + 1.0f) : juce::jmax (0.0f, v);
+}
+
 // The pages (as bits) holding a parameter the modulator is routed to.
 int SiltEditor::routedPages (int modulator) const
 {
@@ -1984,17 +2000,19 @@ int SiltEditor::routedPages (int modulator) const
 void SiltEditor::paintOverChildren (juce::Graphics& g)
 {
     // While a modulator is armed, the MOD tab carries its colour, and so do
-    // the other pages with a control it's routed to: tinted, underlined.
+    // the other pages with a control it's routed to: underlined, and tinted
+    // with a wash that rises and falls with the modulator itself.
     if (const int armed = silt.armedMod.load(); armed >= 0)
     {
         const auto colour = modColour (armed).base;
         const int routed = routedPages (armed);
+        const float wash = 0.06f + 0.4f * modLevel01 (armed);
         for (int p = 0; p < layout::numPages; ++p)
         {
             const auto tab = pageTabs[(size_t) p].getBounds();
             if (p != page && p != layout::mod && (routed & (1 << p)) != 0)
             {
-                g.setColour (colour.withAlpha (0.22f));
+                g.setColour (colour.withAlpha (wash));
                 g.fillRoundedRectangle (tab.toFloat().reduced (1.0f), 3.0f);
             }
             if (p == layout::mod || (p != page && (routed & (1 << p)) != 0))
