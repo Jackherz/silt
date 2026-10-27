@@ -1,6 +1,7 @@
 // Plug-in level tests: the 8-knob controller mapping, driven through the real
 // processor with MIDI CC messages.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -1196,4 +1197,54 @@ TEST_CASE ("SLICE: each slice edit is one undo step, back to EQUAL at the start"
     REQUIRE (rig.silt.undoRoutes());   // the whole drag
     CHECK (mode() == 0);   // EQUAL again
     CHECK_THAT (rig.silt.sliceMarks()[1], WithinAbs (0.25, 1e-4));
+}
+
+#include "../plugin/Presets.h"
+
+TEST_CASE ("Every factory preset sounds: notes (C1 up in SLICE) make a sane level, values in range")
+{
+    for (int i = 0; i < PresetManager::numFactoryPresets(); ++i)
+    {
+        Rig rig;
+        loadSine (rig);
+        const auto xml = PresetManager::factoryPreset (i);
+        INFO (xml->getStringAttribute ("name"));
+        if (const auto* values = xml->getChildByName ("PARAMS"))
+            for (int a = 0; a < values->getNumAttributes(); ++a)
+            {
+                auto* p = rig.silt.params.getParameter (values->getAttributeName (a));
+                REQUIRE (p != nullptr);
+                const float v = (float) values->getAttributeValue (a).getDoubleValue();
+                INFO (values->getAttributeName (a) << " = " << v);
+                CHECK (p->convertFrom0to1 (p->convertTo0to1 (v)) == Catch::Approx (v).margin (0.02 * std::max (1.0f, std::abs (v))));
+            }
+        rig.silt.applyPreset (*xml, xml->getStringAttribute ("name"));
+        runBlocks (rig, 2);
+        const bool slice = juce::roundToInt (rig.silt.params.getParameter ("keyMode")->convertFrom0to1 (rig.value ("keyMode"))) == 3;
+
+        juce::MidiBuffer chord;
+        for (const int note : slice ? std::vector<int> { 36, 37, 38 } : std::vector<int> { 60, 64, 67 })
+            chord.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
+        float peak = 0.0f;
+        bool finite = true;
+        for (int b = 0; b < 190; ++b)   // two seconds
+        {
+            juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 512);
+            buffer.clear();
+            juce::MidiBuffer midi;
+            if (b == 0)
+                midi = chord;
+            rig.silt.processBlock (buffer, midi);
+            for (int c = 0; c < 2; ++c)
+                for (int s = 0; s < buffer.getNumSamples(); ++s)
+                {
+                    const float x = buffer.getSample (c, s);
+                    finite = finite && std::isfinite (x);
+                    peak = std::max (peak, std::abs (x));
+                }
+        }
+        CHECK (finite);
+        CHECK (peak > 0.02f);
+        CHECK (peak < 1.5f);
+    }
 }

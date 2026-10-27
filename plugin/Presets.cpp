@@ -15,10 +15,12 @@ struct Factory
     const char* name;
     std::vector<std::pair<const char*, float>> values;   // owned: an initializer_list here would dangle
     std::vector<const char*> routes;
+    bool instrumentOnly = false;   // played from notes (SLICE, FEED): not in Silt FX, which usually gets none
 };
 
-// Division indexes: 1/16 = 3, 1/8 = 6, 1/8D = 8, 1/4 = 9, 1/2 = 12, 1 bar = 14, 2 bars = 15.
-const std::vector<Factory>& factories()
+// Division indexes: 1/32 = 1, 1/16 = 3, 1/8 = 6, 1/8D = 8, 1/4 = 9, 1/2 = 12, 1 bar = 14, 2 bars = 15.
+// MODE: 0 PITCH, 1 LIVE, 2 FEED, 3 SLICE. Chain orders: 0 R>F>C>S, 12 C>R>F>S.
+const std::vector<Factory>& allFactories()
 {
     static const std::vector<Factory> list {
         { "Init", {}, {} },
@@ -72,7 +74,85 @@ const std::vector<Factory>& factories()
             { "spaceShimmer", 60.0f }, { "spaceReverb", 55.0f }, { "spaceDecay", 12.0f },
             { "m4Type", 5.0f }, { "m4Macro", 30.0f } },
           { "4:filterCutoff:0.5", "4:spaceReverb:0.3", "4:spaceShimmer:0.3" } },
+
+        // SLICE at the sample's hits: C1 up plays each hit, cut short at the next.
+        { "Hit Chop",
+          { { "keyMode", 3.0f }, { "sliceMode", 1.0f }, { "endMode", 2.0f },
+            { "rateMode", 2.0f }, { "grains", 4.0f }, { "grainSize", 70.0f }, { "attack", 2.0f }, { "release", 120.0f },
+            { "colorDrive", 25.0f }, { "colorComp", 40.0f },
+            { "spaceDelay", 25.0f }, { "spaceSync", 1.0f }, { "spaceDiv", 8.0f }, { "spaceFeedback", 30.0f } },
+          {}, true },
+
+        // SLICE, sixteen equal parts, as synced stutters through crunch.
+        { "Stutter Grid",
+          { { "keyMode", 3.0f }, { "sliceCount", 16.0f }, { "endMode", 0.0f },
+            { "rateMode", 1.0f }, { "rateDiv", 1.0f }, { "sizeSync", 1.0f }, { "sizeDiv", 1.0f }, { "fade", 40.0f },
+            { "attack", 1.0f }, { "release", 60.0f },
+            { "colorBits", 9.0f }, { "colorRate", 12000.0f }, { "filterMode", 1.0f }, { "filterCutoff", 5000.0f }, { "filterReso", 30.0f },
+            { "m1Type", 1.0f }, { "m1Sync", 1.0f }, { "m1Div", 6.0f }, { "m1Smooth", 0.0f } },
+          { "1:filterCutoff:0.25", "1:reverse:0.5" }, true },
+
+        // FEED: the grains keep re-granulating their own output, blooming as you hold.
+        { "Feed Bloom",
+          { { "keyMode", 2.0f }, { "liveRun", 0.0f }, { "feedback", 92.0f }, { "size", 260.0f }, { "rate", 12.0f },
+            { "spray", 30.0f }, { "randPitch", 0.1f }, { "randPan", 60.0f }, { "attack", 400.0f }, { "release", 2500.0f },
+            { "filterMode", 1.0f }, { "filterCutoff", 3500.0f },
+            { "spaceReverb", 40.0f }, { "spaceDecay", 6.0f }, { "spaceSize", 75.0f },
+            { "m1Rate", 0.1f } },
+          { "1:filterCutoff:0.2" }, true },
+
+        // The resonator tuned to the sample's own pitches, drifting and damped.
+        { "Sample Strings",
+          { { "size", 220.0f }, { "spray", 20.0f }, { "release", 1800.0f },
+            { "resMix", 65.0f }, { "resNotes", 3.0f }, { "resFollow", 1.0f }, { "resDecay", 4.0f }, { "resBright", 55.0f }, { "resWidth", 70.0f },
+            { "resReso", 70.0f }, { "resDrift", 35.0f }, { "resDriftRate", 0.3f }, { "resSpread", 15.0f }, { "resOddEven", -40.0f },
+            { "resDrive", 25.0f }, { "resDamp", 35.0f },
+            { "spaceReverb", 25.0f }, { "spaceDecay", 4.0f } },
+          {} },
+
+        // Grit first: COLOR runs before the resonator, so the distortion rings.
+        { "Grit Bells",
+          { { "chainOrder", 12.0f }, { "size", 90.0f }, { "rate", 25.0f }, { "spray", 15.0f }, { "release", 1200.0f },
+            { "colorDrive", 55.0f }, { "colorBits", 10.0f }, { "colorTone", 20.0f },
+            { "resMix", 55.0f }, { "resNotes", 2.0f }, { "resDecay", 2.5f }, { "resDamp", 20.0f },
+            { "spaceReverb", 30.0f }, { "spaceDecay", 5.0f } },
+          {} },
+
+        // Echoes on the dotted eighth that dip while you play and swell after.
+        { "Ducked Echoes",
+          { { "rateMode", 1.0f }, { "rateDiv", 6.0f }, { "sizeSync", 1.0f }, { "sizeDiv", 3.0f }, { "spray", 20.0f }, { "release", 600.0f },
+            { "spaceDelay", 55.0f }, { "spaceSync", 1.0f }, { "spaceDiv", 8.0f }, { "spaceFeedback", 60.0f }, { "spaceDuck", 2.0f },
+            { "spaceReverb", 25.0f }, { "spaceDecay", 4.0f }, { "spaceTone", 40.0f } },
+          {} },
+
+        // Per-voice SPREAD: each note of a chord rides its own place on the wave.
+        { "Spread Chorus",
+          { { "size", 160.0f }, { "rate", 22.0f }, { "spray", 10.0f }, { "randPan", 40.0f }, { "attack", 300.0f }, { "release", 1500.0f },
+            { "m1Rate", 0.4f }, { "m1Voice", 1.0f }, { "m1Spread", 80.0f },
+            { "colorWow", 15.0f }, { "spaceReverb", 35.0f }, { "spaceDecay", 5.0f } },
+          { "1:pitch:0.004", "1:start:0.15", "1:randPan:0.3" } },
+
+        // Four playheads stepping a minor-pentatonic pattern.
+        { "Head Patterns",
+          { { "heads", 4.0f }, { "headSpread", 60.0f }, { "patternDepth", 12.0f }, { "patternSteps", 8.0f },
+            { "scale", 9.0f }, { "key", 4.0f }, { "rateMode", 1.0f }, { "rateDiv", 3.0f }, { "size", 140.0f }, { "release", 900.0f },
+            { "spaceDelay", 30.0f }, { "spaceSync", 1.0f }, { "spaceDiv", 6.0f }, { "spaceReverb", 25.0f } },
+          {} },
     };
+    return list;
+}
+
+// This build's presets: Silt FX leaves out the ones played from notes.
+const std::vector<Factory>& factories()
+{
+    static const auto list = []
+    {
+        std::vector<Factory> mine;
+        for (const auto& f : allFactories())
+            if (SiltProcessor::isInstrument || ! f.instrumentOnly)
+                mine.push_back (f);
+        return mine;
+    }();
     return list;
 }
 } // namespace
