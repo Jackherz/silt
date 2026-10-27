@@ -270,6 +270,12 @@ private:
     bool dragHover = false, screenWasLive = false;
     int learnSeen = -1, armedSeen = -2, modShownSeen = -1;
     float levelDb = -100.0f;
+    juce::uint32 inputHeardAt = 0;   // when the input last had sound in it
+    // No input for two seconds (no bus, or nothing routed to it): LIVE and ARM say where it comes from.
+    bool inputSilent() const
+    {
+        return silt.captureSource.load() == SiltProcessor::CaptureSource::none || juce::Time::getMillisecondCounter() - inputHeardAt > 2000;
+    }
     std::array<float, 7> previewSeen {};               // the values the SHAPE preview was last drawn with
     std::array<float, SiltProcessor::numModulators> stripesSeen {};
     int lastUsedMod = 0;

@@ -529,3 +529,29 @@ TEST_CASE ("Zoomed in, the bar under the waveform scrolls through the sample")
     screen.mouseUp (event (far, far));
     CHECK (screen.getViewStart() == Catch::Approx (0.75f).margin (0.01f));   // as far as it goes
 }
+
+TEST_CASE ("Accessibility: every knob has a title and a description for screen readers")
+{
+    EditorRig rig;
+    for (const char* id : { "spray", "filterCutoff", "resMix", "m1Rate" })
+    {
+        INFO (id);
+        auto* knob = rig.editor->findKnob (id);
+        REQUIRE (knob != nullptr);
+        CHECK (knob->getTitle().isNotEmpty());
+        CHECK (knob->getDescription().isNotEmpty());
+    }
+}
+
+TEST_CASE ("Diagnostics: ARM and LIVE with no input say where the audio has to come from")
+{
+    EditorRig rig;
+    rig.set ("keyMode", 1.0f);   // LIVE, with nothing coming in
+    juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 512);
+    juce::MidiBuffer midi;
+    buffer.clear();
+    rig.silt.processBlock (buffer, midi);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (2300);   // the editor's timer: two seconds of silence
+    INFO (rig.editor->displayText() << " source " << (int) rig.silt.captureSource.load());
+    CHECK (rig.editor->displayText().contains ("NEEDS INPUT"));
+}

@@ -481,7 +481,10 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         };
         for (const auto& [part, id] : parts)
             if (part != nullptr)
+            {
                 part->getProperties().set ("help", id);
+                part->setDescription (helpFor (id));   // for screen readers too
+            }
         if (sampleGainBox != nullptr)
             sampleGainBox->getProperties().set ("help", "!gain");
         for (auto& tab : pageTabs)
@@ -626,6 +629,9 @@ void SiltEditor::buildControl (const layout::Entry& entry)
     }
 
     c->component().getProperties().set ("help", entry.id);
+    // For screen readers: the label, and the hover help as the description.
+    c->component().setTitle (entry.label.isNotEmpty() ? entry.label : entry.text.isNotEmpty() ? entry.text : entry.id);
+    c->component().setDescription (helpFor (entry.id));
     addChildComponent (c->component());
     controls.push_back (std::move (c));
 }
@@ -966,6 +972,20 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
                            [this, boundsOf] { return Spots (boundsOf ({ &armButton, &loadButton })); }, -1,
                            "Click LOAD and pick a different factory sample.",
                            [this, generation] { return silt.getSampleGeneration() != generation; } });
+    if constexpr (SiltProcessor::isInstrument)
+        steps.push_back ({ "Live input",
+                           "Silt can also make grains from audio as it arrives. In your DAW, pick a track in Silt's sidechain "
+                           "(in Live, the Sidechain menu on the device), then set MODE to LIVE on the PLAY page. The display "
+                           "shows SC and a level while audio comes in, and says so when none does.",
+                           [this]
+                           {
+                               Spots s (lcdArea);
+                               for (const auto& c : controls)
+                                   if (c->entry->id == "keyMode" && c->component().isVisible())
+                                       s.add (c->component().getBounds());
+                               return s;
+                           },
+                           layout::play, {}, {} });
     else
         steps.push_back ({ "Your own sounds",
                            "Silt FX turns the audio on its track into grains as it plays (MODE: LIVE on the PLAY page). "
@@ -1417,7 +1437,11 @@ juce::String SiltEditor::statusText() const
     using S = SiltProcessor::CaptureState;
     switch (silt.captureState.load())
     {
-        case S::armed: return juce::String (param ("captureFeed") > 0.5f ? "RESAMPLE " : "") + (silt.hostPlaying.load() ? "ARMED: WAITING FOR NEXT BAR" : "ARMED: STARTING");
+        case S::armed:
+            // Nothing to record: say where the audio has to come from.
+            if (param ("captureFeed") <= 0.5f && inputSilent())
+                return SiltProcessor::isInstrument ? "ARMED, NO INPUT: PICK A TRACK IN SILT'S SIDECHAIN" : "ARMED, NO INPUT: CHECK THE TRACK'S INPUT";
+            return juce::String (param ("captureFeed") > 0.5f ? "RESAMPLE " : "") + (silt.hostPlaying.load() ? "ARMED: WAITING FOR NEXT BAR" : "ARMED: STARTING");
         case S::recording: return juce::String (param ("captureFeed") > 0.5f ? "RESAMPLE " : "") + "REC " + juce::String (juce::roundToInt (silt.captureProgress.load() * 100.0f)) + "%";
         case S::done:
         case S::cancelRequested:
@@ -1427,6 +1451,10 @@ juce::String SiltEditor::statusText() const
 
     if (silt.lastLoadError.isNotEmpty())
         return silt.lastLoadError;
+
+    // LIVE with nothing coming in: there's nothing for the grains to read.
+    if (juce::roundToInt (param ("keyMode")) == 1 && inputSilent())
+        return SiltProcessor::isInstrument ? "LIVE NEEDS INPUT: PICK A TRACK IN SILT'S SIDECHAIN" : "LIVE NEEDS INPUT: CHECK THE TRACK'S INPUT";
 
     juce::String source;
     switch (silt.captureSource.load())
@@ -1444,6 +1472,8 @@ void SiltEditor::timerCallback()
     const auto oldStatus = statusText();
     const float db = juce::Decibels::gainToDecibels (silt.captureMeter.takePeak(), -100.0f);
     levelDb = db > levelDb ? db : juce::jmax (db, levelDb - 1.5f);
+    if (db > -60.0f)
+        inputHeardAt = juce::Time::getMillisecondCounter();
 
     if (silt.loadNote != loadNoteSeen)
     {
