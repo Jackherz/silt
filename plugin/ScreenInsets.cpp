@@ -1154,10 +1154,17 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
         line.lineTo (at (a + d + hold, s));
         line.lineTo (at (total, 0.0f));
 
-        // Where it is now: along its stage by the time since the stage began
-        // (the level can't say, as a release can start anywhere and the curves
-        // aren't straight), at the height it really has.
-        const float level = juce::jlimit (0.0f, 1.0f, silt.modOutputs[(size_t) m].load());
+        // Where it is now: along its stage by the time since the stage began,
+        // on the drawn line (the output itself lags the stage changes, so its
+        // height would leave the line).
+        const auto onLine = [&] (float ms)
+        {
+            const float level = ms < a ? ms / std::max (a, 1.0e-3f)
+                              : ms < a + d ? 1.0f - (1.0f - s) * (ms - a) / std::max (d, 1.0e-3f)
+                              : ms < a + d + hold ? s
+                                                  : s * (1.0f - (ms - a - d - hold) / std::max (rel, 1.0e-3f));
+            return at (ms, juce::jlimit (0.0f, 1.0f, level));
+        };
         const int stage = silt.modStages[(size_t) m].load();
         auto& clock = envelopeClocks[(size_t) m];
         const double nowMs = juce::Time::getMillisecondCounterHiRes();
@@ -1169,10 +1176,10 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
         const float elapsed = (float) (nowMs - clock.since);
         switch (stage)
         {
-            case 1: playhead = at (std::min (elapsed, a), level); break;                                           // attack
-            case 2: playhead = at (a + std::min (elapsed, d), level); break;                                       // decay
-            case 3: playhead = at (a + d + hold * 0.5f * std::min (1.0f, elapsed / 300.0f), level); break;         // sustain: settles mid-hold
-            case 4: playhead = at (a + d + hold + std::min (elapsed, rel), level); break;                          // release
+            case 1: playhead = onLine (std::min (elapsed, a)); break;                                           // attack
+            case 2: playhead = onLine (a + std::min (elapsed, d)); break;                                       // decay
+            case 3: playhead = onLine (a + d + hold * 0.5f * std::min (1.0f, elapsed / 300.0f)); break;         // sustain: settles mid-hold
+            case 4: playhead = onLine (a + d + hold + std::min (elapsed, rel)); break;                          // release
             default: break;
         }
     }
