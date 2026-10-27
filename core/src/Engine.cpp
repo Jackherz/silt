@@ -21,6 +21,7 @@ void Engine::prepare (double sampleRate, int maxBlockSize)
         v.prepare (sampleRate);
 
     maxBlock = std::max (1, maxBlockSize);
+    rate = sampleRate;
     live = std::make_unique<SampleBuffer> ((int) (ringSeconds * sampleRate), sampleRate);
     liveWrite = 0;
     lastOutLeft.assign ((size_t) maxBlock, 0.0f);
@@ -427,6 +428,14 @@ void Engine::process (float* left, float* right, int numSamples,
     segment.liveMargin = maxBlock;
     segment.pattern = pattern.data();
     segment.patternSteps = std::clamp (p.patternSteps, 1, (int) pattern.size());
+    {
+        // The grain budget, shared by the voices playing.
+        int playing = 0;
+        for (const auto& v : voices)
+            playing += v.isActive() ? 1 : 0;
+        const int budget = (int) (grainBudget48k * 48000.0 / std::max (rate, 1.0));
+        segment.grainLimit = std::clamp (budget / std::max (1, playing), 4, GrainVoice::maxGrains);
+    }
     int pos = 0;
     for (int e = 0; e <= numEvents; ++e)
     {
@@ -440,6 +449,7 @@ void Engine::process (float* left, float* right, int numSamples,
                 {
                     auto own = segment;   // ~400 bytes; grains latch it when they start
                     voiceParams->apply (v, own);
+                    own.grainLimit = segment.grainLimit;   // the voice's own settings, the engine's budget
                     voices[(size_t) v].render (left + pos, right + pos, end - pos, own, source);
                 }
             else

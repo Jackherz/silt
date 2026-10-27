@@ -45,6 +45,10 @@ class Engine
 {
 public:
     static constexpr int numVoices = 16;
+    // Grains sounding at once across every voice, at 48 kHz (fewer at higher
+    // rates, so the cost stays the same): a ceiling on CPU that only dense,
+    // many-note settings ever reach, where more grains would sound no different.
+    static constexpr int grainBudget48k = 384;
     static constexpr double ringSeconds = 8.0;
 
     Engine();
@@ -109,6 +113,7 @@ private:
     // Live mode.
     std::unique_ptr<SampleBuffer> live;
     int liveWrite = 0, maxBlock = 4096;
+    double rate = 48000.0;
     std::vector<float> lastOutLeft, lastOutRight;    // previous block's output, for feedback
     int lastOutCount = 0;
     bool wasSelfFeeding = false;                     // FEED was on last block: seed the ring when it turns on

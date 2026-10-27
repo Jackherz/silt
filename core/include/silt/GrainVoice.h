@@ -57,6 +57,10 @@ struct GrainParams
     // sound at once on average and the start interval follows the grain length,
     // so changing Size keeps the texture equally thick. rateHz is then ignored.
     int grainCount = 0;
+    // The most grains this voice may have sounding at once (the engine shares
+    // its grain budget out across the voices playing; a voice at its share
+    // skips new grains, as a full pool does).
+    int grainLimit = 64;
 
     // Live mode: grains read the engine's live ring buffer instead of the
     // sample, liveDelayMs behind the newest audio. The engine sets liveNow (the

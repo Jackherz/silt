@@ -102,16 +102,22 @@ inline float readFrame (const float* data, int numFrames, double pos, Interpolat
     };
 
     const double floorPos = std::floor (pos);
-    const int i = wrap ((int) floorPos);
     const float t = (float) (pos - floorPos);
+    int i = (int) floorPos;
+
+    // Almost every read is well inside the buffer: no wrapping needed (the
+    // modulo it takes is most of a read's cost, for every grain and sample).
+    const bool inside = i >= 1 && i + 2 < numFrames;
+    if (! inside)
+        i = wrap (i);
     const float x0 = data[i];
-    const float x1 = data[wrap (i + 1)];
+    const float x1 = data[inside ? i + 1 : wrap (i + 1)];
 
     if (mode == Interpolation::linear)
         return x0 + t * (x1 - x0);
 
-    const float xm1 = data[wrap (i - 1)];
-    const float x2 = data[wrap (i + 2)];
+    const float xm1 = data[inside ? i - 1 : wrap (i - 1)];
+    const float x2 = data[inside ? i + 2 : wrap (i + 2)];
     const float c1 = 0.5f * (x1 - xm1);
     const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
     const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);

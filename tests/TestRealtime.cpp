@@ -163,3 +163,110 @@ TEST_CASE ("Realtime: the allocation counter itself sees an allocation")
     delete p;
     CHECK (audioAllocations.load() >= 1);
 }
+
+// Not run with the suite: `silt-plugin-tests "[benchmark]"`. How much of one
+// core processBlock takes, typical and worst case, at a few block sizes.
+TEST_CASE ("Benchmark: CPU for typical and worst-case settings", "[.][benchmark]")
+{
+    const auto measure = [] (double rate, int blockSize, bool worst)
+    {
+        juce::ScopedJuceInitialiser_GUI juce;
+        SiltProcessor silt;
+        silt.enableAllBuses();
+        silt.prepareToPlay (rate, blockSize);
+        for (int i = 0; i < 300 && silt.getOverview().minimum.empty(); ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        const auto set = [&] (const char* id, float value)
+        {
+            auto* p = dynamic_cast<juce::RangedAudioParameter*> (silt.params.getParameter (id));
+            p->setValueNotifyingHost (p->convertTo0to1 (value));
+        };
+        int notes = 4;
+        if (worst)
+        {
+            notes = 16;
+            set ("rate", 100.0f);   // the densest grains
+            set ("size", 500.0f);
+            set ("heads", 8.0f);
+            set ("resMix", 60.0f);
+            set ("resDrive", 50.0f);
+            set ("filterMode", 2.0f);
+            set ("colorDrive", 50.0f);
+            set ("colorComp", 50.0f);
+            set ("colorWow", 40.0f);
+            set ("spaceDelay", 50.0f);
+            set ("spaceReverb", 50.0f);
+            set ("spaceShimmer", 60.0f);
+            set ("m1Voice", 1.0f);
+            set ("m2Voice", 1.0f);
+            silt.setRouteAmount (0, silt.modulationTarget ("spray"), 0.5f);
+            silt.setRouteAmount (1, silt.modulationTarget ("pitch"), 0.1f);
+        }
+        juce::AudioBuffer<float> buffer (juce::jmax (silt.getTotalNumInputChannels(), silt.getTotalNumOutputChannels()), blockSize);
+        juce::MidiBuffer start;
+        for (int n = 0; n < notes; ++n)
+            start.addEvent (juce::MidiMessage::noteOn (1, 48 + n * 3, (juce::uint8) 100), 0);
+        const int blocks = (int) (4.0 * rate / blockSize);   // four seconds
+        double seconds = 0.0;
+        for (int b = 0; b < blocks; ++b)
+        {
+            buffer.clear();
+            juce::MidiBuffer midi;
+            if (b == 0)
+                midi = start;
+            const auto t0 = juce::Time::getHighResolutionTicks();
+            silt.processBlock (buffer, midi);
+            seconds += juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0);
+        }
+        if (worst)
+            std::printf ("  (%d grains sounding at the end)\n", silt.activeGrains.load());
+        return 100.0 * seconds / 4.0;
+    };
+    for (const bool worst : { false, true })
+        for (const double rate : { 48000.0, 96000.0 })
+            for (const int block : { 32, 128 })
+                std::printf ("%-7s %5.0f Hz  %3d-sample blocks: %5.1f%% of one core\n", worst ? "worst" : "typical", rate, block, measure (rate, block, worst));
+    SUCCEED();
+}
+
+TEST_CASE ("Grain budget: dense, many-note settings stay within it, per-voice modulation or not")
+{
+    for (const bool perVoice : { false, true })
+    {
+        juce::ScopedJuceInitialiser_GUI juce;
+        SiltProcessor silt;
+        silt.enableAllBuses();
+        silt.prepareToPlay (48000.0, 256);
+        for (int i = 0; i < 300 && silt.getOverview().minimum.empty(); ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        const auto set = [&] (const char* id, float value)
+        {
+            auto* p = dynamic_cast<juce::RangedAudioParameter*> (silt.params.getParameter (id));
+            p->setValueNotifyingHost (p->convertTo0to1 (value));
+        };
+        set ("rate", 100.0f);
+        set ("size", 500.0f);
+        if (perVoice)
+        {
+            set ("m1Voice", 1.0f);
+            silt.setRouteAmount (0, silt.modulationTarget ("spray"), 0.3f);
+        }
+        juce::AudioBuffer<float> buffer (juce::jmax (silt.getTotalNumInputChannels(), silt.getTotalNumOutputChannels()), 256);
+        juce::MidiBuffer chord;
+        for (int n = 0; n < 16; ++n)
+            chord.addEvent (juce::MidiMessage::noteOn (1, 40 + n * 2, (juce::uint8) 100), 0);
+        int most = 0;
+        for (int b = 0; b < 400; ++b)
+        {
+            buffer.clear();
+            juce::MidiBuffer midi;
+            if (b == 0)
+                midi = chord;
+            silt.processBlock (buffer, midi);
+            most = std::max (most, silt.activeGrains.load());
+        }
+        INFO ("per voice " << perVoice);
+        CHECK (most <= silt::Engine::grainBudget48k + 16);   // each voice may be one over as the share changes
+        CHECK (most > silt::Engine::grainBudget48k / 2);     // and the budget does get used
+    }
+}

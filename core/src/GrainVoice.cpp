@@ -353,7 +353,7 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     // Grains mode keeps a ceiling of twice the count: while Size shrinks, the
     // longer grains already playing would otherwise block new ones and leave
     // gaps. A full pool drops the grain rather than cutting one off mid-envelope.
-    if (p.grainCount > 0 && activeGrains >= 2 * p.grainCount)
+    if ((p.grainCount > 0 && activeGrains >= 2 * p.grainCount) || activeGrains >= p.grainLimit)
         return;
     auto free = std::find_if (grains.begin(), grains.end(), [] (const Grain& g) { return g.remaining <= 0; });
     if (free == grains.end())
