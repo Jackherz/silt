@@ -1485,7 +1485,7 @@ void SiltEditor::timerCallback()
     {
         // SPACE's timeline: redrawn as the trace grows (and when the settings move, below).
         const unsigned trace = silt.spaceTraceCount.load();
-        if (trace != spaceTraceSeen || page != spacePageSeen)
+        if (trace != spaceTraceSeen || page != spacePageSeen || spaceTimelineMoves (silt))
             screen->repaintStrip();
         spaceTraceSeen = trace;
     }
@@ -1544,6 +1544,15 @@ void SiltEditor::timerCallback()
         repaint (header);
         repaint (pagePanel.withHeight (32));   // the MOD tab's underline
     }
+    // A chip's drop preview on a knob: gone once no drag is under way, even if
+    // the drag ended without telling the knob (the mouse let go elsewhere).
+    if (! isDragAndDropActive())
+        for (auto& c : controls)
+            if (c->slider != nullptr && c->slider->dropHover >= 0)
+            {
+                c->slider->dropHover = -1;
+                c->slider->repaint();
+            }
     for (auto& c : controls)
         if (c->slider != nullptr && c->slider->isVisible() && c->slider->target >= 0)
             for (int m = 0; m < SiltProcessor::numModulators; ++m)

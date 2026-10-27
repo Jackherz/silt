@@ -155,9 +155,14 @@ void ModChip::update()
     const int routes = silt.routeCount (m), type = typeOf (silt, m);
     const bool armed = silt.armedMod.load() == m, muted = ! silt.isModulatorEnabled (m), selected = silt.modShown.load() == m;
     const bool perVoice = silt.isModulatorPerVoice (m);
+    // Hover too: a drag can take the mouse away without a mouseExit, which
+    // would leave the chip drawn as if still under it.
+    const bool hovered = isMouseOver (true);
     if (std::abs (v - shownValue) > 0.004f || routes != shownRoutes || type != shownType
-        || armed != shownArmed || muted != shownMuted || selected != shownSelected || perVoice != shownPerVoice)
+        || armed != shownArmed || muted != shownMuted || selected != shownSelected || perVoice != shownPerVoice
+        || hovered != shownHovered)
     {
+        shownHovered = hovered;
         shownPerVoice = perVoice;
         shownValue = v;
         shownRoutes = routes;
