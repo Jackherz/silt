@@ -594,6 +594,9 @@ void SiltProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamples
     engine.setVoiceParams (&voiceModulation);
     chainNow = juce::jlimit (0, numChainOrders - 1, (int) raw->chainOrder->load());
     chainFade = 1.0f;
+    heldKeys.fill (false);
+    sustainedKeys.fill (false);
+    sustainDown = false;
     for (int m = 0; m < numModules; ++m)
         moduleLevel[(size_t) m] = raw->moduleOn[(size_t) m]->load() > 0.5f ? 1.0f : 0.0f;
     resonator.prepare (sampleRate);
@@ -914,15 +917,44 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         hostPlaying.store (position->getIsPlaying(), std::memory_order_relaxed);
     }
 
+    // MIDI on any channel. The sustain pedal (CC 64) holds back note-offs
+    // until it's let up; all-notes-off drops what came before it in the block.
     noteEvents.clear();
     bool allOff = false;
+    const auto addNote = [this] (int at, int note, float velocity, bool on)
+    {
+        if (noteEvents.size() < noteEvents.capacity())
+            noteEvents.push_back ({ at, note, velocity, on });
+    };
     for (const auto event : midi)
     {
         const auto m = event.getMessage();
-        if ((m.isNoteOnOrOff()) && noteEvents.size() < noteEvents.capacity())
-            noteEvents.push_back ({ event.samplePosition, m.getNoteNumber(), m.getFloatVelocity(), m.isNoteOn() });
+        if (m.isNoteOn())
+        {
+            sustainedKeys[(size_t) m.getNoteNumber()] = false;   // down again: no longer only held by the pedal
+            addNote (event.samplePosition, m.getNoteNumber(), m.getFloatVelocity(), true);
+        }
+        else if (m.isNoteOff())
+        {
+            if (sustainDown)
+                sustainedKeys[(size_t) m.getNoteNumber()] = true;
+            else
+                addNote (event.samplePosition, m.getNoteNumber(), m.getFloatVelocity(), false);
+        }
         else if (m.isAllNotesOff() || m.isAllSoundOff())
+        {
             allOff = true;
+            noteEvents.clear();   // the notes before it in this block end with it
+            sustainedKeys.fill (false);
+        }
+        else if (m.isSustainPedalOn() || m.isSustainPedalOff())
+        {
+            sustainDown = m.isSustainPedalOn();
+            if (! sustainDown)
+                for (int note = 0; note < 128; ++note)
+                    if (std::exchange (sustainedKeys[(size_t) note], false))
+                        addNote (event.samplePosition, note, 0.0f, false);
+        }
         else if (m.isController())
         {
             if (m.getControllerNumber() == 1)

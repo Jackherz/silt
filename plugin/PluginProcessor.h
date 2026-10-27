@@ -387,6 +387,8 @@ private:
         std::atomic<float>* attack, *decay, *sustain, *release, *repeat, *followAttack, *followRelease, *gain, *source, *enable, *voice, *macro, *sym, *curve, *rev, *spread;
     };
     std::array<bool, 128> heldKeys {};   // audio thread: which notes are down, so repeats don't miscount
+    std::array<bool, 128> sustainedKeys {};   // audio thread: let go while the sustain pedal is down
+    bool sustainDown = false;
     std::array<float, numModulators> globalModValues {};   // audio thread: this chunk's shared values
     std::array<bool, numModulators> nativeBipolar {}, modEnabled {};   // audio thread, per chunk
     std::array<std::atomic<int>, numModulators * maxTargets> routePolarity {};

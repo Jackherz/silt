@@ -1526,3 +1526,87 @@ TEST_CASE ("State: restoring while audio runs on another thread stays sound")
     audio.join();
     CHECK (finite.load());
 }
+
+// --- MIDI edge cases ------------------------------------------------------------------
+
+namespace
+{
+int voicesSounding (Rig& rig)
+{
+    int n = 0;
+    for (auto& head : rig.silt.voicePlayheads)
+        n += head.load() >= 0.0f ? 1 : 0;
+    return n;
+}
+
+void send (Rig& rig, std::initializer_list<juce::MidiMessage> messages, int blocksAfter = 1)
+{
+    juce::MidiBuffer midi;
+    int at = 0;
+    for (const auto& m : messages)
+        midi.addEvent (m, at++ * 8);
+    runBlocks (rig, 1, midi);
+    if (blocksAfter > 1)
+        runBlocks (rig, blocksAfter - 1);
+}
+} // namespace
+
+TEST_CASE ("MIDI: the sustain pedal holds notes until it's let up")
+{
+    Rig rig;
+    loadSine (rig);
+    rig.set ("release", rig.silt.params.getParameter ("release")->convertTo0to1 (20.0f));   // short, so silence comes soon
+    send (rig, { juce::MidiMessage::controllerEvent (1, 64, 127), juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100) }, 10);
+    send (rig, { juce::MidiMessage::noteOff (1, 60) }, 40);   // let go, pedal down
+    CHECK (voicesSounding (rig) == 1);
+    send (rig, { juce::MidiMessage::controllerEvent (1, 64, 0) }, 40);   // pedal up
+    CHECK (voicesSounding (rig) == 0);
+}
+
+TEST_CASE ("MIDI: a key pressed again while sustained stays down after the pedal")
+{
+    Rig rig;
+    loadSine (rig);
+    rig.set ("release", rig.silt.params.getParameter ("release")->convertTo0to1 (20.0f));
+    send (rig, { juce::MidiMessage::controllerEvent (1, 64, 127), juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100),
+                 juce::MidiMessage::noteOff (1, 60), juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100) }, 10);
+    send (rig, { juce::MidiMessage::controllerEvent (1, 64, 0) }, 40);
+    CHECK (voicesSounding (rig) == 1);   // still held by the hand
+    send (rig, { juce::MidiMessage::noteOff (1, 60) }, 40);
+    CHECK (voicesSounding (rig) == 0);
+}
+
+TEST_CASE ("MIDI: all-notes-off ends the notes before it, even in the same block, and the pedal's")
+{
+    Rig rig;
+    loadSine (rig);
+    rig.set ("release", rig.silt.params.getParameter ("release")->convertTo0to1 (20.0f));
+    send (rig, { juce::MidiMessage::controllerEvent (1, 64, 127), juce::MidiMessage::noteOn (1, 64, (juce::uint8) 100),
+                 juce::MidiMessage::noteOff (1, 64) }, 5);
+    send (rig, { juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), juce::MidiMessage::allNotesOff (1) }, 40);
+    CHECK (voicesSounding (rig) == 0);
+    send (rig, { juce::MidiMessage::controllerEvent (1, 64, 0) }, 5);   // nothing left to release
+    CHECK (voicesSounding (rig) == 0);
+}
+
+TEST_CASE ("MIDI: repeated note-ons, any channel, and a dense burst leave nothing stuck")
+{
+    Rig rig;
+    loadSine (rig);
+    rig.set ("release", rig.silt.params.getParameter ("release")->convertTo0to1 (20.0f));
+    send (rig, { juce::MidiMessage::noteOn (3, 60, (juce::uint8) 100), juce::MidiMessage::noteOn (3, 60, (juce::uint8) 100),
+                 juce::MidiMessage::noteOn (9, 60, (juce::uint8) 100) }, 5);
+    send (rig, { juce::MidiMessage::noteOff (3, 60) }, 40);
+    CHECK (voicesSounding (rig) == 0);
+
+    juce::MidiBuffer burst;
+    for (int i = 0; i < 300; ++i)
+    {
+        burst.addEvent (juce::MidiMessage::noteOn (1, 36 + i % 48, (juce::uint8) 100), i);
+        burst.addEvent (juce::MidiMessage::noteOff (1, 36 + i % 48), i + 1);
+    }
+    runBlocks (rig, 1, burst);
+    runBlocks (rig, 40);
+    CHECK (voicesSounding (rig) == 0);
+    CHECK (rig.silt.slotParameter (0, 0) == "pitch");   // CC 64 above never reached controller learn
+}
