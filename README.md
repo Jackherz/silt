@@ -157,8 +157,10 @@ shape; a moving playhead on both; or the others' trace).
 
 **Presets** (header: ◀ name ▶, SAVE): a preset is the sound (every parameter, the
 modulation routes, the shown modulator), not the sample, the controller mapping or
-the window. Eight factory presets are built in (Init, Glass Cloud, Tape Choir, Rust
-Rhythm, Bell Garden, Wander, Dark Drone, Shimmer Pad); user presets are
+the window. Sixteen factory presets are built in (Init, Glass Cloud, Tape Choir, Rust
+Rhythm, Bell Garden, Wander, Dark Drone, Shimmer Pad, Hit Chop, Stutter Grid, Feed Bloom,
+Sample Strings, Grit Bells, Ducked Echoes, Spread Chorus, Head Patterns; the three played
+from notes in SLICE or FEED are left out of Silt FX). Loading one is a single undo step. User presets are
 `.siltpreset` XML files in `~/Library/Audio/Presets/Silt Audio/<plug-in>/` on macOS
 (`%APPDATA%/Silt Audio/<plug-in>/Presets` on Windows). SAVE updates a user preset,
 or asks for a name; the name menu lists both sets, SAVE AS… and the folder.
@@ -177,7 +179,34 @@ edges on the nearest zero crossing, for click-free loops) or TRANS (edges on det
 transients, so START/LENGTH pick slices; ticks on the waveform show them). The sample is
 analysed once when it's loaded or recorded.
 
-Not yet (M3): Slice mode.
+**SLICE** (PLAY page, MODE: SLICE): keys from C1 up each play one slice of the region,
+at the sample's pitch; keys below C1 or past the last slice are silent. SLICE BY: EQUAL
+(2–64 parts), AT HITS (the sample's transients) or MANUAL. Drag a slice line on the
+waveform to move it, double-click to add or remove one (any of these switches to MANUAL,
+copying the slices first); each drag, add or remove is one undo step, and MANUAL slices are
+saved with the set. Scroll on the waveform to zoom (to 32×; Shift or a sideways swipe moves
+along), drag the bar under it or the ZOOM label, double-click the label to see it all.
+
+**RANDOM and RESET:** RANDOM moves the open page's controls by the amount beside it
+(right-click: amounts, which controls to leave out; right-click a knob to leave it out).
+RESET (right-click a page key, or RANDOM's menu) puts a page, or every page, back to its
+defaults, keeping the routes, the sample and ROOT. Both are one undo step.
+
+**CHAIN:** drag the four effects into any order; each has an ON switch (on its block and
+the page's last four slots) that cuts it at once, fading over 5 ms so it doesn't click.
+
+**MIDI:** notes on any channel (omni). The sustain pedal (CC 64) holds notes until it's let
+up; all-notes-off / all-sound-off end everything, pedal included. Pitch bend, the mod wheel,
+aftertouch and velocity are MIDI modulator sources, not fixed pitch bend.
+
+**Undo:** knobs, menus and buttons (per gesture), routes, samples (loads, takes, trim,
+reverse, normalise), slices, RANDOM, RESET and preset loads. Not undone: host automation,
+and opening a project (which starts its own history).
+
+**Samples:** WAV, AIFF, FLAC, MP3 and Ogg; up to 30 s (a longer file plays its first 30 s
+and says so), two channels (a file with more plays its first two), 1 kHz–768 kHz. A file Silt
+can't read leaves the sample there was and says so. The screen shows the length, rate,
+mono or stereo, and the memory it takes.
 
 ## Engine (core/)
 
