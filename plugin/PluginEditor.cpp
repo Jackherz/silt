@@ -1633,7 +1633,7 @@ void SiltEditor::timerCallback()
     if (stripes != stripesSeen)
     {
         stripesSeen = stripes;
-        repaint (stripesArea);
+        repaint (stripesArea.expanded (3));   // the bars can reach a pixel past it: redraw round them, so none is left behind
     }
 
     if (silt.presetName != presetShown)
@@ -1881,6 +1881,8 @@ void SiltEditor::paintPreview (juce::Graphics& g)
 // live value. Muted ones stay dim.
 void SiltEditor::paintStripes (juce::Graphics& g)
 {
+    juce::Graphics::ScopedSaveState state (g);
+    g.reduceClipRegion (stripesArea.expanded (1));   // nothing drawn outside what a repaint covers
     auto stripes = stripesArea;
     for (int m = 0; m < SiltProcessor::numModulators; ++m)
     {
