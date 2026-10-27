@@ -2379,6 +2379,7 @@ void SiltProcessor::loadInBackground (std::function<std::unique_ptr<juce::AudioF
         }
 
         const auto audio = decode (*reader);
+        const bool trimmed = audio != nullptr && reader->lengthInSamples > audio->getNumSamples();
         if (audio == nullptr)
         {
             juce::MessageManager::callAsync ([weak, name]
@@ -2392,11 +2393,12 @@ void SiltProcessor::loadInBackground (std::function<std::unique_ptr<juce::AudioF
         auto buffer = std::make_shared<std::unique_ptr<silt::SampleBuffer>> (makeBuffer (*audio, reader->sampleRate));
         (*buffer)->analyse();
 
-        juce::MessageManager::callAsync ([weak, buffer, name, factory, rootNote, onlyIfUnchanged, generation]
+        juce::MessageManager::callAsync ([weak, buffer, name, factory, rootNote, onlyIfUnchanged, generation, trimmed]
         {
             if (weak == nullptr || (onlyIfUnchanged && (weak->sampleGeneration.load() != generation || weak->stateRestored.load())))
                 return;
             weak->lastLoadError.clear();
+            weak->loadNote = trimmed ? "FIRST " + juce::String ((int) maxCaptureSeconds) + " S OF " + name.toUpperCase() : juce::String();
             auto before = onlyIfUnchanged ? nullptr : weak->snapshotSample();   // the opening sample isn't a step
             weak->installBuffer (std::move (*buffer), name, factory);
             if (auto* root = weak->params.getParameter ("root"))
@@ -2788,6 +2790,9 @@ SiltProcessor::Overview SiltProcessor::getOverview() const
         return o;
 
     o.seconds = frames / sampleCopyRate;
+    o.sampleRate = sampleCopyRate;
+    o.mono = std::equal (sampleCopy.getReadPointer (0), sampleCopy.getReadPointer (0) + frames, sampleCopy.getReadPointer (1));
+    o.megabytes = (double) frames * 2.0 * sizeof (float) * 2.0 / (1024.0 * 1024.0);
     o.name = sampleName;
     for (int t : sampleTransients)
         o.transients.push_back ((float) t / (float) frames);

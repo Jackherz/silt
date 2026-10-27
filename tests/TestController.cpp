@@ -1610,3 +1610,21 @@ TEST_CASE ("MIDI: repeated note-ons, any channel, and a dense burst leave nothin
     CHECK (voicesSounding (rig) == 0);
     CHECK (rig.silt.slotParameter (0, 0) == "pitch");   // CC 64 above never reached controller learn
 }
+
+TEST_CASE ("Samples: a file past 30 s is trimmed, and says so; the screen knows rate and channels")
+{
+    Rig rig;
+    const auto file = writeWav (31 * 22050, 22050.0, 1, 16);
+    rig.silt.loadFile (file);
+    const auto loaded = [&] { return rig.silt.getOverview().name == file.getFileNameWithoutExtension(); };
+    for (int i = 0; i < 500 && ! loaded(); ++i)
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    file.deleteFile();
+    REQUIRE (loaded());
+    const auto overview = rig.silt.getOverview();
+    CHECK (overview.seconds == Catch::Approx (30.0).margin (0.01));
+    CHECK (overview.sampleRate == Catch::Approx (22050.0));
+    CHECK (overview.mono);
+    CHECK (overview.megabytes > 0.0);
+    CHECK (rig.silt.loadNote.startsWith ("FIRST 30 S"));
+}

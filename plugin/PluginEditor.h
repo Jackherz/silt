@@ -198,6 +198,7 @@ private:
     juce::TextButton armButton, loadButton { "LOAD" }, learnButton { "LEARN" }, routesButton { "MOD ROUTES" };
     juce::TextButton undoButton { "UNDO" }, redoButton { "REDO" };
     juce::String flash;                                // a moment's message in the LCD
+    juce::String loadNoteSeen;
     juce::uint32 flashUntil = 0;
     void stepUndo (bool redo);
     void chooseFile();   // LOAD's file chooser

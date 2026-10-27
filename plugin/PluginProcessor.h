@@ -158,6 +158,9 @@ public:
     {
         std::vector<float> minimum, maximum;
         double seconds = 0.0;
+        double sampleRate = 0.0;
+        bool mono = false;         // both channels the same
+        double megabytes = 0.0;    // what the sample takes in memory (the engine's copy and the UI's)
         juce::String name;
         std::vector<float> transients;   // shares of the sample
     };
@@ -283,6 +286,7 @@ public:
     std::atomic<int> activeGrains { 0 };
     std::array<std::atomic<float>, silt::Engine::numVoices> voicePlayheads {};   // < 0: voice silent
     juce::String lastLoadError;
+    juce::String loadNote;   // something to know about the last load ("FIRST 30 S OF …"); message thread
 
 private:
     static constexpr int stateVersion = 2;

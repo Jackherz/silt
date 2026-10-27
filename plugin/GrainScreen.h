@@ -195,7 +195,7 @@ public:
         waveCache = {};
         // The top bar's controls: right-aligned, left of the length readout.
         auto top = getLocalBounds().reduced (8 + 12 + 10, 8 + 8 + 6).removeFromTop (16);
-        top.removeFromRight (96);
+        top.removeFromRight (200);   // the readout: length, rate, channels, memory
         for (auto* child : getChildren())
             child->setBounds (top.removeFromRight (child->getWidth() > 0 ? child->getWidth() : 130).withSizeKeepingCentre (child->getWidth() > 0 ? child->getWidth() : 130, 16));
     }
@@ -572,7 +572,10 @@ private:
         }
 
         g.drawText (overview.name.toUpperCase(), top, juce::Justification::centredLeft);
-        g.drawText (juce::String (overview.seconds, 2) + " S", top, juce::Justification::centredRight);
+        // Length, rate, mono or stereo, and the memory it takes.
+        g.drawText (juce::String (overview.seconds, 2) + " S  " + juce::String (overview.sampleRate / 1000.0, overview.sampleRate >= 100000.0 ? 0 : 1) + "K "
+                        + (overview.mono ? "MONO" : "ST") + "  " + juce::String (overview.megabytes, overview.megabytes < 10.0 ? 1 : 0) + " MB",
+                    top, juce::Justification::centredRight);
 
         drawWave (g, waveArea);
         if (viewEnd - viewStart < 0.999f)

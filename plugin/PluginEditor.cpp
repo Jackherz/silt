@@ -1443,6 +1443,16 @@ void SiltEditor::timerCallback()
     const float db = juce::Decibels::gainToDecibels (silt.captureMeter.takePeak(), -100.0f);
     levelDb = db > levelDb ? db : juce::jmax (db, levelDb - 1.5f);
 
+    if (silt.loadNote != loadNoteSeen)
+    {
+        // Something worth knowing about the last load: a moment in the LCD.
+        loadNoteSeen = silt.loadNote;
+        if (loadNoteSeen.isNotEmpty())
+        {
+            flash = loadNoteSeen;
+            flashUntil = juce::Time::getMillisecondCounter() + 3000;
+        }
+    }
     if (const int generation = silt.getSampleGeneration(); generation != seenGeneration)
     {
         seenGeneration = generation;
