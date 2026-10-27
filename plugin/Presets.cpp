@@ -371,12 +371,14 @@ PresetBrowser::PresetBrowser (SiltProcessor& p) : silt (p), presets (p)
 
     juce::StringArray views { "ALL", "FAVOURITES" };
     views.addArray (PresetManager::categories());
+    viewNames = views;
     for (const auto& v : views)
     {
         auto* key = viewKeys.add (new juce::TextButton (v == "FAVOURITES" ? juce::String::fromUTF8 ("\xe2\x98\x85") : v));
         key->setClickingTogglesState (true);
         key->setRadioGroupId (2);
-        key->onClick = [this, v] { setView (v); };
+        // Only the key being turned on: a radio group also "clicks" the one it turns off.
+        key->onClick = [this, v, key] { if (key->getToggleState()) setView (v); };
         key->setTooltip (v == "FAVOURITES" ? "Your starred presets" : "");
         addAndMakeVisible (key);
     }
@@ -445,9 +447,8 @@ void PresetBrowser::close (bool keepIt)
 void PresetBrowser::setView (const juce::String& v)
 {
     view = v;
-    for (auto* key : viewKeys)
-        if (key->getButtonText() == v || (v == "FAVOURITES" && key->getTooltip().isNotEmpty()))
-            key->setToggleState (true, juce::dontSendNotification);
+    for (int i = 0; i < viewKeys.size(); ++i)
+        viewKeys[i]->setToggleState (viewNames[i] == v, juce::dontSendNotification);   // just this one lit
     refresh();
 }
 
@@ -461,6 +462,19 @@ void PresetBrowser::refresh()
             shown.push_back (std::move (entry));
     list.updateContent();
     list.repaint();
+}
+
+void PresetBrowser::toggleFavourite (int row)
+{
+    if (row < 0 || row >= (int) shown.size())
+        return;
+    presets.setFavourite (shown[(size_t) row].name, ! presets.isFavourite (shown[(size_t) row].name));
+    refresh();
+}
+
+bool PresetBrowser::isFavourite (int row) const
+{
+    return row >= 0 && row < (int) shown.size() && presets.isFavourite (shown[(size_t) row].name);
 }
 
 void PresetBrowser::choose (int row)
@@ -484,11 +498,23 @@ void PresetBrowser::paintListBoxItem (int row, juce::Graphics& g, int width, int
         g.setColour (screenLight.withAlpha (selected ? 0.4f : 0.2f));
         g.fillRect (r);
     }
-    // The star: click it to favourite.
-    const bool favourite = presets.isFavourite (e.name);
-    g.setFont (monoFont (14.0f));
-    g.setColour (favourite ? screenLime : screenPale.withAlpha (0.35f));
-    g.drawText (juce::String::fromUTF8 (favourite ? "\xe2\x98\x85" : "\xe2\x98\x86"), r.removeFromLeft (26), juce::Justification::centred);
+    // The star: click it to favourite (filled) or not (outlined).
+    {
+        const bool favourite = presets.isFavourite (e.name);
+        const auto box = r.removeFromLeft (starWidth).toFloat();
+        juce::Path star;
+        star.addStar (box.getCentre(), 5, 3.4f, 7.5f, 0.0f);   // a point at the top
+        if (favourite)
+        {
+            g.setColour (screenLime);
+            g.fillPath (star);
+        }
+        else
+        {
+            g.setColour (screenPale.withAlpha (0.7f));
+            g.strokePath (star, juce::PathStrokeType (1.2f));
+        }
+    }
     g.setFont (monoFont (12.0f));
     g.setColour (screenPale.withAlpha (0.55f));
     g.drawText (e.factory ? "FACTORY" : "USER", r.removeFromRight (70), juce::Justification::centredLeft);
@@ -504,11 +530,9 @@ void PresetBrowser::listBoxItemClicked (int row, const juce::MouseEvent& e)
         showRowMenu (row);
         return;
     }
-    if (e.x < 26 && row >= 0 && row < (int) shown.size())
+    if (e.x < starWidth)
     {
-        // The star column: favourite, don't play.
-        presets.setFavourite (shown[(size_t) row].name, ! presets.isFavourite (shown[(size_t) row].name));
-        refresh();
+        toggleFavourite (row);   // the star column: favourite, don't play
         return;
     }
     choose (row);
@@ -522,8 +546,9 @@ void PresetBrowser::listBoxItemDoubleClicked (int row, const juce::MouseEvent&)
 
 void PresetBrowser::selectedRowsChanged (int lastRowSelected)
 {
-    // The arrow keys play as they move.
-    if (! choosing && lastRowSelected >= 0 && list.hasKeyboardFocus (true))
+    // The arrow keys play as they move (a click plays, or stars, in listBoxItemClicked).
+    if (! choosing && lastRowSelected >= 0 && list.hasKeyboardFocus (true)
+        && ! juce::ModifierKeys::getCurrentModifiers().isAnyMouseButtonDown())
         choose (lastRowSelected);
 }
 

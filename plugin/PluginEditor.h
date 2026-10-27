@@ -81,6 +81,7 @@ public:
         std::function<void()> routeGesture;              // a new undo step begins
         std::function<void (int modulator)> togglePolarity;
         std::function<void (int modulator)> ringHover;   // −1: left the rings
+        std::function<bool()> clearModulation;           // Delete / Backspace: false if there was none
         int dropHover = -1;                              // a chip held over it
 
         // The rings as last drawn (set while drawing): which modulator each ring
@@ -104,6 +105,7 @@ public:
         void mouseDoubleClick (const juce::MouseEvent&) override;
         void mouseMove (const juce::MouseEvent&) override;
         void mouseExit (const juce::MouseEvent&) override;
+        bool keyPressed (const juce::KeyPress&) override;
 
         bool isInterestedInDragSource (const SourceDetails&) override;
         void itemDragEnter (const SourceDetails&) override;

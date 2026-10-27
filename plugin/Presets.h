@@ -87,6 +87,8 @@ public:
     void setView (const juce::String& view);
     void setSearch (const juce::String& text);
     void choose (int row);       // audition the row, as a click does
+    void toggleFavourite (int row);   // its star, as a click on it does
+    bool isFavourite (int row) const;
 
 private:
     int getNumRows() override { return (int) shown.size(); }
@@ -96,6 +98,7 @@ private:
     void selectedRowsChanged (int lastRowSelected) override;
     void refresh();
     void showRowMenu (int row);
+    static constexpr int starWidth = 30;
     void saveAs();
 
     SiltProcessor& silt;
@@ -104,6 +107,7 @@ private:
     juce::String view { "ALL" };
     juce::TextEditor search;
     juce::OwnedArray<juce::TextButton> viewKeys;
+    juce::StringArray viewNames;   // each key's view, in the same order
     juce::ListBox list;
     juce::TextButton keep { "KEEP" }, cancel { "CANCEL" }, saveAsButton { "SAVE AS..." }, folderButton { "FOLDER" };
     std::unique_ptr<juce::XmlElement> soundBefore;

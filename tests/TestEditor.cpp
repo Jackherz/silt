@@ -661,3 +661,71 @@ TEST_CASE ("Preset browser: clicking plays a preset; CANCEL puts the sound back,
     CHECK (spray() == Catch::Approx (before));
     CHECK_FALSE (rig.silt.canUndoRoutes());
 }
+
+TEST_CASE ("Preset browser: choosing a category lights only its key")
+{
+    EditorRig rig;
+    auto* browser = rig.editor->getPresetBrowser();
+    browser->open();
+    std::map<juce::String, juce::Button*> keys;
+    for (auto* child : browser->getChildren())
+        if (auto* b = dynamic_cast<juce::TextButton*> (child); b != nullptr && b->getRadioGroupId() == 2)
+            keys[b->getButtonText()] = b;
+    REQUIRE (keys.count ("ALL") == 1);
+    REQUIRE (keys.count ("PADS") == 1);
+    keys["PADS"]->triggerClick();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+    CHECK (keys["PADS"]->getToggleState());
+    CHECK_FALSE (keys["ALL"]->getToggleState());
+    int lit = 0;
+    for (auto& [name, key] : keys)
+        lit += key->getToggleState() ? 1 : 0;
+    CHECK (lit == 1);
+    browser->close (false);
+}
+
+TEST_CASE ("Delete on a clicked knob removes its modulation, as one undo step")
+{
+    EditorRig rig;
+    const int t = rig.silt.modulationTarget ("spray");
+    rig.silt.setRouteAmount (0, t, 0.4f);
+    rig.silt.setRouteAmount (2, t, -0.2f);
+    rig.silt.clearUndoHistory();
+    auto* knob = rig.editor->findKnob ("spray");
+    REQUIRE (knob != nullptr);
+    CHECK (knob->getWantsKeyboardFocus());
+    CHECK (knob->keyPressed (juce::KeyPress (juce::KeyPress::deleteKey)));
+    CHECK (rig.silt.routeAmount (0, t) == 0.0f);
+    CHECK (rig.silt.routeAmount (2, t) == 0.0f);
+    CHECK (rig.editor->displayText().startsWith ("MODULATION REMOVED"));
+    REQUIRE (rig.silt.undoRoutes());
+    CHECK (rig.silt.routeAmount (0, t) == Catch::Approx (0.4f));
+    CHECK (rig.silt.routeAmount (2, t) == Catch::Approx (-0.2f));
+    // With nothing to remove, the key passes on.
+    CHECK_FALSE (rig.editor->findKnob ("pitch")->keyPressed (juce::KeyPress (juce::KeyPress::backspaceKey)));
+}
+
+TEST_CASE ("Preset browser: the star favourites a preset without playing it")
+{
+    EditorRig rig;
+    auto* browser = rig.editor->getPresetBrowser();
+    browser->open();
+    browser->setSearch ("tape choir");
+    REQUIRE (browser->numShown() == 1);
+    const bool was = browser->isFavourite (0);
+    const auto before = rig.silt.presetName;
+    browser->toggleFavourite (0);
+    CHECK (browser->isFavourite (0) != was);
+    CHECK (rig.silt.presetName == before);   // not played
+    browser->setSearch ({});
+    browser->setView ("FAVOURITES");
+    bool listed = false;
+    for (int i = 0; i < browser->numShown(); ++i)
+        listed = listed || browser->shownName (i) == "Tape Choir";
+    CHECK (listed != was);
+    browser->setView ("ALL");
+    browser->setSearch ("tape choir");
+    browser->toggleFavourite (0);   // as it was
+    CHECK (browser->isFavourite (0) == was);
+    browser->close (false);
+}

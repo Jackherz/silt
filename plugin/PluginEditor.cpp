@@ -81,6 +81,14 @@ void SiltEditor::FineSlider::mouseMove (const juce::MouseEvent& e)
     juce::Slider::mouseMove (e);
 }
 
+// Delete or Backspace on a clicked knob: its modulation goes (one undo step).
+bool SiltEditor::FineSlider::keyPressed (const juce::KeyPress& key)
+{
+    if ((key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey) && clearModulation != nullptr && clearModulation())
+        return true;
+    return juce::Slider::keyPressed (key);
+}
+
 void SiltEditor::FineSlider::mouseExit (const juce::MouseEvent& e)
 {
     if (hoverRing != -1)
@@ -669,6 +677,22 @@ void SiltEditor::wireModulation (FineSlider& s)
                                       + "  " + silt.depthText (m, target)
                                 : juce::String();
         repaint (header);
+    };
+    s.setWantsKeyboardFocus (true);   // clicked, it hears Delete
+    s.clearModulation = [this, target, &s]
+    {
+        bool any = false;
+        for (int m = 0; m < SiltProcessor::numModulators; ++m)
+            any = any || silt.routeAmount (m, target) != 0.0f;
+        if (! any)
+            return false;
+        silt.beginRouteGesture();
+        silt.editRoutes ([&] { silt.clearRoutesOnTarget (target); });
+        flash = "MODULATION REMOVED: " + silt.targetParameter (target).getName (24).toUpperCase();
+        flashUntil = juce::Time::getMillisecondCounter() + 1500;
+        s.repaint();
+        repaint (header);
+        return true;
     };
     s.togglePolarity = [this, target, &s] (int m)
     {
