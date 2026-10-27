@@ -113,6 +113,7 @@ public:
     static std::array<int, numModules> chainOrder (int index);
     static int chainOrderIndex (const std::array<int, numModules>&);
     static juce::String moduleName (int module);
+    static juce::String moduleOnId (int module);       // its ON switch: "resOn", "filterOn", "colorOn", "spaceOn"
     static juce::String chainOrderName (int index);   // "R>F>C>S"
 
     // SPACE's live trace: the level SPACE adds (its echoes and reverb, not
@@ -331,6 +332,9 @@ private:
     std::atomic<float>* captureFeedRaw = nullptr;
     int chainNow = 0;          // audio thread: the order running, and its fade
     float chainFade = 1.0f;
+    // Each module's ON switch, as a level that fades over about 5 ms: at 0 the
+    // module is skipped (and cleared, so it comes back without an old tail).
+    std::array<float, numModules> moduleLevel { 1.0f, 1.0f, 1.0f, 1.0f };
     std::array<std::atomic<float>, scopeSize> scopeIn {}, scopeOut {};
     std::atomic<unsigned> scopeWrite { 0 };
     std::array<std::atomic<float>, spaceTraceSize> spaceTrace {};

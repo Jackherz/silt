@@ -4,8 +4,8 @@
 
 // The CHAIN page's picture, over the screen's grain roll: the grains, the four
 // modules in the order they run, then the output. Drag a module to move it
-// (one undo step); click one to open its page. Modules that aren't doing
-// anything (no mix, filter off…) are drawn faint.
+// (one undo step); click one to open its page, or its switch to turn it on or
+// off. Modules that aren't doing anything (off, no mix, filter off…) are drawn faint.
 namespace silt::ui
 {
 class ChainView final : public juce::Component
@@ -22,6 +22,8 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
     static bool moduleActive (const SiltProcessor&, int module);
+    static bool moduleOn (const SiltProcessor&, int module);
+    juce::Rectangle<float> switchArea (int position) const;   // a block's ON switch
 
 private:
     std::array<int, SiltProcessor::numModules> currentOrder() const;
@@ -30,7 +32,7 @@ private:
 
     SiltProcessor& silt;
     std::array<int, SiltProcessor::numModules> shownOrder {};
-    std::array<bool, SiltProcessor::numModules> shownActive {};
+    std::array<bool, SiltProcessor::numModules> shownActive {}, shownOn {};
     int dragging = -1;          // the position being dragged, or −1
     float dragOffset = 0.0f;    // pointer x − the block's left edge
     float dragX = 0.0f;         // the dragged block's left edge

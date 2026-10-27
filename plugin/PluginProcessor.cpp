@@ -322,6 +322,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
         for (int i = 0; i < SiltProcessor::numChainOrders; ++i)
             orders.add (SiltProcessor::chainOrderName (i));
         layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "chainOrder", 1 }, "Chain order", orders, 0));
+        // Each module's ON switch: off, the sound passes it untouched.
+        for (int m = 0; m < SiltProcessor::numModules; ++m)
+        {
+            static const char* names[] { "Resonator on", "Filter on", "Color on", "Space on" };
+            layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { SiltProcessor::moduleOnId (m), 1 }, names[m], true));
+        }
     }
 
     // Modulators 1–4 (MOD page). Their own settings aren't modulation targets.
@@ -451,6 +457,8 @@ struct SiltProcessor::RawParams
         spaceTone = p ("spaceTone"); spaceShimmer = p ("spaceShimmer"); spaceReverb = p ("spaceReverb"); spaceFreeze = p ("spaceFreeze"); spaceDuck = p ("spaceDuck");
         monitor = p ("monitor"); mix = p ("mix");   // one of these is null, per build
         chainOrder = p ("chainOrder");
+        for (int m = 0; m < SiltProcessor::numModules; ++m)
+            moduleOn[(size_t) m] = p (SiltProcessor::moduleOnId (m).toRawUTF8());
     }
 
     std::atomic<float>* pitch, *size, *rate, *spray, *jitter, *reverse, *randAmp, *randPan, *fade, *slant, *ease;
@@ -466,6 +474,7 @@ struct SiltProcessor::RawParams
     std::atomic<float>* colorDrive, *colorTone, *colorBits, *colorRate, *colorComp, *colorNoise, *colorWow, *colorMix;
     std::atomic<float>* spaceTime, *spaceSync, *spaceDiv, *spaceFeedback, *spaceMode, *spaceDelay, *spaceSize, *spaceDecay;
     std::atomic<float>* spaceTone, *spaceShimmer, *spaceReverb, *spaceFreeze, *spaceDuck;
+    std::array<std::atomic<float>*, SiltProcessor::numModules> moduleOn {};
 };
 
 juce::AudioProcessor::BusesProperties SiltProcessor::makeBuses()
@@ -585,6 +594,8 @@ void SiltProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamples
     engine.setVoiceParams (&voiceModulation);
     chainNow = juce::jlimit (0, numChainOrders - 1, (int) raw->chainOrder->load());
     chainFade = 1.0f;
+    for (int m = 0; m < numModules; ++m)
+        moduleLevel[(size_t) m] = raw->moduleOn[(size_t) m]->load() > 0.5f ? 1.0f : 0.0f;
     resonator.prepare (sampleRate);
     filter.prepare (sampleRate);
     color.prepare (sampleRate);
@@ -1066,6 +1077,21 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
             float* r = wet.getWritePointer (1);
             if (module == tapped)
                 writeScope (scopeIn, l, r, len);
+
+            // Its ON switch: fade towards on or off; fully off, skip it.
+            auto& level = moduleLevel[(size_t) module];
+            const float wantLevel = raw->moduleOn[(size_t) module]->load (std::memory_order_relaxed) > 0.5f ? 1.0f : 0.0f;
+            const float levelFrom = level;
+            level = wantLevel > level ? juce::jmin (1.0f, level + fadeStep) : juce::jmax (0.0f, level - fadeStep);
+            const bool off = levelFrom <= 0.0f && level <= 0.0f;
+            const bool fading = ! off && (levelFrom < 1.0f || level < 1.0f);
+            std::array<float, modulationInterval> dryL {}, dryR {};
+            if (fading)
+            {
+                std::copy (l, l + len, dryL.begin());
+                std::copy (r, r + len, dryR.begin());
+            }
+            if (! off)
             switch (module)
             {
                 case moduleResonator: resonator.process (l, r, len, resonatorParams); break;
@@ -1098,6 +1124,24 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
                         }
                     }
                     break;
+                }
+            }
+            if (fading)
+                for (int i = 0; i < len; ++i)
+                {
+                    const float g = levelFrom + (level - levelFrom) * (float) (i + 1) / (float) len;
+                    l[i] = dryL[(size_t) i] + g * (l[i] - dryL[(size_t) i]);
+                    r[i] = dryR[(size_t) i] + g * (r[i] - dryR[(size_t) i]);
+                }
+            if (levelFrom > 0.0f && level <= 0.0f)
+            {
+                // Just switched off: clear it, so it comes back without the old tail.
+                switch (module)
+                {
+                    case moduleResonator: resonator.reset(); break;
+                    case moduleFilter:    filter.reset(); break;
+                    case moduleColor:     color.reset(); break;
+                    default:              space.reset(); break;
                 }
             }
             if (module == tapped)
@@ -2040,6 +2084,12 @@ juce::String SiltProcessor::moduleName (int module)
 {
     static const char* names[] { "RESONATOR", "FILTER", "COLOR", "SPACE" };
     return names[juce::jlimit (0, numModules - 1, module)];
+}
+
+juce::String SiltProcessor::moduleOnId (int module)
+{
+    static const char* ids[] { "resOn", "filterOn", "colorOn", "spaceOn" };
+    return ids[juce::jlimit (0, numModules - 1, module)];
 }
 
 juce::String SiltProcessor::chainOrderName (int index)

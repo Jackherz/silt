@@ -223,6 +223,11 @@ std::vector<Entry> build (bool instrument)
     // CHAIN: the modules' order. The screen shows it and lets you drag them;
     // the knob steps through all 24 orders.
     knob (chain, 0, "chainOrder", "ORDER");
+    // Each module's ON switch, for the controller too (the screen's blocks have them as well).
+    button (chain, 4, "resOn", "RESONATOR", "ON");
+    button (chain, 5, "filterOn", "FILTER", "ON");
+    button (chain, 6, "colorOn", "COLOR", "ON");
+    button (chain, 7, "spaceOn", "SPACE", "ON");
     return e;
 }
 } // namespace

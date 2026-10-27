@@ -29,8 +29,15 @@ std::array<int, SiltProcessor::numModules> ChainView::currentOrder() const
     return SiltProcessor::chainOrder (juce::roundToInt (value (silt, "chainOrder")));
 }
 
+bool ChainView::moduleOn (const SiltProcessor& silt, int module)
+{
+    return silt.params.getRawParameterValue (SiltProcessor::moduleOnId (module))->load() > 0.5f;
+}
+
 bool ChainView::moduleActive (const SiltProcessor& silt, int module)
 {
+    if (! moduleOn (silt, module))
+        return false;
     switch (module)
     {
         case SiltProcessor::moduleResonator: return value (silt, "resMix") > 0.0f;
@@ -47,14 +54,18 @@ bool ChainView::moduleActive (const SiltProcessor& silt, int module)
 
 void ChainView::update()
 {
-    std::array<bool, SiltProcessor::numModules> active {};
+    std::array<bool, SiltProcessor::numModules> active {}, on {};
     for (int m = 0; m < SiltProcessor::numModules; ++m)
+    {
         active[(size_t) m] = moduleActive (silt, m);
+        on[(size_t) m] = moduleOn (silt, m);
+    }
     const auto order = currentOrder();
-    if (dragging < 0 && (order != shownOrder || active != shownActive))
+    if (dragging < 0 && (order != shownOrder || active != shownActive || on != shownOn))
     {
         shownOrder = order;
         shownActive = active;
+        shownOn = on;
         repaint();
     }
 }
@@ -67,6 +78,12 @@ juce::Rectangle<float> ChainView::blockArea (int position) const
     row.removeFromRight (endWidth + gap);
     const float w = (row.getWidth() - gap * (SiltProcessor::numModules - 1)) / SiltProcessor::numModules;
     return { row.getX() + (float) position * (w + gap), row.getY() + 4.0f, w, row.getHeight() - 8.0f };
+}
+
+juce::Rectangle<float> ChainView::switchArea (int position) const
+{
+    const auto r = blockArea (position);
+    return r.withTrimmedTop (r.getHeight() * 0.55f).withSizeKeepingCentre (juce::jmin (r.getWidth() - 12.0f, 54.0f), 16.0f);
 }
 
 int ChainView::positionAt (float x) const
@@ -90,7 +107,7 @@ void ChainView::paint (juce::Graphics& g)
     g.setColour (screenLime);
     g.drawText ("CHAIN", bounds.reduced (8.0f, 4.0f).removeFromTop (12.0f), juce::Justification::centredLeft);
     g.setColour (screenPale.withAlpha (0.8f));
-    g.drawText ("DRAG TO REORDER   CLICK TO OPEN", bounds.reduced (8.0f, 4.0f).removeFromTop (12.0f), juce::Justification::centredRight);
+    g.drawText ("DRAG TO REORDER   CLICK TO OPEN   SWITCH: ON/OFF", bounds.reduced (8.0f, 4.0f).removeFromTop (12.0f), juce::Justification::centredRight);
 
     // The order as it would be with the dragged block dropped where it is now.
     auto order = shownOrder;
@@ -137,9 +154,19 @@ void ChainView::paint (juce::Graphics& g)
         g.setFont (monoFont (juce::jlimit (9.0f, 13.0f, r.getWidth() / 8.0f)));
         g.setColour (active || lifted ? juce::Colours::white : screenPale.withAlpha (0.6f));
         g.drawText (SiltProcessor::moduleName (module), r.withTrimmedBottom (r.getHeight() * 0.3f), juce::Justification::centred);
+        // The ON switch: a pill with a light, lit while the module is on.
+        const bool on = shownOn[(size_t) module];
+        const auto pill = r.withTrimmedTop (r.getHeight() * 0.55f).withSizeKeepingCentre (juce::jmin (r.getWidth() - 12.0f, 54.0f), 16.0f);
+        g.setColour (juce::Colours::black.withAlpha (on ? 0.25f : 0.4f));
+        g.fillRoundedRectangle (pill, 8.0f);
+        g.setColour (on ? screenLime.withAlpha (0.8f) : screenPale.withAlpha (0.4f));
+        g.drawRoundedRectangle (pill, 8.0f, 1.0f);
+        const auto light = juce::Rectangle<float> (6.0f, 6.0f).withCentre ({ pill.getX() + 10.0f, pill.getCentreY() });
+        g.setColour (on ? screenLime : screenPale.withAlpha (0.3f));
+        g.fillEllipse (light);
         g.setFont (monoFont (9.0f));
-        g.setColour (active ? screenLime : screenPale.withAlpha (0.5f));
-        g.drawText (active ? "ON" : "OFF", r.withTrimmedTop (r.getHeight() * 0.55f), juce::Justification::centred);
+        g.setColour (on ? screenLime : screenPale.withAlpha (0.6f));
+        g.drawText (on ? "ON" : "OFF", pill.withTrimmedLeft (14.0f), juce::Justification::centred);
     };
 
     const int draggedModule = dragging >= 0 ? shownOrder[(size_t) dragging] : -1;
@@ -159,6 +186,17 @@ void ChainView::mouseDown (const juce::MouseEvent& e)
 {
     dragging = -1;
     moved = false;
+    for (int p = 0; p < SiltProcessor::numModules; ++p)
+        if (switchArea (p).expanded (2.0f).contains (e.position))
+        {
+            // The switch: one gesture, so it undoes like any button.
+            auto* parameter = silt.params.getParameter (SiltProcessor::moduleOnId (shownOrder[(size_t) p]));
+            parameter->beginChangeGesture();
+            parameter->setValueNotifyingHost (parameter->getValue() > 0.5f ? 0.0f : 1.0f);
+            parameter->endChangeGesture();
+            update();
+            return;
+        }
     for (int p = 0; p < SiltProcessor::numModules; ++p)
         if (blockArea (p).contains (e.position))
         {

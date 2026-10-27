@@ -1261,3 +1261,50 @@ TEST_CASE ("RESONATOR: MIX sits in the same slot on both halves")
     CHECK (rig.silt.slotParameter (silt::layout::resonator, 2) == "resDrift");
     CHECK (rig.silt.params.getParameter ("resDriftRate") == nullptr);   // folded into DRIFT
 }
+
+TEST_CASE ("CHAIN: a module switched off passes the sound untouched")
+{
+    // Two rigs, the same but for COLOR: one crunched to 2 bits and switched
+    // off, the other with COLOR doing nothing. Off, they sound the same.
+    const auto render = [] (bool crunchedButOff)
+    {
+        Rig rig;
+        loadSine (rig);
+        if (crunchedButOff)
+        {
+            rig.set ("colorBits", rig.silt.params.getParameter ("colorBits")->convertTo0to1 (2.0f));
+            rig.set ("colorOn", 0.0f);
+        }
+        runBlocks (rig, 4);
+        juce::MidiBuffer note;
+        note.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        std::vector<float> out;
+        for (int b = 0; b < 40; ++b)
+        {
+            juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 512);
+            buffer.clear();
+            juce::MidiBuffer midi;
+            if (b == 0)
+                midi = note;
+            rig.silt.processBlock (buffer, midi);
+            out.insert (out.end(), buffer.getReadPointer (0), buffer.getReadPointer (0) + 512);
+        }
+        return out;
+    };
+    const auto off = render (true), plain = render (false);
+    float peak = 0.0f, diff = 0.0f;
+    for (size_t i = 0; i < off.size(); ++i)
+    {
+        peak = std::max (peak, std::abs (plain[i]));
+        diff = std::max (diff, std::abs (off[i] - plain[i]));
+    }
+    REQUIRE (peak > 0.01f);
+    CHECK (diff < 1.0e-4f);
+}
+
+TEST_CASE ("CHAIN: the ON switches sit on the CHAIN page's last four slots")
+{
+    Rig rig;
+    for (int m = 0; m < SiltProcessor::numModules; ++m)
+        CHECK (rig.silt.slotParameter (silt::layout::chain, 4 + m) == SiltProcessor::moduleOnId (m));
+}

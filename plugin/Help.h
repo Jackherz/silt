@@ -113,6 +113,10 @@ inline juce::String helpFor (const juce::String& id)
         { "spaceDuck", "DUCK: echoes dip while you play" },
         // CHAIN
         { "chainOrder", "ORDER: the order the effects run in" },
+        { "resOn", "RESONATOR: on, or passed by untouched" },
+        { "filterOn", "FILTER: on, or passed by untouched" },
+        { "colorOn", "COLOR: on, or passed by untouched" },
+        { "spaceOn", "SPACE: on, or passed by untouched" },
         // MOD (any modulator: the part after m1…m4)
         { "mod:Type", "TYPE: wave, random, envelope, follow, MIDI" },
         { "mod:Shape", "SHAPE: the wave's form" },
