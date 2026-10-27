@@ -156,6 +156,7 @@ inline juce::String helpFor (const juce::String& id)
         { "!monitor", "MONITOR: hear the input as well" },
         { "!tour", "?: the tour, the theme, the grain view" },
         { "!screen", "SCREEN: drop a file; right-click for tools" },
+        { "!zoom", "ZOOM: drag up/down; double-click shows it all" },
         { "!drag", "DRAG: into your DAW as an audio clip" },
         { "!gain", "GAIN: the sample's level (right-click: tools)" },
         { "!tab", "PAGES: eight controls each, for 8 knobs" },

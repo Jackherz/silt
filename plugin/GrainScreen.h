@@ -19,13 +19,15 @@ class ZoomReadout final : public juce::Component, public juce::SettableTooltipCl
 public:
     ZoomReadout()
     {
-        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
         setRepaintsOnMouseActivity (true);
-        setTooltip ("Scroll on the waveform to zoom in and out (Shift: move along); click here to see it all");
+        setTooltip ("Scroll on the waveform to zoom (Shift: move along), or drag here up and down; double-click to see it all");
         setSize (78, 16);
     }
 
-    std::function<void()> onClick;
+    std::function<void()> onReset;
+    std::function<void()> onDragStart;
+    std::function<void (float upwards)> onDrag;   // pixels dragged up since the press
     float zoom = 1.0f;
 
     void paint (juce::Graphics& g) override
@@ -40,10 +42,21 @@ public:
         g.setFont (monoFont (12.0f));
         g.drawText ("ZOOM " + juce::String (zoom, zoom < 10.0f ? 1 : 0) + "X", getLocalBounds(), juce::Justification::centred);
     }
-    void mouseUp (const juce::MouseEvent& e) override
+    // Press and drag up to zoom in, down to zoom out; double-click: all of it.
+    void mouseDown (const juce::MouseEvent&) override
     {
-        if (onClick && ! e.mouseWasDraggedSinceMouseDown())
-            onClick();
+        if (onDragStart)
+            onDragStart();
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (onDrag)
+            onDrag ((float) -e.getDistanceFromDragStartY() * (e.mods.isShiftDown() ? 0.25f : 1.0f));
+    }
+    void mouseDoubleClick (const juce::MouseEvent&) override
+    {
+        if (onReset)
+            onReset();
     }
 };
 
@@ -52,7 +65,18 @@ class GrainScreen final : public juce::Component
 public:
     GrainScreen()
     {
-        zoomBox.onClick = [this] { setView (0.0f, 1.0f); };
+        zoomBox.onReset = [this] { setView (0.0f, 1.0f); };
+        zoomBox.onDragStart = [this] { dragViewStart = viewStart; dragViewEnd = viewEnd; };
+        zoomBox.onDrag = [this] (float upwards)
+        {
+            if (live || overview.minimum.empty())
+                return;
+            // Every 100 px up doubles the zoom, around the middle of the view.
+            const float centre = 0.5f * (dragViewStart + dragViewEnd);
+            const float span = juce::jlimit (1.0f / maxZoom, 1.0f, (dragViewEnd - dragViewStart) * std::pow (0.5f, upwards / 100.0f));
+            setView (centre - 0.5f * span, centre + 0.5f * span);
+        };
+        zoomBox.getProperties().set ("help", "!zoom");
         addAndMakeVisible (zoomBox);
     }
 
@@ -898,6 +922,7 @@ private:
     juce::String hud;
     juce::Image field;     // the grain field with its trails
     float viewStart = 0.0f, viewEnd = 1.0f;
+    float dragViewStart = 0.0f, dragViewEnd = 1.0f;   // the view when the ZOOM drag began
     ZoomReadout zoomBox;
     FieldLook look = FieldLook::dots;
     juce::Image fieldBackdrop;   // what's behind the grains, by look
