@@ -967,6 +967,21 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
                        [this] { Spots s (screen->getBounds()); s.add (slotBounds (3)); return s; }, layout::grain,
                        "Drag SPRAY up while you play, and watch the grains spread out across the waveform.",
                        [this, spray] { return std::abs (param ("spray") - spray) > 5.0f; } });
+    steps.push_back ({ "Slices",
+                       "MODE: SLICE cuts the sample into pieces, one per key: C1 plays the first, C#1 the next, and keys "
+                       "past the last stay quiet. Drag a slice line to move it, double-click to add or remove one. Scroll "
+                       "on the waveform to zoom in, or drag the ZOOM label up and down; double-click it to see it all.",
+                       [this]
+                       {
+                           Spots s (screen->getBounds());
+                           for (const auto& c : controls)
+                               if (c->entry->id == "keyMode" && c->component().isVisible())
+                                   s.add (c->component().getBounds());
+                           return s;
+                       },
+                       layout::play,
+                       "Set MODE to SLICE, play C1 and up, then drag a slice line.",
+                       [this] { return juce::roundToInt (param ("keyMode")) == 3; } });
     steps.push_back ({ "See what you hear",
                        "RESONATOR, FILTER, COLOR and SPACE shape the sound after the grains. On the first three, the strip on "
                        "the screen shows the sound going in (faint) and coming out (bright).",
