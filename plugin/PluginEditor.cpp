@@ -445,6 +445,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     // UNDO / REDO: knob, menu, button and modulation changes (also Cmd/Ctrl+Z,
     // Shift+Cmd/Ctrl+Z, which some hosts keep for themselves).
     undoButton.onClick = [this] { stepUndo (false); };
+    undoButton.setTooltip ("A step back (Cmd/Ctrl+Z): knobs, menus, routes, samples (loads, takes, trim, reverse, normalise), slices, RANDOM, RESET and presets. "
+                           "Not undone: host automation, and opening a project");
     redoButton.onClick = [this] { stepUndo (true); };
     addAndMakeVisible (undoButton);
     addAndMakeVisible (redoButton);

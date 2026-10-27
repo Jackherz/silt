@@ -260,7 +260,8 @@ public:
     // Presets (see Presets.h): the sound without the sample, controller mapping
     // or window. Message thread.
     std::unique_ptr<juce::XmlElement> capturePreset (const juce::String& name) const;
-    void applyPreset (const juce::XmlElement&, const juce::String& name);
+    void applyPreset (const juce::XmlElement&, const juce::String& name);   // one undo step
+    void applyPresetValues (const juce::XmlElement&, const juce::String& name);   // the same, not recorded
     juce::String presetName { "Init" };
 
     // The editor's size, saved with the set.
@@ -369,6 +370,7 @@ private:
     void restoreSlices (const SliceState&);
     SliceState sliceEditStart;
     class SliceChange;
+    class PresetChange;
     bool lastSelfFeed = false;   // audio thread: FEED was on last chunk   // a note began since SPACE last ran: restart the trace
     void writeScope (std::array<std::atomic<float>, scopeSize>&, const float* l, const float* r, int count) noexcept;
     float sampleGainNow = 1.0f;   // audio thread: the gain ramped to

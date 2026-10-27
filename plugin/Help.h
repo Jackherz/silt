@@ -153,7 +153,7 @@ inline juce::String helpFor (const juce::String& id)
         { "!learn", "LEARN: teach Silt your controller's knobs" },
         { "!random", "RANDOM: shakes up this page (right-click: more)" },
         { "!randomAmount", "AMOUNT: how far RANDOM moves things" },
-        { "!undo", "UNDO: a step back (knobs, routes, samples)" },
+        { "!undo", "UNDO: knobs, routes, samples, presets, slices" },
         { "!redo", "REDO: a step forward again" },
         { "!routes", "MOD ROUTES: every modulation connection" },
         { "!monitor", "MONITOR: hear the input as well" },

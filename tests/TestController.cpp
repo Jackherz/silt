@@ -631,8 +631,9 @@ TEST_CASE ("Knob, menu and button changes undo; automation and preset loads don'
     REQUIRE (rig.silt.undoRoutes());
     CHECK (rig.silt.allRoutes().empty());
 
-    // A preset load sets every value without recording and starts the history over.
+    // A preset load sets every value as one step, not one per value.
     rig.silt.applyPreset (*rig.silt.capturePreset ("x"), "x");
+    REQUIRE (rig.silt.undoRoutes());
     CHECK_FALSE (rig.silt.canUndoRoutes());
 }
 
@@ -1627,4 +1628,28 @@ TEST_CASE ("Samples: a file past 30 s is trimmed, and says so; the screen knows 
     CHECK (overview.mono);
     CHECK (overview.megabytes > 0.0);
     CHECK (rig.silt.loadNote.startsWith ("FIRST 30 S"));
+}
+
+TEST_CASE ("Undo: loading a preset is one step back to the sound before, and keeps the history")
+{
+    Rig rig;
+    rig.set ("spray", 0.6f);   // an earlier change, recorded as a gesture
+    auto* spray = rig.silt.params.getParameter ("spray");
+    spray->beginChangeGesture();
+    spray->setValueNotifyingHost (0.4f);
+    spray->endChangeGesture();
+    rig.silt.setRouteAmount (2, rig.silt.modulationTarget ("pitch"), 0.3f);
+
+    const auto preset = PresetManager::factoryPreset (1);   // Glass Cloud
+    rig.silt.applyPreset (*preset, preset->getStringAttribute ("name"));
+    CHECK (rig.silt.presetName == "Glass Cloud");
+    CHECK (rig.silt.routeAmount (2, rig.silt.modulationTarget ("pitch")) == 0.0f);
+
+    REQUIRE (rig.silt.undoRoutes());
+    CHECK (rig.value ("spray") == Catch::Approx (0.4f));
+    CHECK (rig.silt.routeAmount (2, rig.silt.modulationTarget ("pitch")) == Catch::Approx (0.3f));
+    CHECK (rig.silt.presetName != "Glass Cloud");
+    CHECK (rig.silt.canUndoRoutes());   // the spray change is still there to undo
+    REQUIRE (rig.silt.redoRoutes());
+    CHECK (rig.silt.presetName == "Glass Cloud");
 }

@@ -1885,10 +1885,49 @@ std::unique_ptr<juce::XmlElement> SiltProcessor::capturePreset (const juce::Stri
     return xml;
 }
 
+// A preset load as one undo step: the sound before it and the preset.
+class SiltProcessor::PresetChange final : public juce::UndoableAction
+{
+public:
+    PresetChange (SiltProcessor& p, std::unique_ptr<juce::XmlElement> b, juce::String bName, std::unique_ptr<juce::XmlElement> a, juce::String aName)
+        : processor (p), before (std::move (b)), after (std::move (a)), beforeName (std::move (bName)), afterName (std::move (aName)) {}
+    bool perform() override
+    {
+        if (first)
+            first = false;   // recorded after the load: nothing to do yet
+        else
+            processor.applyPresetValues (*after, afterName);
+        return true;
+    }
+    bool undo() override { processor.applyPresetValues (*before, beforeName); return true; }
+    int getSizeInUnits() override { return 4; }
+
+private:
+    SiltProcessor& processor;
+    std::unique_ptr<juce::XmlElement> before, after;
+    juce::String beforeName, afterName;
+    bool first = true;
+};
+
+// Loading a preset: one undo step back to the sound before it.
+void SiltProcessor::applyPreset (const juce::XmlElement& xml, const juce::String& name)
+{
+    auto before = capturePreset (presetName);
+    const auto beforeName = presetName;
+    applyPresetValues (xml, name);
+    routeUndo.beginNewTransaction ("PRESET " + name.toUpperCase());
+    lastGestureParameter = -1;
+    {
+        const juce::ScopedValueSetter<bool> quiet (replaying, true);
+        routeUndo.perform (new PresetChange (*this, std::move (before), beforeName, std::make_unique<juce::XmlElement> (xml), name));
+    }
+    lastGestureParameter = -1;
+}
+
 // Every parameter takes the preset's value, or its default if the preset
 // doesn't list it (so presets are complete), as host-visible gestures. Routes
-// are replaced; the route undo history starts over (it can't undo the values).
-void SiltProcessor::applyPreset (const juce::XmlElement& xml, const juce::String& name)
+// are replaced.
+void SiltProcessor::applyPresetValues (const juce::XmlElement& xml, const juce::String& name)
 {
     const juce::ScopedValueSetter<bool> quiet (replaying, true);   // one load, not 150 undo steps
     const auto* values = xml.getChildByName ("PARAMS");
@@ -1906,7 +1945,6 @@ void SiltProcessor::applyPreset (const juce::XmlElement& xml, const juce::String
 
     routesFromString (xml.getStringAttribute ("routes"));
     modShown.store (juce::jlimit (0, numModulators - 1, xml.getIntAttribute ("modShown", 0)));
-    routeUndo.clearUndoHistory();
     presetName = name;
 }
 
