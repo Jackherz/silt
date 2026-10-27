@@ -1308,3 +1308,41 @@ TEST_CASE ("CHAIN: the ON switches sit on the CHAIN page's last four slots")
     for (int m = 0; m < SiltProcessor::numModules; ++m)
         CHECK (rig.silt.slotParameter (silt::layout::chain, 4 + m) == SiltProcessor::moduleOnId (m));
 }
+
+TEST_CASE ("RESET: a page back to its defaults as one undo step, keeping routes and ROOT; or every page")
+{
+    Rig rig;
+    rig.set ("spray", 0.8f);
+    rig.set ("pitch", 0.9f);
+    rig.set ("filterCutoff", 0.2f);
+    rig.set ("root", 0.3f);
+    const float root = rig.value ("root");   // snapped to a whole note
+    rig.silt.setRouteAmount (0, rig.silt.modulationTarget ("spray"), 0.5f);
+
+    CHECK (rig.silt.resetPage (silt::layout::grain) == 2);
+    CHECK (rig.value ("spray") == rig.silt.params.getParameter ("spray")->getDefaultValue());
+    CHECK (rig.value ("pitch") == rig.silt.params.getParameter ("pitch")->getDefaultValue());
+    CHECK (rig.value ("filterCutoff") == Catch::Approx (0.2f));   // another page's
+    CHECK (rig.silt.routeAmount (0, rig.silt.modulationTarget ("spray")) == Catch::Approx (0.5f));
+
+    REQUIRE (rig.silt.undoRoutes());   // both back at once
+    CHECK (rig.value ("spray") == Catch::Approx (0.8f));
+    CHECK (rig.value ("pitch") == Catch::Approx (0.9f));
+
+    // MOD resets the modulator shown, not the others.
+    rig.set ("m1Rate", 0.9f);
+    rig.set ("m2Rate", 0.9f);
+    rig.silt.modShown.store (1);
+    rig.silt.resetPage (silt::layout::mod);
+    CHECK (rig.value ("m1Rate") == Catch::Approx (0.9f));
+    CHECK (rig.value ("m2Rate") == rig.silt.params.getParameter ("m2Rate")->getDefaultValue());
+
+    rig.set ("colorOn", 0.0f);
+    rig.silt.resetAllPages();
+    for (const char* id : { "spray", "pitch", "filterCutoff", "m1Rate", "colorOn" })
+    {
+        INFO (id);
+        CHECK (rig.value (id) == rig.silt.params.getParameter (id)->getDefaultValue());
+    }
+    CHECK (rig.value ("root") == root);   // the sample's, not a page's
+}

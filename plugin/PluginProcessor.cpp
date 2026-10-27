@@ -1543,6 +1543,75 @@ std::vector<const silt::layout::Entry*> SiltProcessor::randomisable (int page) c
     return out;
 }
 
+juce::StringArray SiltProcessor::pageParameters (int page, bool everyModulator) const
+{
+    juce::StringArray ids;
+    if (page == modPage)
+    {
+        // A modulator's whole set (not only the controls its type shows).
+        for (int m = 0; m < numModulators; ++m)
+            if (everyModulator || m == modShown.load())
+                for (auto* parameter : getParameters())
+                    if (auto* p = dynamic_cast<juce::RangedAudioParameter*> (parameter);
+                        p != nullptr && p->getParameterID().startsWith ("m" + juce::String (m + 1)))
+                        ids.addIfNotAlreadyThere (p->getParameterID());
+        return ids;
+    }
+    for (const auto& e : silt::layout::entries (isInstrument))
+        if (e.page == page && ! e.id.startsWith ("!") && e.id != "root" && params.getParameter (e.id) != nullptr)
+            ids.addIfNotAlreadyThere (e.id);
+    return ids;
+}
+
+namespace
+{
+int resetToDefaults (juce::AudioProcessorValueTreeState& params, const juce::StringArray& ids,
+                     const std::function<void (juce::RangedAudioParameter&, float before)>& record)
+{
+    int changed = 0;
+    for (const auto& id : ids)
+        if (auto* parameter = params.getParameter (id))
+        {
+            const float before = parameter->getValue();
+            if (juce::exactlyEqual (before, parameter->getDefaultValue()))
+                continue;
+            record (*parameter, before);
+            ++changed;
+        }
+    return changed;
+}
+} // namespace
+
+int SiltProcessor::resetPage (int page)
+{
+    routeUndo.beginNewTransaction ("RESET " + juce::String (silt::layout::pageName (page)));
+    lastGestureParameter = -1;
+    const int changed = resetToDefaults (params, pageParameters (page), [this] (juce::RangedAudioParameter& p, float before)
+    {
+        const juce::ScopedValueSetter<bool> quiet (replaying, true);
+        routeUndo.perform (new ParameterChange (*this, p.getParameterIndex(), before, p.getDefaultValue()));
+    });
+    lastGestureParameter = -1;
+    return changed;
+}
+
+int SiltProcessor::resetAllPages()
+{
+    routeUndo.beginNewTransaction ("RESET ALL");
+    lastGestureParameter = -1;
+    juce::StringArray ids;
+    for (int page = 0; page < numPages; ++page)
+        ids.addArray (pageParameters (page, true));
+    ids.removeDuplicates (false);
+    const int changed = resetToDefaults (params, ids, [this] (juce::RangedAudioParameter& p, float before)
+    {
+        const juce::ScopedValueSetter<bool> quiet (replaying, true);
+        routeUndo.perform (new ParameterChange (*this, p.getParameterIndex(), before, p.getDefaultValue()));
+    });
+    lastGestureParameter = -1;
+    return changed;
+}
+
 int SiltProcessor::randomisePage (int page)
 {
     const float amount = juce::jlimit (0.0f, 1.0f, randomAmount.load());

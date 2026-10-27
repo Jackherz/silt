@@ -101,6 +101,12 @@ public:
     // parameters stay put; the modulator types start excluded. Both are
     // saved with the session, not in presets. Message thread.
     int randomisePage (int page);   // how many controls changed
+    // RESET: a page's controls back to their defaults (both halves of RESONATOR;
+    // on MOD, the modulator shown), or every page's, as one undo step. Routes,
+    // the sample and ROOT stay. Returns how many controls changed.
+    int resetPage (int page);
+    int resetAllPages();
+    juce::StringArray pageParameters (int page, bool everyModulator = false) const;
     std::vector<const silt::layout::Entry*> randomisable (int page) const;
     std::atomic<float> randomAmount { 0.5f };
     bool isRandomExcluded (const juce::String& id) const { return randomExcluded.contains (id); }

@@ -343,6 +343,20 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         tab.setClickingTogglesState (true);
         tab.onClick = [this, i]
         {
+            // Right-click (or Ctrl-click): that page's RESET menu.
+            if (juce::ModifierKeys::getCurrentModifiers().isPopupMenu())
+            {
+                juce::PopupMenu menu;
+                menu.addItem (1, "Reset " + juce::String (layout::pageName ((int) i)) + ((int) i == layout::mod ? " " + juce::String (silt.modShown.load() + 1) : juce::String()));
+                menu.addItem (2, "Reset all pages");
+                menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&pageTabs[i]), [this, i] (int chosen)
+                {
+                    if (chosen > 0)
+                        resetPages (chosen == 2 ? -1 : (int) i);
+                });
+                pageTabs[(size_t) page].setToggleState (true, juce::dontSendNotification);   // the menu, not a page change
+                return;
+            }
             if (pageTabs[i].getToggleState())
             {
                 // RESONATOR again: its other half.
@@ -353,7 +367,9 @@ SiltEditor::SiltEditor (SiltProcessor& p)
             }
         };
         if ((int) i == layout::resonator)
-            tab.setTooltip ("RESONATOR has two pages of controls: click the tab again for the other");
+            tab.setTooltip ("RESONATOR has two pages of controls: click the tab again for the other. Right-click: reset");
+        else
+            tab.setTooltip ("Right-click: reset this page or all of them");
         addAndMakeVisible (tab);
     }
 
@@ -414,7 +430,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
 
     // RANDOM: the open page's controls, by the amount beside it; right-click
     // (or Ctrl-click) for amounts and what to leave out.
-    randomButton.setTooltip ("Randomise this page's controls. Right-click: amount, and what to leave out");
+    randomButton.setTooltip ("Randomise this page's controls. Right-click: amount, what to leave out, and reset");
     randomButton.onClick = [this]
     {
         if (juce::ModifierKeys::getCurrentModifiers().isPopupMenu())
@@ -1030,6 +1046,18 @@ void SiltEditor::randomise()
     repaint();
 }
 
+// RESET: one page (or every page, −1) back to its defaults, as one undo step.
+void SiltEditor::resetPages (int which)
+{
+    const int changed = which < 0 ? silt.resetAllPages() : silt.resetPage (which);
+    const juce::String name = which < 0 ? juce::String ("ALL PAGES") : juce::String (layout::pageName (which));
+    flash = changed > 0 ? "RESET " + name + ": " + juce::String (changed) + (changed == 1 ? " CHANGE" : " CHANGES")
+                        : "RESET " + name + ": ALREADY AT DEFAULTS";
+    flashUntil = juce::Time::getMillisecondCounter() + 1500;
+    refreshLayout();
+    repaint();
+}
+
 void SiltEditor::showRandomMenu()
 {
     static constexpr int amounts[] { 10, 25, 50, 75, 100 };
@@ -1047,10 +1075,15 @@ void SiltEditor::showRandomMenu()
     leaveOut.addItem (11, "Include all");
     menu.addSeparator();
     menu.addSubMenu ("Leave out on " + juce::String (layout::pageName (page)), leaveOut, ! entries.empty());
+    menu.addSeparator();
+    menu.addItem (20, "Reset " + juce::String (layout::pageName (page)) + (page == layout::mod ? " " + juce::String (silt.modShown.load() + 1) : juce::String()));
+    menu.addItem (21, "Reset all pages");
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&randomButton), [this, entries] (int chosen)
     {
-        if (chosen >= 1 && chosen <= (int) std::size (amounts))
+        if (chosen == 20 || chosen == 21)
+            resetPages (chosen == 21 ? -1 : page);
+        else if (chosen >= 1 && chosen <= (int) std::size (amounts))
             randomAmountBox->set ((float) amounts[chosen - 1] / 100.0f);
         else if (chosen == 10 || chosen == 11)
             for (const auto* e : entries)

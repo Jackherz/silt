@@ -210,6 +210,7 @@ private:
     int grainView = -1;   // the ? menu's GRAIN VIEW: −1 matches the theme, else a GrainScreen::FieldLook
     static void styleValueBox (juce::Slider&);
     void randomise();        // the open page
+    void resetPages (int which);   // RESET: one page, or all (−1)
     void showRandomMenu();
     juce::TextButton randomButton { "RANDOM" };
     std::unique_ptr<silt::ui::RandomAmountBox> randomAmountBox;
