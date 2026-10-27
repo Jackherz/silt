@@ -351,7 +351,7 @@ TEST_CASE ("The tour lets clicks through to the parts it lights, and nowhere els
     REQUIRE (tour != nullptr);
     REQUIRE (tour->isRunning());
 
-    tour->go (4);   // SPRAY: its knob and the screen are lit
+    tour->go (5);   // SPRAY (after Welcome, The screen, Your own sounds, Live input, Pages): its knob and the screen are lit
     auto* spray = rig.editor->findKnob ("spray");
     REQUIRE (spray != nullptr);
     const auto knob = spray->getBounds().getCentre();
