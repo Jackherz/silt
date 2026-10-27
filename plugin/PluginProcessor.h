@@ -265,6 +265,8 @@ public:
     std::unique_ptr<juce::XmlElement> capturePreset (const juce::String& name) const;
     void applyPreset (const juce::XmlElement&, const juce::String& name);   // one undo step
     void applyPresetValues (const juce::XmlElement&, const juce::String& name);   // the same, not recorded
+    // After auditioning (applyPresetValues), one undo step from the sound before.
+    void commitPresetChange (std::unique_ptr<juce::XmlElement> before, const juce::String& beforeName);
     juce::String presetName { "Init" };
 
     // The editor's size, saved with the set.

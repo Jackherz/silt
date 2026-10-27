@@ -555,3 +555,109 @@ TEST_CASE ("Diagnostics: ARM and LIVE with no input say where the audio has to c
     INFO (rig.editor->displayText() << " source " << (int) rig.silt.captureSource.load());
     CHECK (rig.editor->displayText().contains ("NEEDS INPUT"));
 }
+
+TEST_CASE ("Presets: every factory preset has a category; favourites, views and search filter the list")
+{
+    juce::ScopedJuceInitialiser_GUI juce;
+    SiltProcessor silt;
+    juce::TemporaryFile folder;
+    PresetManager presets (silt, folder.getFile());
+    for (const auto& e : presets.list())
+    {
+        INFO (e.name);
+        CHECK (PresetManager::categories().contains (e.category));
+    }
+    const auto count = [&] (const juce::String& view, const juce::String& search)
+    {
+        int n = 0;
+        for (const auto& e : presets.list())
+            n += presets.shows (e, view, search) ? 1 : 0;
+        return n;
+    };
+    CHECK (count ("ALL", {}) == PresetManager::numFactoryPresets());
+    CHECK (count ("SLICES", {}) == 2);
+    CHECK (count ("ALL", "bloom") == 1);         // any case
+    CHECK (count ("ALL", "rhythmic") == 3);      // a category matches too
+    CHECK (count ("FAVOURITES", {}) == 0);
+    presets.setFavourite ("Glass Cloud", true);
+    presets.setFavourite ("Dark Drone", true);
+    PresetManager again (silt, folder.getFile());   // kept in the folder
+    CHECK (again.isFavourite ("Glass Cloud"));
+    CHECK (count ("FAVOURITES", {}) == 2);
+    presets.setFavourite ("Glass Cloud", false);
+    CHECK (count ("FAVOURITES", {}) == 1);
+    folder.getFile().deleteRecursively();
+}
+
+TEST_CASE ("Presets: a user preset saves with a category, and can be renamed, refiled and binned")
+{
+    juce::ScopedJuceInitialiser_GUI juce;
+    SiltProcessor silt;
+    juce::TemporaryFile folder;
+    PresetManager presets (silt, folder.getFile());
+    REQUIRE (presets.save ("Mine", "PADS"));
+    const auto find = [&] (const juce::String& name)
+    {
+        for (const auto& e : presets.list())
+            if (e.name == name)
+                return std::optional<PresetManager::Entry> (e);
+        return std::optional<PresetManager::Entry>();
+    };
+    REQUIRE (find ("Mine").has_value());
+    CHECK (find ("Mine")->category == "PADS");
+    presets.setFavourite ("Mine", true);
+
+    REQUIRE (presets.rename (*find ("Mine"), "Yours"));
+    CHECK_FALSE (find ("Mine").has_value());
+    REQUIRE (find ("Yours").has_value());
+    CHECK (presets.isFavourite ("Yours"));   // the star follows the name
+    CHECK (silt.presetName == "Yours");
+
+    REQUIRE (presets.setCategory (*find ("Yours"), "DRONES"));
+    CHECK (find ("Yours")->category == "DRONES");
+    CHECK_FALSE (presets.rename (*find ("Glass Cloud"), "x"));   // factory presets stay as they are
+
+    PresetManager::toTrash = false;   // not the real bin
+    REQUIRE (presets.remove (*find ("Yours")));
+    PresetManager::toTrash = true;
+    CHECK_FALSE (find ("Yours").has_value());
+    CHECK_FALSE (presets.isFavourite ("Yours"));
+    folder.getFile().deleteRecursively();
+}
+
+TEST_CASE ("Preset browser: clicking plays a preset; CANCEL puts the sound back, KEEP is one undo step")
+{
+    EditorRig rig;
+    auto* browser = rig.editor->getPresetBrowser();
+    REQUIRE (browser != nullptr);
+    rig.set ("spray", 37.0f);   // the sound before
+    const auto spray = [&] { return rig.silt.params.getParameter ("spray")->getValue(); };
+    const float before = spray();
+
+    browser->open();
+    browser->setSearch ("glass");
+    REQUIRE (browser->numShown() == 1);
+    browser->choose (0);
+    CHECK (rig.silt.presetName == "Glass Cloud");
+    CHECK (spray() != before);
+    browser->setSearch ("drone");
+    browser->choose (0);
+    CHECK (rig.silt.presetName == "Dark Drone");
+    browser->close (false);   // CANCEL
+    CHECK (spray() == Catch::Approx (before));
+    CHECK (rig.silt.presetName != "Dark Drone");
+    CHECK_FALSE (browser->isVisible());
+
+    rig.silt.clearUndoHistory();
+    browser->open();
+    browser->setView ("PADS");
+    REQUIRE (browser->numShown() >= 2);
+    browser->choose (0);
+    browser->choose (1);   // two auditions...
+    const auto kept = rig.silt.presetName;
+    browser->close (true);   // ...one KEEP
+    CHECK (rig.silt.presetName == kept);
+    REQUIRE (rig.silt.undoRoutes());   // a single step back
+    CHECK (spray() == Catch::Approx (before));
+    CHECK_FALSE (rig.silt.canUndoRoutes());
+}

@@ -163,7 +163,12 @@ Sample Strings, Grit Bells, Ducked Echoes, Spread Chorus, Head Patterns; the thr
 from notes in SLICE or FEED are left out of Silt FX). Loading one is a single undo step. User presets are
 `.siltpreset` XML files in `~/Library/Audio/Presets/Silt Audio/<plug-in>/` on macOS
 (`%APPDATA%/Silt Audio/<plug-in>/Presets` on Windows). SAVE updates a user preset,
-or asks for a name; the name menu lists both sets, SAVE AS… and the folder.
+or asks for a name and a category. Click the name for the **browser**: search, category
+keys (PADS, TEXTURES, DRONES, TONAL, RHYTHMIC, SLICES, USER) and ★ favourites (click a
+star; kept in `favourites.txt` in the preset folder). Clicking a preset, or the arrow keys,
+plays it at once; KEEP (Return, double-click) keeps it as one undo step, CANCEL (Esc) puts
+back the sound you had. Right-click a user preset to rename it, change its category, or
+move it to the Trash.
 
 **8-knob controller:** a controller's 8 knobs move the 8 slots of the current page
 (GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER / COLOR / SPACE / MOD), following the modes

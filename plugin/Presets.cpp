@@ -1,6 +1,8 @@
 #include "Presets.h"
 #include "Palette.h"
 
+#include <map>
+
 using namespace silt::ui;
 
 namespace
@@ -142,6 +144,19 @@ const std::vector<Factory>& allFactories()
     return list;
 }
 
+// Each factory preset's category in the browser.
+juce::String factoryCategory (const juce::String& name)
+{
+    static const std::map<juce::String, const char*> categoryOf {
+        { "Init", "TONAL" },          { "Glass Cloud", "PADS" },     { "Tape Choir", "TEXTURES" },  { "Rust Rhythm", "RHYTHMIC" },
+        { "Bell Garden", "TONAL" },   { "Wander", "TEXTURES" },      { "Dark Drone", "DRONES" },    { "Shimmer Pad", "PADS" },
+        { "Hit Chop", "SLICES" },     { "Stutter Grid", "SLICES" },  { "Feed Bloom", "TEXTURES" },  { "Sample Strings", "TONAL" },
+        { "Grit Bells", "TONAL" },    { "Ducked Echoes", "RHYTHMIC" }, { "Spread Chorus", "PADS" }, { "Head Patterns", "RHYTHMIC" },
+    };
+    const auto it = categoryOf.find (name);
+    return it != categoryOf.end() ? it->second : "TONAL";
+}
+
 // This build's presets: Silt FX leaves out the ones played from notes.
 const std::vector<Factory>& factories()
 {
@@ -158,6 +173,12 @@ const std::vector<Factory>& factories()
 } // namespace
 
 PresetManager::PresetManager (SiltProcessor& p, juce::File f) : silt (p), folder (std::move (f)) {}
+
+const juce::StringArray& PresetManager::categories()
+{
+    static const juce::StringArray list { "PADS", "TEXTURES", "DRONES", "TONAL", "RHYTHMIC", "SLICES", "USER" };
+    return list;
+}
 
 juce::File PresetManager::defaultFolder()
 {
@@ -176,6 +197,7 @@ std::unique_ptr<juce::XmlElement> PresetManager::factoryPreset (int index)
     const auto& f = factories()[(size_t) juce::jlimit (0, numFactoryPresets() - 1, index)];
     auto xml = std::make_unique<juce::XmlElement> ("SiltPreset");
     xml->setAttribute ("name", f.name);
+    xml->setAttribute ("category", factoryCategory (f.name));
     auto* values = xml->createNewChildElement ("PARAMS");
     for (const auto& [id, value] : f.values)
         values->setAttribute (id, value);
@@ -194,35 +216,128 @@ std::vector<PresetManager::Entry> PresetManager::list() const
 {
     std::vector<Entry> entries;
     for (int i = 0; i < numFactoryPresets(); ++i)
-        entries.push_back ({ factories()[(size_t) i].name, true, i, {} });
+        entries.push_back ({ factories()[(size_t) i].name, true, i, {}, factoryCategory (factories()[(size_t) i].name) });
 
     auto files = folder.findChildFiles (juce::File::findFiles, false, "*" + extension);
     std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b)
                { return a.getFileNameWithoutExtension().compareNatural (b.getFileNameWithoutExtension()) < 0; });
     for (const auto& file : files)
-        entries.push_back ({ file.getFileNameWithoutExtension(), false, -1, file });
+    {
+        // The category is in the file; one that's unreadable or has none is USER.
+        juce::String category = "USER";
+        if (const auto xml = juce::XmlDocument::parse (file); xml != nullptr && categories().contains (xml->getStringAttribute ("category")))
+            category = xml->getStringAttribute ("category");
+        entries.push_back ({ file.getFileNameWithoutExtension(), false, -1, file, category });
+    }
     return entries;
+}
+
+std::unique_ptr<juce::XmlElement> PresetManager::read (const Entry& entry) const
+{
+    auto xml = entry.factory ? factoryPreset (entry.factoryIndex) : juce::XmlDocument::parse (entry.file);
+    return xml != nullptr && xml->hasTagName ("SiltPreset") ? std::move (xml) : nullptr;
 }
 
 bool PresetManager::load (const Entry& entry)
 {
-    std::unique_ptr<juce::XmlElement> xml = entry.factory ? factoryPreset (entry.factoryIndex) : juce::XmlDocument::parse (entry.file);
-    if (xml == nullptr || ! xml->hasTagName ("SiltPreset"))
+    const auto xml = read (entry);
+    if (xml == nullptr)
         return false;
     silt.applyPreset (*xml, entry.name);
     return true;
 }
 
-bool PresetManager::save (const juce::String& name)
+bool PresetManager::audition (const Entry& entry)
+{
+    const auto xml = read (entry);
+    if (xml == nullptr)
+        return false;
+    silt.applyPresetValues (*xml, entry.name);
+    return true;
+}
+
+bool PresetManager::save (const juce::String& name, const juce::String& category)
 {
     const auto clean = juce::File::createLegalFileName (name.trim());
     if (clean.isEmpty() || ! folder.createDirectory())
         return false;
     const auto xml = silt.capturePreset (clean);
+    xml->setAttribute ("category", categories().contains (category) ? category : juce::String ("USER"));
     if (! xml->writeTo (folder.getChildFile (clean + extension)))
         return false;
     silt.presetName = clean;
     return true;
+}
+
+bool PresetManager::rename (const Entry& entry, const juce::String& newName)
+{
+    const auto clean = juce::File::createLegalFileName (newName.trim());
+    if (entry.factory || clean.isEmpty())
+        return false;
+    const auto target = folder.getChildFile (clean + extension);
+    if (target.exists() || ! entry.file.moveFileTo (target))
+        return false;
+    if (const auto xml = juce::XmlDocument::parse (target))
+    {
+        xml->setAttribute ("name", clean);
+        xml->writeTo (target);
+    }
+    if (isFavourite (entry.name))
+    {
+        setFavourite (entry.name, false);
+        setFavourite (clean, true);
+    }
+    if (silt.presetName == entry.name)
+        silt.presetName = clean;
+    return true;
+}
+
+bool PresetManager::remove (const Entry& entry)
+{
+    // To the bin, not gone: it can be fished back out.
+    if (entry.factory || ! (toTrash ? entry.file.moveToTrash() : entry.file.deleteFile()))
+        return false;
+    setFavourite (entry.name, false);
+    return true;
+}
+
+bool PresetManager::setCategory (const Entry& entry, const juce::String& category)
+{
+    if (entry.factory || ! categories().contains (category))
+        return false;
+    const auto xml = juce::XmlDocument::parse (entry.file);
+    if (xml == nullptr)
+        return false;
+    xml->setAttribute ("category", category);
+    return xml->writeTo (entry.file);
+}
+
+juce::StringArray PresetManager::favourites() const
+{
+    juce::StringArray names;
+    names.addLines (folder.getChildFile ("favourites.txt").loadFileAsString());
+    names.removeEmptyStrings();
+    return names;
+}
+
+bool PresetManager::isFavourite (const juce::String& name) const { return favourites().contains (name); }
+
+void PresetManager::setFavourite (const juce::String& name, bool favourite)
+{
+    auto names = favourites();
+    if (favourite)
+        names.addIfNotAlreadyThere (name);
+    else
+        names.removeString (name);
+    if (folder.createDirectory())
+        folder.getChildFile ("favourites.txt").replaceWithText (names.joinIntoString ("\n"));
+}
+
+bool PresetManager::shows (const Entry& entry, const juce::String& view, const juce::String& search) const
+{
+    const bool inView = view == "ALL" || (view == "FAVOURITES" ? isFavourite (entry.name) : entry.category == view);
+    const auto query = search.trim();
+    return inView && (query.isEmpty() || entry.name.containsIgnoreCase (query) || entry.category.containsIgnoreCase (query));
 }
 
 bool PresetManager::step (int direction)
@@ -238,6 +353,307 @@ bool PresetManager::step (int direction)
     return load (entries[(size_t) (((at < 0 ? (direction > 0 ? -1 : 0) : at) + direction + n) % n)]);
 }
 
+// --- PresetBrowser ------------------------------------------------------------------------
+
+PresetBrowser::PresetBrowser (SiltProcessor& p) : silt (p), presets (p)
+{
+    setWantsKeyboardFocus (true);
+    search.setTextToShowWhenEmpty ("SEARCH", screenPale.withAlpha (0.5f));
+    search.setFont (monoFont (13.0f));
+    search.setColour (juce::TextEditor::backgroundColourId, juce::Colours::black.withAlpha (0.35f));
+    search.setColour (juce::TextEditor::textColourId, juce::Colours::white);
+    search.setColour (juce::TextEditor::outlineColourId, screenLight.withAlpha (0.5f));
+    search.setColour (juce::TextEditor::focusedOutlineColourId, screenLime);
+    search.onTextChange = [this] { refresh(); };
+    search.onReturnKey = [this] { close (true); };
+    search.onEscapeKey = [this] { close (false); };
+    addAndMakeVisible (search);
+
+    juce::StringArray views { "ALL", "FAVOURITES" };
+    views.addArray (PresetManager::categories());
+    for (const auto& v : views)
+    {
+        auto* key = viewKeys.add (new juce::TextButton (v == "FAVOURITES" ? juce::String::fromUTF8 ("\xe2\x98\x85") : v));
+        key->setClickingTogglesState (true);
+        key->setRadioGroupId (2);
+        key->onClick = [this, v] { setView (v); };
+        key->setTooltip (v == "FAVOURITES" ? "Your starred presets" : "");
+        addAndMakeVisible (key);
+    }
+    viewKeys[0]->setToggleState (true, juce::dontSendNotification);
+
+    list.setModel (this);
+    list.setRowHeight (22);
+    list.setColour (juce::ListBox::backgroundColourId, juce::Colours::transparentBlack);
+    list.setOutlineThickness (0);
+    addAndMakeVisible (list);
+
+    keep.onClick = [this] { close (true); };
+    cancel.onClick = [this] { close (false); };
+    saveAsButton.onClick = [this] { saveAs(); };
+    folderButton.onClick = [this]
+    {
+        presets.getFolder().createDirectory();
+        presets.getFolder().revealToUser();
+    };
+    keep.setTooltip ("Keep this sound (Return): one undo step");
+    cancel.setTooltip ("Back to the sound you had (Esc)");
+    for (auto* b : { &keep, &cancel, &saveAsButton, &folderButton })
+        addAndMakeVisible (b);
+    setVisible (false);
+}
+
+PresetBrowser::~PresetBrowser() { list.setModel (nullptr); }
+
+void PresetBrowser::open()
+{
+    soundBefore = silt.capturePreset (silt.presetName);
+    nameBefore = silt.presetName;
+    auditioned = false;
+    search.clear();
+    refresh();
+    setVisible (true);
+    toFront (true);
+    // The current preset selected, without playing it again.
+    for (size_t i = 0; i < shown.size(); ++i)
+        if (shown[i].name == silt.presetName)
+        {
+            const juce::ScopedValueSetter<bool> quiet (choosing, true);
+            list.selectRow ((int) i);
+        }
+    search.grabKeyboardFocus();
+}
+
+void PresetBrowser::close (bool keepIt)
+{
+    if (! isVisible())
+        return;
+    if (auditioned)
+    {
+        if (keepIt)
+            silt.commitPresetChange (std::move (soundBefore), nameBefore);
+        else if (soundBefore != nullptr)
+            silt.applyPresetValues (*soundBefore, nameBefore);
+    }
+    soundBefore = nullptr;
+    auditioned = false;
+    setVisible (false);
+    if (onClosed)
+        onClosed();
+}
+
+void PresetBrowser::setView (const juce::String& v)
+{
+    view = v;
+    for (auto* key : viewKeys)
+        if (key->getButtonText() == v || (v == "FAVOURITES" && key->getTooltip().isNotEmpty()))
+            key->setToggleState (true, juce::dontSendNotification);
+    refresh();
+}
+
+void PresetBrowser::setSearch (const juce::String& text) { search.setText (text, true); refresh(); }
+
+void PresetBrowser::refresh()
+{
+    shown.clear();
+    for (auto& entry : presets.list())
+        if (presets.shows (entry, view, search.getText()))
+            shown.push_back (std::move (entry));
+    list.updateContent();
+    list.repaint();
+}
+
+void PresetBrowser::choose (int row)
+{
+    if (row < 0 || row >= (int) shown.size())
+        return;
+    if (presets.audition (shown[(size_t) row]))
+        auditioned = true;
+    list.repaint();
+}
+
+void PresetBrowser::paintListBoxItem (int row, juce::Graphics& g, int width, int height, bool selected)
+{
+    if (row < 0 || row >= (int) shown.size())
+        return;
+    const auto& e = shown[(size_t) row];
+    const bool current = e.name == silt.presetName;
+    auto r = juce::Rectangle<int> (width, height);
+    if (selected || current)
+    {
+        g.setColour (screenLight.withAlpha (selected ? 0.4f : 0.2f));
+        g.fillRect (r);
+    }
+    // The star: click it to favourite.
+    const bool favourite = presets.isFavourite (e.name);
+    g.setFont (monoFont (14.0f));
+    g.setColour (favourite ? screenLime : screenPale.withAlpha (0.35f));
+    g.drawText (juce::String::fromUTF8 (favourite ? "\xe2\x98\x85" : "\xe2\x98\x86"), r.removeFromLeft (26), juce::Justification::centred);
+    g.setFont (monoFont (12.0f));
+    g.setColour (screenPale.withAlpha (0.55f));
+    g.drawText (e.factory ? "FACTORY" : "USER", r.removeFromRight (70), juce::Justification::centredLeft);
+    g.drawText (e.category, r.removeFromRight (100), juce::Justification::centredLeft);
+    g.setColour (current ? screenLime : juce::Colours::white);
+    g.drawText (e.name.toUpperCase(), r, juce::Justification::centredLeft);
+}
+
+void PresetBrowser::listBoxItemClicked (int row, const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+    {
+        showRowMenu (row);
+        return;
+    }
+    if (e.x < 26 && row >= 0 && row < (int) shown.size())
+    {
+        // The star column: favourite, don't play.
+        presets.setFavourite (shown[(size_t) row].name, ! presets.isFavourite (shown[(size_t) row].name));
+        refresh();
+        return;
+    }
+    choose (row);
+}
+
+void PresetBrowser::listBoxItemDoubleClicked (int row, const juce::MouseEvent&)
+{
+    choose (row);
+    close (true);
+}
+
+void PresetBrowser::selectedRowsChanged (int lastRowSelected)
+{
+    // The arrow keys play as they move.
+    if (! choosing && lastRowSelected >= 0 && list.hasKeyboardFocus (true))
+        choose (lastRowSelected);
+}
+
+bool PresetBrowser::keyPressed (const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::escapeKey)
+    {
+        close (false);
+        return true;
+    }
+    if (key == juce::KeyPress::returnKey)
+    {
+        close (true);
+        return true;
+    }
+    if (key == juce::KeyPress::downKey || key == juce::KeyPress::upKey)
+    {
+        const int row = juce::jlimit (0, std::max (0, (int) shown.size() - 1), list.getSelectedRow() + (key == juce::KeyPress::downKey ? 1 : -1));
+        list.selectRow (row);
+        choose (row);
+        return true;
+    }
+    return false;
+}
+
+void PresetBrowser::showRowMenu (int row)
+{
+    if (row < 0 || row >= (int) shown.size())
+        return;
+    const auto entry = shown[(size_t) row];
+    juce::PopupMenu menu, file;
+    const bool fav = presets.isFavourite (entry.name);
+    menu.addItem (1, fav ? "Remove from favourites" : "Add to favourites");
+    if (! entry.factory)
+    {
+        for (int i = 0; i < PresetManager::categories().size(); ++i)
+            file.addItem (100 + i, PresetManager::categories()[i], true, entry.category == PresetManager::categories()[i]);
+        menu.addSeparator();
+        menu.addSubMenu ("Category", file);
+        menu.addItem (2, "Rename...");
+        menu.addItem (3, "Move to Trash");
+    }
+    juce::PopupMenu::dismissAllActiveMenus();
+    menu.showMenuAsync (juce::PopupMenu::Options(), [this, entry, fav] (int chosen)
+    {
+        if (chosen == 1)
+            presets.setFavourite (entry.name, ! fav);
+        else if (chosen >= 100)
+            presets.setCategory (entry, PresetManager::categories()[chosen - 100]);
+        else if (chosen == 3)
+            presets.remove (entry);
+        else if (chosen == 2)
+        {
+            asking = std::make_unique<juce::AlertWindow> ("Rename preset", "A new name:", juce::MessageBoxIconType::NoIcon, this);
+            asking->addTextEditor ("name", entry.name);
+            asking->addButton ("Rename", 1, juce::KeyPress (juce::KeyPress::returnKey));
+            asking->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            asking->enterModalState (true, juce::ModalCallbackFunction::create ([this, entry] (int result)
+            {
+                if (result == 1 && asking != nullptr)
+                    presets.rename (entry, asking->getTextEditorContents ("name"));
+                asking = nullptr;
+                refresh();
+            }));
+            return;
+        }
+        refresh();
+    });
+}
+
+void PresetBrowser::saveAs()
+{
+    asking = std::make_unique<juce::AlertWindow> ("Save preset", "A name for this sound:", juce::MessageBoxIconType::NoIcon, this);
+    asking->addTextEditor ("name", silt.presetName == "Init" ? juce::String() : silt.presetName);
+    asking->addComboBox ("category", PresetManager::categories(), "Category");
+    if (auto* box = asking->getComboBoxComponent ("category"))
+        box->setSelectedItemIndex (PresetManager::categories().indexOf (view) >= 0 ? PresetManager::categories().indexOf (view) : PresetManager::categories().size() - 1);
+    asking->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    asking->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    asking->enterModalState (true, juce::ModalCallbackFunction::create ([this] (int result)
+    {
+        if (result == 1 && asking != nullptr)
+        {
+            const auto* box = asking->getComboBoxComponent ("category");
+            presets.save (asking->getTextEditorContents ("name"), box != nullptr ? box->getText() : juce::String ("USER"));
+            soundBefore = silt.capturePreset (silt.presetName);   // saved: it's the sound to keep now
+            nameBefore = silt.presetName;
+            auditioned = false;
+        }
+        asking = nullptr;
+        refresh();
+    }));
+}
+
+void PresetBrowser::paint (juce::Graphics& g)
+{
+    // A dark panel like the screen's pictures.
+    g.setColour (insetBack.interpolatedWith (juce::Colours::black, 0.55f));
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 6.0f);
+    g.setColour (screenLight.withAlpha (0.6f));
+    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 6.0f, 1.0f);
+    g.setColour (screenLime);
+    g.setFont (monoFont (12.0f));
+    g.drawText ("PRESETS  " + juce::String (shown.size()) + (shown.size() == 1 ? " SOUND" : " SOUNDS"),
+                getLocalBounds().reduced (12, 8).removeFromTop (16), juce::Justification::centredLeft);
+    g.setColour (screenPale.withAlpha (0.6f));
+    g.setFont (monoFont (10.0f));
+    g.drawText ("CLICK TO HEAR   RETURN KEEPS   ESC GOES BACK", getLocalBounds().reduced (12, 8).removeFromTop (16), juce::Justification::centredRight);
+}
+
+void PresetBrowser::resized()
+{
+    auto r = getLocalBounds().reduced (12, 8);
+    r.removeFromTop (20);
+    auto top = r.removeFromTop (26);
+    search.setBounds (top.removeFromLeft (juce::jmin (220, top.getWidth() / 3)));
+    top.removeFromLeft (8);
+    const int keyWidth = top.getWidth() / juce::jmax (1, viewKeys.size());
+    for (auto* key : viewKeys)
+        key->setBounds (top.removeFromLeft (keyWidth).reduced (2, 0));
+    r.removeFromTop (6);
+    auto bottom = r.removeFromBottom (28);
+    r.removeFromBottom (6);
+    list.setBounds (r);
+    for (auto* b : { &keep, &cancel })
+        b->setBounds (bottom.removeFromRight (90).reduced (3, 0));
+    for (auto* b : { &saveAsButton, &folderButton })
+        b->setBounds (bottom.removeFromLeft (100).reduced (3, 0));
+}
+
 // --- PresetBar ------------------------------------------------------------------------
 
 PresetBar::PresetBar (SiltProcessor& p) : presets (p)
@@ -246,66 +662,45 @@ PresetBar::PresetBar (SiltProcessor& p) : presets (p)
     next.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x25b6));
     previous.onClick = [this] { presets.step (-1); refresh(); };
     next.onClick = [this] { presets.step (1); refresh(); };
-    name.onClick = [this] { showMenu(); };
+    name.onClick = [this]
+    {
+        if (onBrowse)
+            onBrowse();
+    };
+    name.setTooltip ("Browse presets: search, categories, favourites");
     save.onClick = [this]
     {
-        // SAVE keeps a user preset's name; anything else asks for one.
+        // SAVE keeps a user preset's name and category; anything else asks for them.
         const auto current = presets.currentName();
-        const auto entries = presets.list();
-        const bool isUser = std::any_of (entries.begin(), entries.end(), [&] (const auto& e) { return ! e.factory && e.name == current; });
-        if (isUser)
-            presets.save (current);
-        else
-            saveAs();
+        for (const auto& e : presets.list())
+            if (! e.factory && e.name == current)
+            {
+                presets.save (current, e.category);
+                return;
+            }
+        saveAs();
     };
     for (auto* b : { &previous, &next, &name, &save })
         addAndMakeVisible (b);
     refresh();
 }
 
-void PresetBar::showMenu()
-{
-    const auto entries = presets.list();
-    juce::PopupMenu menu, factory, user;
-    for (size_t i = 0; i < entries.size(); ++i)
-        (entries[i].factory ? factory : user).addItem ((int) i + 1, entries[i].name, true, entries[i].name == presets.currentName());
-    menu.addSectionHeader ("FACTORY");
-    for (juce::PopupMenu::MenuItemIterator it (factory); it.next();)
-        menu.addItem (it.getItem());
-    menu.addSectionHeader ("USER");
-    if (user.getNumItems() == 0)
-        menu.addItem (-1, "(none yet: SAVE makes one)", false);
-    for (juce::PopupMenu::MenuItemIterator it (user); it.next();)
-        menu.addItem (it.getItem());
-    menu.addSeparator();
-    menu.addItem (10000, "Save as...");
-    menu.addItem (10001, "Show preset folder");
-
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&name), [this, entries] (int chosen)
-    {
-        if (chosen == 10000)
-            saveAs();
-        else if (chosen == 10001)
-        {
-            presets.getFolder().createDirectory();
-            presets.getFolder().revealToUser();
-        }
-        else if (chosen >= 1 && chosen <= (int) entries.size())
-            presets.load (entries[(size_t) chosen - 1]);
-        refresh();
-    });
-}
-
 void PresetBar::saveAs()
 {
     asking = std::make_unique<juce::AlertWindow> ("Save preset", "A name for this sound:", juce::MessageBoxIconType::NoIcon, this);
     asking->addTextEditor ("name", presets.currentName() == "Init" ? juce::String() : presets.currentName());
+    asking->addComboBox ("category", PresetManager::categories(), "Category");
+    if (auto* box = asking->getComboBoxComponent ("category"))
+        box->setSelectedItemIndex (PresetManager::categories().size() - 1);
     asking->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
     asking->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
     asking->enterModalState (true, juce::ModalCallbackFunction::create ([this] (int result)
     {
         if (result == 1 && asking != nullptr)
-            presets.save (asking->getTextEditorContents ("name"));
+        {
+            const auto* box = asking->getComboBoxComponent ("category");
+            presets.save (asking->getTextEditorContents ("name"), box != nullptr ? box->getText() : juce::String ("USER"));
+        }
         asking = nullptr;
         refresh();
     }));

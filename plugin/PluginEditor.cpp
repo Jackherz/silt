@@ -239,6 +239,10 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     addAndMakeVisible (*rail);
     presetBar = std::make_unique<PresetBar> (silt);
     addAndMakeVisible (*presetBar);
+    presetBrowser = std::make_unique<PresetBrowser> (silt);
+    addChildComponent (*presetBrowser);
+    presetBar->onBrowse = [this] { presetBrowser->isVisible() ? presetBrowser->close (true) : presetBrowser->open(); };
+    presetBrowser->onClosed = [this] { presetBar->refresh(); refreshLayout(); };
     screen->drawInset = [this] (juce::Graphics& g, juce::Rectangle<float> area) { return drawPageInset (g, area, page, silt, *rail); };
     screen->drawStrip = [this] (juce::Graphics& g, juce::Rectangle<float> area) { return page == layout::space && drawSpaceTimeline (g, area, silt); };
     if (auto* gain = dynamic_cast<juce::RangedAudioParameter*> (silt.params.getParameter ("sampleGain")))
@@ -1700,6 +1704,8 @@ void SiltEditor::resized()
     screen->setSplit (silt.layoutField.load(), silt.layoutInset.load());
     screen->setBounds (r);
     chainView->setBounds (screen->rollArea().translated (r.getX(), r.getY()));
+    if (presetBrowser != nullptr)
+        presetBrowser->setBounds (r.reduced (6));
     pagePanel = tray.getUnion (wellArea);
 
     // Header: the name and stripes over the left column, presets over

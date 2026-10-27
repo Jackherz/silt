@@ -165,7 +165,7 @@ inline juce::String helpFor (const juce::String& id)
         { "!tab", "PAGES: 8 controls each; right-click to reset" },
         { "!chip", "MOD: click to arm, drag onto a knob" },
         { "!grip", "GRIP: drag to share space; double-click resets" },
-        { "!preset", "PRESETS: step through, or SAVE your own" },
+        { "!preset", "PRESETS: click the name to browse; SAVE yours" },
     };
 
     if (const auto it = help.find (id); it != help.end())

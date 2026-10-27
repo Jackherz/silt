@@ -16,6 +16,7 @@ class RandomAmountBox;
 class Grip;
 }
 class PresetBar;
+class PresetBrowser;
 
 // The panel, drawn natively in the plan §5 palette. A screen on top shows the
 // sample and every sounding grain; below it, one page of controls at a time,
@@ -156,6 +157,10 @@ private:
     std::unique_ptr<silt::ui::ModRail> rail;
     std::unique_ptr<silt::ui::RouteList> routeList;
     std::unique_ptr<PresetBar> presetBar;
+    std::unique_ptr<PresetBrowser> presetBrowser;
+public:
+    PresetBrowser* getPresetBrowser() const { return presetBrowser.get(); }   // for tests
+private:
     std::unique_ptr<silt::ui::SampleGainBox> sampleGainBox;
     juce::String presetShown;
     std::vector<float> insetSeen;

@@ -8,6 +8,7 @@
 // parameter's own units (ms, %, st...).
 
 #include "../../plugin/PluginEditor.h"
+#include "../../plugin/Presets.h"
 
 #include <iostream>
 
@@ -183,6 +184,21 @@ int main (int argc, char* argv[])
         }
         tour->go (99);
     }
+
+    // The preset browser, with two favourites starred.
+    if (auto* siltEditor = dynamic_cast<SiltEditor*> (editor.get()))
+        if (auto* browser = siltEditor->getPresetBrowser())
+        {
+            browser->open();
+            runMessageLoop (120);
+            const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
+            const auto file = outDir.getChildFile ("presets.png");
+            file.deleteFile();
+            juce::FileOutputStream stream (file);
+            juce::PNGImageFormat().writeImageToStream (image, stream);
+            std::cout << file.getFullPathName() << "\n";
+            browser->close (false);
+        }
 
     // The route list, over the last page.
     if (auto* siltEditor = dynamic_cast<SiltEditor*> (editor.get()))

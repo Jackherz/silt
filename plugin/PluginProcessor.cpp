@@ -1918,11 +1918,18 @@ void SiltProcessor::applyPreset (const juce::XmlElement& xml, const juce::String
     auto before = capturePreset (presetName);
     const auto beforeName = presetName;
     applyPresetValues (xml, name);
-    routeUndo.beginNewTransaction ("PRESET " + name.toUpperCase());
+    commitPresetChange (std::move (before), beforeName);
+}
+
+void SiltProcessor::commitPresetChange (std::unique_ptr<juce::XmlElement> before, const juce::String& beforeName)
+{
+    if (before == nullptr)
+        return;
+    routeUndo.beginNewTransaction ("PRESET " + presetName.toUpperCase());
     lastGestureParameter = -1;
     {
         const juce::ScopedValueSetter<bool> quiet (replaying, true);
-        routeUndo.perform (new PresetChange (*this, std::move (before), beforeName, std::make_unique<juce::XmlElement> (xml), name));
+        routeUndo.perform (new PresetChange (*this, std::move (before), beforeName, capturePreset (presetName), presetName));
     }
     lastGestureParameter = -1;
 }
