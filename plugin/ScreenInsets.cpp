@@ -1057,6 +1057,10 @@ void drawPitch (juce::Graphics& g, juce::Rectangle<float> area, const SiltProces
 
 // --- MOD ---------------------------------------------------------------------------------
 
+// Each modulator's envelope stage as the screen last saw it, and when it began.
+struct EnvelopeClock { int stage = 0; double since = 0.0; };
+std::array<EnvelopeClock, SiltProcessor::numModulators> envelopeClocks {};
+
 void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcessor& silt, const ModRail& rail)
 {
     const int m = silt.modShown.load();
@@ -1150,14 +1154,25 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
         line.lineTo (at (a + d + hold, s));
         line.lineTo (at (total, 0.0f));
 
-        // Where it is now: placed along its stage by its level.
-        const float level = silt.modOutputs[(size_t) m].load();
-        switch (silt.modStages[(size_t) m].load())
+        // Where it is now: along its stage by the time since the stage began
+        // (the level can't say, as a release can start anywhere and the curves
+        // aren't straight), at the height it really has.
+        const float level = juce::jlimit (0.0f, 1.0f, silt.modOutputs[(size_t) m].load());
+        const int stage = silt.modStages[(size_t) m].load();
+        auto& clock = envelopeClocks[(size_t) m];
+        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        if (stage != clock.stage)
         {
-            case 1: playhead = at (a * level, level); break;                                                      // attack
-            case 2: playhead = at (a + d * (1.0f - level) / std::max (1.0e-3f, 1.0f - s), level); break;          // decay
-            case 3: playhead = at (a + d + hold * 0.5f, level); break;                                              // sustain
-            case 4: playhead = at (a + d + hold + rel * (1.0f - level / std::max (1.0e-3f, s)), level); break;     // release
+            clock.stage = stage;
+            clock.since = nowMs;
+        }
+        const float elapsed = (float) (nowMs - clock.since);
+        switch (stage)
+        {
+            case 1: playhead = at (std::min (elapsed, a), level); break;                                           // attack
+            case 2: playhead = at (a + std::min (elapsed, d), level); break;                                       // decay
+            case 3: playhead = at (a + d + hold * 0.5f * std::min (1.0f, elapsed / 300.0f), level); break;         // sustain: settles mid-hold
+            case 4: playhead = at (a + d + hold + std::min (elapsed, rel), level); break;                          // release
             default: break;
         }
     }
@@ -1252,6 +1267,8 @@ std::vector<float> insetKey (int page, const SiltProcessor& silt, const ModRail&
                 key.push_back ((float) rail.chip (m).getHistoryStart());   // the trace moves on
             else
                 key.insert (key.end(), { silt.modOutputs[(size_t) m].load(), silt.modPhases[(size_t) m].load() });   // the dot moves on
+            if (p.type == silt::ModType::envelope && silt.modStages[(size_t) m].load() != 0)
+                key.push_back (animationSeconds());   // the dot travels through each stage in time
             break;
         }
         default: break;
