@@ -1058,7 +1058,13 @@ void drawPitch (juce::Graphics& g, juce::Rectangle<float> area, const SiltProces
 // --- MOD ---------------------------------------------------------------------------------
 
 // Each modulator's envelope stage as the screen last saw it, and when it began.
-struct EnvelopeClock { int stage = 0; double since = 0.0; };
+struct EnvelopeClock
+{
+    int stage = 0;
+    double since = 0.0;
+    float lastMs = 0.0f;           // where along the drawn shape the dot last was
+    float releaseFromMs = -1.0f;   // ≥ 0: let go before sustain, from here
+};
 std::array<EnvelopeClock, SiltProcessor::numModulators> envelopeClocks {};
 
 void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcessor& silt, const ModRail& rail)
@@ -1170,17 +1176,48 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
         const double nowMs = juce::Time::getMillisecondCounterHiRes();
         if (stage != clock.stage)
         {
+            // A tap shorter than a frame goes straight from idle to release:
+            // place it up the attack by the level it reached.
+            if (clock.stage == 0 && stage == 4)
+                clock.lastMs = a * juce::jlimit (0.0f, 1.0f, silt.modOutputs[(size_t) m].load());
             clock.stage = stage;
             clock.since = nowMs;
         }
         const float elapsed = (float) (nowMs - clock.since);
         switch (stage)
         {
-            case 1: playhead = onLine (std::min (elapsed, a)); break;                                           // attack
-            case 2: playhead = onLine (a + std::min (elapsed, d)); break;                                       // decay
-            case 3: playhead = onLine (a + d + hold * 0.5f * std::min (1.0f, elapsed / 300.0f)); break;         // sustain: settles mid-hold
-            case 4: playhead = onLine (a + d + hold + std::min (elapsed, rel)); break;                          // release
-            default: break;
+            case 1: clock.lastMs = std::min (elapsed, a); playhead = onLine (clock.lastMs); clock.releaseFromMs = -1.0f; break;     // attack
+            case 2: clock.lastMs = a + std::min (elapsed, d); playhead = onLine (clock.lastMs); clock.releaseFromMs = -1.0f; break; // decay
+            case 3:                                                                                                                 // sustain: settles mid-hold
+                clock.lastMs = a + d + hold * 0.5f * std::min (1.0f, elapsed / 300.0f);
+                playhead = onLine (clock.lastMs);
+                clock.releaseFromMs = -1.0f;
+                break;
+            case 4:   // release
+            {
+                // Let go before sustain (a quick tap): it falls from where it
+                // had got to, over RELEASE's time, along a faint line of its own.
+                if (clock.releaseFromMs < 0.0f && clock.lastMs < a + d && elapsed < 50.0f)
+                    clock.releaseFromMs = clock.lastMs;
+                const float progress = std::min (1.0f, elapsed / std::max (rel, 1.0f));
+                if (clock.releaseFromMs >= 0.0f)
+                {
+                    const auto from = onLine (clock.releaseFromMs);
+                    const auto to = juce::Point<float> (from.x + plot.getWidth() * rel / total, plot.getBottom());
+                    juce::Path ghost;
+                    ghost.startNewSubPath (from);
+                    ghost.lineTo (to);
+                    const float dashes[] { 3.0f, 3.0f };
+                    juce::PathStrokeType (1.2f).createDashedStroke (ghost, ghost, dashes, 2);
+                    g.setColour (colour.withAlpha (0.6f));
+                    g.fillPath (ghost);
+                    playhead = from + (to - from) * progress;
+                }
+                else
+                    playhead = onLine (a + d + hold + rel * progress);
+                break;
+            }
+            default: clock.lastMs = 0.0f; clock.releaseFromMs = -1.0f; break;
         }
     }
     else
