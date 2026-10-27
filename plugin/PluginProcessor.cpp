@@ -2128,10 +2128,14 @@ bool SiltProcessor::isAudioFile (const juce::File& file) const
 
 std::unique_ptr<juce::AudioBuffer<float>> SiltProcessor::decode (juce::AudioFormatReader& reader) const
 {
-    // D9: samples hold up to 30 s.
+    // D9: samples hold up to 30 s, and Silt plays two channels. A header
+    // that can't be right (a corrupt file or project) gets nothing, rather
+    // than a buffer sized by it.
+    if (! (reader.sampleRate >= 1000.0 && reader.sampleRate <= 768000.0) || reader.numChannels == 0 || reader.lengthInSamples <= 0)
+        return nullptr;
     const int frames = (int) juce::jmin (reader.lengthInSamples, (juce::int64) (maxCaptureSeconds * reader.sampleRate));
-    auto audio = std::make_unique<juce::AudioBuffer<float>> ((int) juce::jmax (1u, reader.numChannels), juce::jmax (1, frames));
-    reader.read (audio.get(), 0, frames, 0, true, true);
+    auto audio = std::make_unique<juce::AudioBuffer<float>> ((int) juce::jmin (2u, reader.numChannels), frames);
+    reader.read (audio.get(), 0, frames, 0, true, reader.numChannels > 1);
     return audio;
 }
 
@@ -2342,8 +2346,18 @@ void SiltProcessor::loadInBackground (std::function<std::unique_ptr<juce::AudioF
             return;
         }
 
+        const auto audio = decode (*reader);
+        if (audio == nullptr)
+        {
+            juce::MessageManager::callAsync ([weak, name]
+            {
+                if (weak != nullptr)
+                    weak->lastLoadError = "CAN'T READ " + name.toUpperCase();
+            });
+            return;
+        }
         // Passed on by moving the buffer out of a shared holder: no copy.
-        auto buffer = std::make_shared<std::unique_ptr<silt::SampleBuffer>> (makeBuffer (*decode (*reader), reader->sampleRate));
+        auto buffer = std::make_shared<std::unique_ptr<silt::SampleBuffer>> (makeBuffer (*audio, reader->sampleRate));
         (*buffer)->analyse();
 
         juce::MessageManager::callAsync ([weak, buffer, name, factory, rootNote, onlyIfUnchanged, generation]
@@ -2843,10 +2857,18 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
     if (sizeInBytes > 8 && in.readInt() == stateMagic)
     {
         in.readInt();   // version
+        // Each part's length, kept within what's really left (a corrupt length
+        // can't ask for more than the state holds).
+        const auto part = [&in] (juce::MemoryBlock& block)
+        {
+            const auto length = in.readInt64();
+            if (length > 0 && length <= in.getNumBytesRemaining())
+                in.readIntoMemoryBlock (block, (juce::pointer_sized_int) length);
+        };
         juce::MemoryBlock xmlBlock;
-        in.readIntoMemoryBlock (xmlBlock, (juce::pointer_sized_int) in.readInt64());
+        part (xmlBlock);
         xml = getXmlFromBinary (xmlBlock.getData(), (int) xmlBlock.getSize());
-        in.readIntoMemoryBlock (flac, (juce::pointer_sized_int) in.readInt64());
+        part (flac);
     }
     else
     {
@@ -2904,6 +2926,8 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
         return;
 
     const auto audio = decode (*reader);
+    if (audio == nullptr)
+        return;   // the sample there was stays
     auto buffer = makeBuffer (*audio, reader->sampleRate);
     buffer->analyse();   // on the host's thread: hosts restore state off the audio thread
     installBuffer (std::move (buffer), name, flac.isEmpty() ? factory : -1);

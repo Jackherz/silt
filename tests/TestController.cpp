@@ -1346,3 +1346,183 @@ TEST_CASE ("RESET: a page back to its defaults as one undo step, keeping routes 
     }
     CHECK (rig.value ("root") == root);   // the sample's, not a page's
 }
+
+// --- State and sample robustness ------------------------------------------------------
+
+namespace
+{
+juce::File writeWav (int frames, double rate, int channels, int bits)
+{
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("silt-robust", ".wav");
+    juce::AudioBuffer<float> audio (channels, frames);
+    for (int ch = 0; ch < channels; ++ch)
+        for (int i = 0; i < frames; ++i)
+            audio.setSample (ch, i, 0.4f * std::sin (2.0f * 3.14159265f * 220.0f * (float) i / (float) rate));
+    std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (file);
+    auto writer = juce::WavAudioFormat().createWriterFor (stream, juce::AudioFormatWriterOptions{}.withSampleRate (rate).withNumChannels (channels).withBitsPerSample (bits));
+    if (writer != nullptr)
+        writer->writeFromAudioSampleBuffer (audio, 0, frames);
+    return file;
+}
+
+bool outputFinite (Rig& rig, int blocks)
+{
+    juce::MidiBuffer note;
+    note.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+    for (int b = 0; b < blocks; ++b)
+    {
+        juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 512);
+        buffer.clear();
+        juce::MidiBuffer midi;
+        if (b == 0)
+            midi = note;
+        rig.silt.processBlock (buffer, midi);
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            for (int i = 0; i < buffer.getNumSamples(); ++i)
+                if (! std::isfinite (buffer.getSample (ch, i)))
+                    return false;
+    }
+    return true;
+}
+} // namespace
+
+TEST_CASE ("State: garbage, empty, truncated or foreign states change nothing")
+{
+    Rig rig;
+    loadSine (rig);
+    rig.set ("spray", 0.7f);
+    const auto name = rig.silt.getOverview().name;
+
+    juce::MemoryBlock good;
+    rig.silt.getStateInformation (good);
+
+    std::vector<juce::MemoryBlock> bad;
+    bad.emplace_back();                                          // empty
+    bad.emplace_back ("SILT", 4);                                // just the magic, nearly
+    {
+        juce::MemoryBlock noise (5000);
+        juce::Random r (3);
+        for (size_t i = 0; i < noise.getSize(); ++i)
+            noise[i] = (char) r.nextInt (256);
+        bad.push_back (noise);                                   // noise
+    }
+    {
+        juce::MemoryOutputStream out;
+        out.writeInt (0x544c4953);
+        out.writeInt (2);
+        out.writeInt64 (std::numeric_limits<juce::int64>::max()); // a length that can't be
+        out.writeInt64 (-5);
+        bad.push_back (out.getMemoryBlock());
+    }
+    bad.emplace_back (good.getData(), good.getSize() / 2);       // cut short
+    {
+        juce::XmlElement other ("SomethingElse");
+        other.setAttribute ("spray", 0.1);
+        juce::MemoryBlock block;
+        juce::AudioProcessor::copyXmlToBinary (other, block);
+        bad.push_back (block);                                   // someone else's state
+    }
+
+    for (size_t i = 0; i < bad.size(); ++i)
+    {
+        INFO ("bad state " << i);
+        rig.silt.setStateInformation (bad[i].getData(), (int) bad[i].getSize());
+        CHECK (rig.value ("spray") == Catch::Approx (0.7f));
+        CHECK (rig.silt.getOverview().name == name);
+    }
+    CHECK (outputFinite (rig, 20));
+}
+
+TEST_CASE ("State: a corrupt sample inside a good state keeps the sample there was")
+{
+    Rig source;
+    loadSine (source);
+    source.set ("spray", 0.3f);
+    juce::MemoryBlock state;
+    source.silt.getStateInformation (state);
+    // Scribble over the FLAC near the end, past the parameters.
+    juce::Random r (9);
+    for (size_t i = state.getSize() - 4000; i < state.getSize(); ++i)
+        state[i] = (char) r.nextInt (256);
+
+    Rig target;
+    loadSine (target);
+    target.silt.setStateInformation (state.getData(), (int) state.getSize());
+    CHECK (target.value ("spray") == Catch::Approx (0.3f));   // the parameters still come back
+    CHECK (target.silt.getOverview().seconds > 0.0);
+    CHECK (outputFinite (target, 20));
+}
+
+TEST_CASE ("Samples: a 44.1 kHz mono 24-bit file loads, plays and comes back with the set")
+{
+    Rig rig;
+    const auto file = writeWav (44100, 44100.0, 1, 24);
+    rig.silt.loadFile (file);
+    const auto loaded = [&] { return rig.silt.getOverview().name == file.getFileNameWithoutExtension(); };
+    for (int i = 0; i < 300 && ! loaded(); ++i)
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    file.deleteFile();
+    REQUIRE (loaded());
+    CHECK (rig.silt.getOverview().seconds == Catch::Approx (1.0).margin (0.01));
+    runBlocks (rig, 2);
+    CHECK (outputFinite (rig, 20));
+
+    juce::MemoryBlock state;
+    rig.silt.getStateInformation (state);
+    Rig restored;
+    restored.silt.setStateInformation (state.getData(), (int) state.getSize());
+    CHECK (restored.silt.getOverview().seconds == Catch::Approx (1.0).margin (0.01));
+}
+
+TEST_CASE ("Samples: a file whose header can't be right is refused, and the sample stays")
+{
+    Rig rig;
+    loadSine (rig);
+    const auto name = rig.silt.getOverview().name;
+    const auto file = writeWav (1000, 100.0, 1, 16);   // 100 Hz: no real recording
+    rig.silt.loadFile (file);
+    for (int i = 0; i < 100 && rig.silt.lastLoadError.isEmpty(); ++i)
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    file.deleteFile();
+    CHECK (rig.silt.lastLoadError.isNotEmpty());
+    CHECK (rig.silt.getOverview().name == name);
+}
+
+TEST_CASE ("State: restoring while audio runs on another thread stays sound")
+{
+    Rig rig;
+    loadSine (rig);
+    juce::MemoryBlock a, b;
+    rig.set ("spray", 0.2f);
+    rig.silt.getStateInformation (a);
+    rig.set ("spray", 0.9f);
+    rig.set ("keyMode", rig.silt.params.getParameter ("keyMode")->convertTo0to1 (1.0f));   // LIVE
+    rig.silt.getStateInformation (b);
+
+    std::atomic<bool> running { true }, finite { true };
+    std::thread audio ([&]
+    {
+        juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 256);
+        int n = 0;
+        while (running.load())
+        {
+            buffer.clear();
+            juce::MidiBuffer midi;
+            if (n++ % 40 == 0)
+                midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 90), 0);
+            rig.silt.processBlock (buffer, midi);
+            for (int i = 0; i < buffer.getNumSamples(); ++i)
+                if (! std::isfinite (buffer.getSample (0, i)))
+                    finite = false;
+        }
+    });
+    for (int i = 0; i < 20; ++i)
+    {
+        const auto& state = i % 2 == 0 ? a : b;
+        rig.silt.setStateInformation (state.getData(), (int) state.getSize());
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
+    }
+    running = false;
+    audio.join();
+    CHECK (finite.load());
+}
