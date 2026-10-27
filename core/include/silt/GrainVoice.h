@@ -83,9 +83,9 @@ struct GrainParams
     double gridDivision = 0.25;    // quarter notes between grains
 
     // Playhead and region
-    // Slice: keys from the root up each play their own slice of the region
-    // (wrapping round), at the sample's own pitch: the region cut in equal
-    // parts, or at the sample's transients.
+    // Slice: keys from C1 (firstSliceNote) up each play their own slice of
+    // the region, at the sample's own pitch: the region cut in equal parts,
+    // or at the sample's transients. Keys below or past the slices are silent.
     bool slice = false;
     bool sliceTransients = false;
     int sliceCount = 16;           // equal slices, 1…128
@@ -129,6 +129,10 @@ public:
     void setSeed (std::uint64_t seed) noexcept { random.setSeed (seed); }
 
     void noteOn (int note, float velocity, const SampleBuffer& buffer, const GrainParams&) noexcept;
+
+    static constexpr int firstSliceNote = 36;   // C1: the first slice
+    // How many slices the keys reach, in Slice mode.
+    static int sliceCountFor (const GrainParams&, const SampleBuffer&) noexcept;
     void noteOff() noexcept;
     double getSampleRate() const noexcept { return sampleRate; }
     void reset() noexcept;
@@ -196,6 +200,7 @@ private:
     double scatterWithin (const Region&, double spanFrames, double scatter) const noexcept;
     static Region computeRegion (const GrainParams&, const SampleBuffer&) noexcept;
     Region regionFor (const GrainParams&, const SampleBuffer&) const noexcept;   // this voice's: its slice, in Slice mode
+    static int transientEdges (const SampleBuffer&, const Region& whole, std::array<double, 129>& edges) noexcept;
     // The region, computed once per render call (snapping searches the analysis).
     Region regionOf (const GrainParams& p, const SampleBuffer& buffer) const noexcept
     {

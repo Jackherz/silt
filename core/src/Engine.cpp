@@ -153,8 +153,16 @@ void Engine::handleEvent (const NoteEvent& e, const GrainParams& p, const Sample
             releaseVoice (droneVoice);   // a played key takes over from RUN
             droneVoice = -1;
         }
-        if (source != nullptr)
-            startNote (voiceForNoteOn (e.note), e.note, std::clamp (e.velocity, 0.0f, 1.0f), *source, p);
+        if (source == nullptr)
+            return;
+        if (p.slice && ! p.live)
+        {
+            // Slices start at C1; keys below the first or past the last are silent.
+            const int index = e.note - GrainVoice::firstSliceNote;
+            if (index < 0 || index >= GrainVoice::sliceCountFor (p, *source))
+                return;
+        }
+        startNote (voiceForNoteOn (e.note), e.note, std::clamp (e.velocity, 0.0f, 1.0f), *source, p);
         return;
     }
 

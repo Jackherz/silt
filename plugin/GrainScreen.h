@@ -81,8 +81,13 @@ public:
         if (live || overview.minimum.empty())
             return;
         const float span = viewEnd - viewStart;
-        const float sideways = e.mods.isShiftDown() ? wheel.deltaY : wheel.deltaX;
-        if (std::abs (sideways) > 0.0f)
+        if (! std::isfinite (wheel.deltaX) || ! std::isfinite (wheel.deltaY))
+            return;
+        // A trackpad's up/down swipe carries a little sideways movement too:
+        // only a mostly sideways swipe moves along, or every zoom would be lost.
+        const bool across = e.mods.isShiftDown() || std::abs (wheel.deltaX) > std::abs (wheel.deltaY);
+        const float sideways = e.mods.isShiftDown() ? (std::abs (wheel.deltaY) > std::abs (wheel.deltaX) ? wheel.deltaY : wheel.deltaX) : wheel.deltaX;
+        if (across)
         {
             const float move = -sideways * span * 0.5f;
             setView (viewStart + move, viewEnd + move);

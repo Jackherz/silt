@@ -1050,7 +1050,7 @@ TEST_CASE ("FEED makes up what the grains lose: at default settings 100% holds a
     CHECK (lastSecond (0.5) < 0.001);
 }
 
-TEST_CASE ("Slice mode: each key from the root plays its own slice, at the sample's pitch")
+TEST_CASE ("Slice mode: each key from C1 plays its own slice, at the sample's pitch; others are silent")
 {
     // Where a note's grains read, as shares of the sample.
     const auto readsFor = [] (int note, bool transients)
@@ -1076,18 +1076,33 @@ TEST_CASE ("Slice mode: each key from the root plays its own slice, at the sampl
         return std::make_pair (lo, hi);
     };
 
-    // Equal: four quarters; C3 the first, D3 the third, and keys wrap (C4 = 12 → the first again).
-    const auto first = readsFor (60, false);
+    // Equal: four quarters; C1 the first, D1 the third.
+    const auto first = readsFor (36, false);
     CHECK (first.first >= 0.0f);
     CHECK (first.second <= 0.26f);
-    const auto third = readsFor (62, false);
+    const auto third = readsFor (38, false);
     CHECK (third.first >= 0.49f);
     CHECK (third.second <= 0.76f);
-    const auto wrapped = readsFor (72, false);
-    CHECK (wrapped.second <= 0.26f);
+    // Below C1, or past the fourth slice: nothing plays.
+    const auto peakFor = [] (int note)
+    {
+        TestEngine engine (makeSine (240.0, 2.0));
+        GrainParams p;
+        p.slice = true;
+        p.sliceCount = 4;
+        const auto out = render (engine, p, (int) (0.3 * sampleRate), { { 0, note, true } });
+        float peak = 0.0f;
+        for (const float x : out.left)
+            peak = std::max (peak, std::abs (x));
+        return peak;
+    };
+    CHECK (peakFor (35) < 1.0e-6f);
+    CHECK (peakFor (40) < 1.0e-6f);
+    CHECK (peakFor (60) < 1.0e-6f);
+    CHECK (peakFor (39) > 0.1f);   // the fourth still plays
 
     // At hits: the slices start at the bursts (0 s, 0.5 s, 1.2 s, 2.0 s of 3 s).
-    const auto second = readsFor (61, true);
+    const auto second = readsFor (37, true);
     CHECK (second.first >= 0.5f / 3.0f - 0.01f);
     CHECK (second.second <= 1.2f / 3.0f + 0.01f);
 }
@@ -1103,7 +1118,7 @@ TEST_CASE ("Slice mode, MANUAL: a key plays from its mark to the next")
     p.sizeMs = 120.0;   // grains overlap, so some are always sounding when we look
     p.spray = 0.0;
     p.scan = 0.0;
-    render (engine, p, (int) (0.3 * sampleRate), { { 0, 61, true } });   // the second slice
+    render (engine, p, (int) (0.3 * sampleRate), { { 0, 37, true } });   // the second slice
     std::array<GrainView, 256> views {};
     const int n = engine.collectGrainViews (views.data(), (int) views.size());
     REQUIRE (n > 0);

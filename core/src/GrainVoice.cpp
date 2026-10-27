@@ -62,7 +62,7 @@ GrainVoice::Region GrainVoice::computeRegion (const GrainParams& p, const Sample
 
 // Slice mode: the whole region cut into this voice's slice. Equal slices,
 // or from the region's start to its first transient, transient to transient,
-// the last to the region's end. Keys wrap round the slices.
+// the last to the region's end.
 GrainVoice::Region GrainVoice::regionFor (const GrainParams& p, const SampleBuffer& buffer) const noexcept
 {
     const auto whole = computeRegion (p, buffer);
@@ -75,7 +75,7 @@ GrainVoice::Region GrainVoice::regionFor (const GrainParams& p, const SampleBuff
         // (or the sample's, if the region ends before it).
         const double frames = buffer.getNumFrames();
         const int count = p.sliceTableSize;
-        const int i = ((slice % count) + count) % count;
+        const int i = std::clamp (slice, 0, count - 1);
         const double begin = std::clamp ((double) p.sliceTable[i], 0.0, 1.0) * (frames - 1.0);
         double end = i + 1 < count ? std::clamp ((double) p.sliceTable[i + 1], 0.0, 1.0) * frames
                                    : (whole.end > begin + 1.0 ? whole.end : frames);
@@ -84,26 +84,44 @@ GrainVoice::Region GrainVoice::regionFor (const GrainParams& p, const SampleBuff
 
     if (p.sliceTransients)
     {
-        constexpr double minimum = 256.0;   // a hit this close to the last starts no new slice
         std::array<double, 129> edges {};
-        int count = 0;
-        edges[(size_t) count++] = whole.begin;
-        for (const int t : buffer.getTransients())
-            if ((double) t > edges[(size_t) count - 1] + minimum && (double) t < whole.end - minimum && count < (int) edges.size() - 1)
-                edges[(size_t) count++] = (double) t;
-        const int i = ((slice % count) + count) % count;
+        const int count = transientEdges (buffer, whole, edges);
+        const int i = std::clamp (slice, 0, count - 1);
         return { edges[(size_t) i], i + 1 < count ? edges[(size_t) i + 1] : whole.end };
     }
 
     const int count = std::clamp (p.sliceCount, 1, 128);
-    const int i = ((slice % count) + count) % count;
+    const int i = std::clamp (slice, 0, count - 1);
     const double each = (whole.end - whole.begin) / count;
     return { whole.begin + each * i, whole.begin + each * (i + 1) };
 }
 
+int GrainVoice::transientEdges (const SampleBuffer& buffer, const Region& whole, std::array<double, 129>& edges) noexcept
+{
+    constexpr double minimum = 256.0;   // a hit this close to the last starts no new slice
+    int count = 0;
+    edges[(size_t) count++] = whole.begin;
+    for (const int t : buffer.getTransients())
+        if ((double) t > edges[(size_t) count - 1] + minimum && (double) t < whole.end - minimum && count < (int) edges.size() - 1)
+            edges[(size_t) count++] = (double) t;
+    return count;
+}
+
+int GrainVoice::sliceCountFor (const GrainParams& p, const SampleBuffer& buffer) noexcept
+{
+    if (p.sliceTable != nullptr && p.sliceTableSize > 0)
+        return p.sliceTableSize;
+    if (p.sliceTransients)
+    {
+        std::array<double, 129> edges {};
+        return transientEdges (buffer, computeRegion (p, buffer), edges);
+    }
+    return std::clamp (p.sliceCount, 1, 128);
+}
+
 void GrainVoice::noteOn (int note, float vel, const SampleBuffer& buffer, const GrainParams& p) noexcept
 {
-    slice = p.slice && ! p.live ? note - p.rootNote : -1;
+    slice = p.slice && ! p.live ? note - firstSliceNote : -1;
     const auto region = regionFor (p, buffer);
     currentNote = note;
     velocity = vel;
