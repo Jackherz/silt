@@ -459,7 +459,7 @@ public:
 private:
     void drawScope (juce::Graphics& g, juce::Rectangle<int> area)
     {
-        g.setColour (screenBlue);
+        g.setColour (insetBack.interpolatedWith (juce::Colours::black, 0.55f));   // as the corner pictures' ground
         g.fillRect (area.expanded (0, 2));
         const auto box = area.toFloat();
         g.setColour (screenLight.withAlpha (0.6f));
@@ -471,7 +471,7 @@ private:
         g.setFont (monoFont (10.0f));
         g.setColour (screenLime);
         g.drawText (scopeTitle, label, juce::Justification::centredLeft);
-        g.setColour (juce::Colours::white);
+        g.setColour (signalTeal);
         g.drawText ("OUT", label.removeFromRight (26), juce::Justification::centredRight);
         g.setColour (screenPale.withAlpha (0.7f));
         g.drawText ("IN", label.removeFromRight (30), juce::Justification::centredLeft);
@@ -483,7 +483,7 @@ private:
             return;
         }
 
-        const auto trace = [&] (const std::vector<float>& v, juce::Colour colour, float thickness)
+        const auto trace = [&] (const std::vector<float>& v, juce::Colour colour, float thickness, bool glow)
         {
             const float half = box.getHeight() * 0.5f - 3.0f, mid = box.getCentreY();
             const float dx = box.getWidth() / (float) juce::jmax (1, (int) v.size() - 1);
@@ -496,13 +496,20 @@ private:
                 else
                     path.lineTo (box.getX() + dx * (float) i, y);
             }
+            if (glow)   // a wide soft stroke under the crisp one, as the corner pictures draw the sound
+            {
+                g.setColour (colour.withMultipliedAlpha (0.12f));
+                g.strokePath (path, juce::PathStrokeType (thickness * 5.0f));
+                g.setColour (colour.withMultipliedAlpha (0.25f));
+                g.strokePath (path, juce::PathStrokeType (thickness * 2.5f));
+            }
             g.setColour (colour);
             g.strokePath (path, juce::PathStrokeType (thickness));
         };
         juce::Graphics::ScopedSaveState state (g);
         g.reduceClipRegion (area.reduced (1));
-        trace (scopeIn, screenPale.withAlpha (0.45f), 1.2f);
-        trace (scopeOut, juce::Colours::white, 1.5f);
+        trace (scopeIn, screenPale.withAlpha (0.4f), 1.1f, false);
+        trace (scopeOut, signalTeal, 1.4f, true);
     }
 
     void paintScreen (juce::Graphics& g)

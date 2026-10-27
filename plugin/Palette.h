@@ -32,6 +32,10 @@ inline juce::Colour knobCollar { 0xff2e2925 };
 inline juce::Colour knobTick { 0xffefe6cf };
 inline juce::Colour knobDot { 0xff2a2420 };
 inline juce::Colour knobCap { 0xff1d1a17 };
+// The screen pictures' live signal, the same in every theme: teal for the
+// sound (and the left channel), magenta for the right; curves stay screenLime.
+inline const juce::Colour signalTeal { 0xff46d8c4 };
+inline const juce::Colour signalMagenta { 0xffe0579c };
 inline juce::Colour knobSkirt { 0xff3a332d };
 
 struct Theme
