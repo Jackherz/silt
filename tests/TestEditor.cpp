@@ -463,3 +463,31 @@ TEST_CASE ("Over a knob the LCD gives its help; over a ring, the ring's hint; ar
             CHECK (rig.editor->displayText().contains ("BPM"));
     }
 }
+
+TEST_CASE ("A right-click on a page key opens its menu without pressing it or changing page")
+{
+    EditorRig rig;
+    juce::TextButton* filterKey = nullptr, *grainKey = nullptr;
+    for (auto* child : rig.editor->getChildren())
+        if (auto* b = dynamic_cast<juce::TextButton*> (child); b != nullptr && b->getRadioGroupId() == 1)
+        {
+            if (b->getButtonText() == "FILTER")
+                filterKey = b;
+            if (b->getButtonText() == "GRAIN")
+                grainKey = b;
+        }
+    REQUIRE (filterKey != nullptr);
+    REQUIRE (grainKey != nullptr);
+    REQUIRE (grainKey->getToggleState());
+
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    const auto now = juce::Time::getCurrentTime();
+    const juce::MouseEvent right (source, { 5.0f, 5.0f }, juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                  filterKey, filterKey, now, { 5.0f, 5.0f }, now, 1, false);
+    static_cast<juce::Component*> (filterKey)->mouseDown (right);   // as the mouse would
+    static_cast<juce::Component*> (filterKey)->mouseUp (right);
+    CHECK (grainKey->getToggleState());
+    CHECK_FALSE (filterKey->getToggleState());
+    CHECK (rig.silt.currentPage.load() == silt::layout::grain);
+    juce::PopupMenu::dismissAllActiveMenus();
+}

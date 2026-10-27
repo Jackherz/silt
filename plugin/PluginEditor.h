@@ -162,7 +162,36 @@ private:
     juce::TooltipWindow tooltips { this, 600 };
 
     std::vector<std::unique_ptr<Control>> controls;
-    std::array<juce::TextButton, silt::layout::numPages> pageTabs;
+    // A page key: a right-click (or Ctrl-click) opens its menu and never
+    // presses the key, so the page and the lit key stay as they were.
+    struct PageKey final : juce::TextButton
+    {
+        std::function<void()> onMenu;
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            menuPress = e.mods.isPopupMenu();
+            if (menuPress)
+            {
+                if (onMenu)
+                    onMenu();
+                return;
+            }
+            juce::TextButton::mouseDown (e);
+        }
+        void mouseDrag (const juce::MouseEvent& e) override
+        {
+            if (! menuPress)
+                juce::TextButton::mouseDrag (e);
+        }
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            if (! menuPress)
+                juce::TextButton::mouseUp (e);
+            menuPress = false;
+        }
+        bool menuPress = false;
+    };
+    std::array<PageKey, silt::layout::numPages> pageTabs;
     int page = 0;
     std::vector<bool> shownNow;   // per control: what updateVisibility last showed
 

@@ -341,22 +341,22 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         tab.setButtonText (layout::pageName ((int) i));
         tab.setRadioGroupId (1);
         tab.setClickingTogglesState (true);
+        // Right-click (or Ctrl-click): that page's RESET menu. The key itself
+        // ignores it, so it neither presses nor changes the page.
+        tab.onMenu = [this, i]
+        {
+            juce::PopupMenu::dismissAllActiveMenus();   // one menu at a time
+            juce::PopupMenu menu;
+            menu.addItem (1, "Reset " + juce::String (layout::pageName ((int) i)) + ((int) i == layout::mod ? " " + juce::String (silt.modShown.load() + 1) : juce::String()));
+            menu.addItem (2, "Reset all pages");
+            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&pageTabs[i]), [this, i] (int chosen)
+            {
+                if (chosen > 0)
+                    resetPages (chosen == 2 ? -1 : (int) i);
+            });
+        };
         tab.onClick = [this, i]
         {
-            // Right-click (or Ctrl-click): that page's RESET menu.
-            if (juce::ModifierKeys::getCurrentModifiers().isPopupMenu())
-            {
-                juce::PopupMenu menu;
-                menu.addItem (1, "Reset " + juce::String (layout::pageName ((int) i)) + ((int) i == layout::mod ? " " + juce::String (silt.modShown.load() + 1) : juce::String()));
-                menu.addItem (2, "Reset all pages");
-                menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&pageTabs[i]), [this, i] (int chosen)
-                {
-                    if (chosen > 0)
-                        resetPages (chosen == 2 ? -1 : (int) i);
-                });
-                pageTabs[(size_t) page].setToggleState (true, juce::dontSendNotification);   // the menu, not a page change
-                return;
-            }
             if (pageTabs[i].getToggleState())
             {
                 // RESONATOR again: its other half.
@@ -1079,6 +1079,7 @@ void SiltEditor::showRandomMenu()
     menu.addItem (20, "Reset " + juce::String (layout::pageName (page)) + (page == layout::mod ? " " + juce::String (silt.modShown.load() + 1) : juce::String()));
     menu.addItem (21, "Reset all pages");
 
+    juce::PopupMenu::dismissAllActiveMenus();
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&randomButton), [this, entries] (int chosen)
     {
         if (chosen == 20 || chosen == 21)
