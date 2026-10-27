@@ -1570,6 +1570,12 @@ void SiltEditor::timerCallback()
     if (routeList->isVisible())
         routeList->update();
     const int armed = silt.armedMod.load(), shown = silt.modShown.load();
+    // The page keys' tint follows the armed modulator's routes (and the page shown).
+    if (const int tint = armed < 0 ? -1 : routedPages (armed) * 16 + page; tint != tabTintSeen)
+    {
+        tabTintSeen = tint;
+        repaint (tray);
+    }
     if (armed != armedSeen || shown != modShownSeen)
     {
         armedSeen = armed;
@@ -1958,14 +1964,45 @@ void SiltEditor::paint (juce::Graphics& g)
     }
 }
 
+// The pages (as bits) holding a parameter the modulator is routed to.
+int SiltEditor::routedPages (int modulator) const
+{
+    int pages = 0;
+    if (modulator < 0)
+        return pages;
+    for (const auto& route : silt.allRoutes())
+        if (route.modulator == modulator)
+        {
+            const auto id = silt.targetParameter (route.target).getParameterID();
+            for (const auto& e : layout::entries (SiltProcessor::isInstrument))
+                if (e.id == id)
+                    pages |= 1 << e.page;
+        }
+    return pages;
+}
+
 void SiltEditor::paintOverChildren (juce::Graphics& g)
 {
-    // While a modulator is armed, the MOD tab carries its colour.
+    // While a modulator is armed, the MOD tab carries its colour, and so do
+    // the other pages with a control it's routed to: tinted, underlined.
     if (const int armed = silt.armedMod.load(); armed >= 0)
     {
-        const auto tab = pageTabs[(size_t) layout::mod].getBounds();
-        g.setColour (modColour (armed).base);
-        g.fillRect (tab.getX() + 2, tab.getBottom() - 3, tab.getWidth() - 4, 3);
+        const auto colour = modColour (armed).base;
+        const int routed = routedPages (armed);
+        for (int p = 0; p < layout::numPages; ++p)
+        {
+            const auto tab = pageTabs[(size_t) p].getBounds();
+            if (p != page && p != layout::mod && (routed & (1 << p)) != 0)
+            {
+                g.setColour (colour.withAlpha (0.22f));
+                g.fillRoundedRectangle (tab.toFloat().reduced (1.0f), 3.0f);
+            }
+            if (p == layout::mod || (p != page && (routed & (1 << p)) != 0))
+            {
+                g.setColour (colour);
+                g.fillRect (tab.getX() + 2, tab.getBottom() - 3, tab.getWidth() - 4, 3);
+            }
+        }
     }
     if (dragHover)
     {

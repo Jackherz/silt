@@ -268,7 +268,8 @@ private:
     void resetLayout (int grip);   // 0 the screen's, 1 the rail's, 2 the corner picture's
     int seenGeneration = -1;
     bool dragHover = false, screenWasLive = false;
-    int learnSeen = -1, armedSeen = -2, modShownSeen = -1;
+    int learnSeen = -1, armedSeen = -2, modShownSeen = -1, tabTintSeen = -2;
+    int routedPages (int modulator) const;   // bits: the pages with a control it's routed to
     float levelDb = -100.0f;
     juce::uint32 inputHeardAt = 0;   // when the input last had sound in it
     // No input for two seconds (no bus, or nothing routed to it): LIVE and ARM say where it comes from.
