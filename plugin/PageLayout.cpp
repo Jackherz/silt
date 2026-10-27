@@ -120,11 +120,11 @@ std::vector<Entry> build (bool instrument)
     knob (resonator, 0, "resReso", "RESONANCE", secondHalf);
     knob (resonator, 1, "resBands", "BANDS", secondHalf);
     knob (resonator, 2, "resDrift", "DRIFT", secondHalf);
-    knob (resonator, 3, "resDriftRate", "DRIFT RATE", secondHalf);
-    knob (resonator, 4, "resSpread", "SPREAD", secondHalf);
-    knob (resonator, 5, "resOddEven", "ODD/EVEN", secondHalf);
-    knob (resonator, 6, "resDrive", "DRIVE", secondHalf);
-    knob (resonator, 7, "resDamp", "DAMP", secondHalf);
+    knob (resonator, 3, "resSpread", "SPREAD", secondHalf);
+    knob (resonator, 4, "resOddEven", "ODD/EVEN", secondHalf);
+    knob (resonator, 5, "resDrive", "DRIVE", secondHalf);
+    knob (resonator, 6, "resDamp", "DAMP", secondHalf);
+    knob (resonator, 7, "resMix", "MIX", secondHalf);   // MIX in the same slot on both halves: no flipping back to hear it
 
     // FILTER: after the resonator. MORPH blends low, band and high pass; ENV lets
     // the level move the cutoff; KEY follows the notes played.

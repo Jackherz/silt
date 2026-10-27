@@ -105,7 +105,7 @@ const std::vector<Factory>& allFactories()
         { "Sample Strings",
           { { "size", 220.0f }, { "spray", 20.0f }, { "release", 1800.0f },
             { "resMix", 65.0f }, { "resNotes", 3.0f }, { "resFollow", 1.0f }, { "resDecay", 4.0f }, { "resBright", 55.0f }, { "resWidth", 70.0f },
-            { "resReso", 70.0f }, { "resDrift", 35.0f }, { "resDriftRate", 0.3f }, { "resSpread", 15.0f }, { "resOddEven", -40.0f },
+            { "resReso", 70.0f }, { "resDrift", 35.0f }, { "resSpread", 15.0f }, { "resOddEven", -40.0f },
             { "resDrive", 25.0f }, { "resDamp", 35.0f },
             { "spaceReverb", 25.0f }, { "spaceDecay", 4.0f } },
           {} },

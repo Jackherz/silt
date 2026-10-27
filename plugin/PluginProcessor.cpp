@@ -233,8 +233,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "resBands", 1 }, "Resonator bands", 1, silt::Resonator::maxBands,
                                                            silt::Resonator::maxBands),
                 percent ("resDrift", "Resonator drift", 0.0f),
-                withUnit ("resDriftRate", "Resonator drift rate", skewed (0.05f, 10.0f, 0.7f), 0.5f,
-                          [] (float v, int) { return juce::String (v, v < 1.0f ? 2 : 1) + " Hz"; }),
                 percent ("resSpread", "Resonator spread", 0.0f),
                 withUnit ("resOddEven", "Resonator odd/even", Range (-100.0f, 100.0f, 0.1f), 0.0f, [] (float v, int)
                 {
@@ -442,7 +440,7 @@ struct SiltProcessor::RawParams
         patternSteps = p ("patternSteps"); patternSeed = p ("patternSeed"); heads = p ("heads"); headSpread = p ("headSpread");
         resTune = p ("resTune"); resNotes = p ("resNotes"); resRange = p ("resRange"); resDecay = p ("resDecay");
         resBright = p ("resBright"); resWidth = p ("resWidth"); resFollow = p ("resFollow"); resMix = p ("resMix");
-        resReso = p ("resReso"); resBands = p ("resBands"); resDrift = p ("resDrift"); resDriftRate = p ("resDriftRate");
+        resReso = p ("resReso"); resBands = p ("resBands"); resDrift = p ("resDrift");
         resSpread = p ("resSpread"); resOddEven = p ("resOddEven"); resDrive = p ("resDrive"); resDamp = p ("resDamp");
         filterMode = p ("filterMode"); filterCutoff = p ("filterCutoff"); filterReso = p ("filterReso"); filterMorph = p ("filterMorph");
         filterDrive = p ("filterDrive"); filterEnv = p ("filterEnv"); filterKey = p ("filterKey"); filterMix = p ("filterMix");
@@ -463,7 +461,7 @@ struct SiltProcessor::RawParams
     std::atomic<float>* keyMode, *liveDelay, *delaySync, *delayDiv, *feedback, *freeze, *liveRun, *sliceMode, *sliceCount;
     std::atomic<float>* randPitch, *scale, *key, *patternDepth, *patternSteps, *patternSeed, *heads, *headSpread;
     std::atomic<float>* resTune, *resNotes, *resRange, *resDecay, *resBright, *resWidth, *resFollow, *resMix;
-    std::atomic<float>* resReso, *resBands, *resDrift, *resDriftRate, *resSpread, *resOddEven, *resDrive, *resDamp;
+    std::atomic<float>* resReso, *resBands, *resDrift, *resSpread, *resOddEven, *resDrive, *resDamp;
     std::atomic<float>* filterMode, *filterCutoff, *filterReso, *filterMorph, *filterDrive, *filterEnv, *filterKey, *filterMix;
     std::atomic<float>* colorDrive, *colorTone, *colorBits, *colorRate, *colorComp, *colorNoise, *colorWow, *colorMix;
     std::atomic<float>* spaceTime, *spaceSync, *spaceDiv, *spaceFeedback, *spaceMode, *spaceDelay, *spaceSize, *spaceDecay;
@@ -763,7 +761,8 @@ silt::ResonatorParams SiltProcessor::readResonatorParams (const silt::GrainParam
     p.resonance = v (raw->resReso) * 0.01f;
     p.bandCount = juce::roundToInt (v (raw->resBands));
     p.drift = v (raw->resDrift) * 0.01f;
-    p.driftRate = v (raw->resDriftRate);
+    // One knob for both: more DRIFT wanders further and a little faster (0.15 to 3 Hz).
+    p.driftRate = 0.15f * std::pow (20.0f, p.drift);
     p.spread = v (raw->resSpread) * 0.01f;
     p.oddEven = v (raw->resOddEven) * 0.01f;
     p.drive = v (raw->resDrive) * 0.01f;

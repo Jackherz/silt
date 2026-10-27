@@ -1248,3 +1248,16 @@ TEST_CASE ("Every factory preset sounds: notes (C1 up in SLICE) make a sane leve
         CHECK (peak < 1.5f);
     }
 }
+
+TEST_CASE ("RESONATOR: MIX sits in the same slot on both halves")
+{
+    Rig rig;
+    for (const int half : { 0, 1 })
+    {
+        rig.silt.resonatorHalf.store (half);
+        CHECK (rig.silt.slotParameter (silt::layout::resonator, 7) == "resMix");
+    }
+    rig.silt.resonatorHalf.store (1);
+    CHECK (rig.silt.slotParameter (silt::layout::resonator, 2) == "resDrift");
+    CHECK (rig.silt.params.getParameter ("resDriftRate") == nullptr);   // folded into DRIFT
+}
