@@ -78,6 +78,12 @@ public:
     // (0 idle, 1 attack, 2 decay, 3 sustain, 4 release).
     double getPhase() const noexcept { return phase; }
     int getStage() const noexcept { return (int) stage; }
+    // An ENVELOPE's time in its current stage (from 0 each time a stage
+    // begins, every REPEAT cycle included), and for a release, the level it
+    // began from and the stage it was let go in.
+    float getStageMs() const noexcept { return stageMs; }
+    float getReleaseLevel() const noexcept { return releaseLevel; }
+    int getReleasedFrom() const noexcept { return releasedFrom; }
 
 private:
     float wave (const ModulatorParams&, const ModContext&) noexcept;
@@ -95,6 +101,8 @@ private:
     // ENVELOPE
     enum class Stage { idle, attack, decay, sustain, release } stage = Stage::idle;
     float level = 0.0f;
+    float stageMs = 0.0f, releaseLevel = 0.0f;
+    int releasedFrom = 0;
     // FOLLOW
     float followed = 0.0f;
     Random random;

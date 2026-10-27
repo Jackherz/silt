@@ -254,6 +254,9 @@ public:
     std::array<std::atomic<float>, numModulators> modOutputs {};    // each modulator's latest value (0 if muted)
     std::array<std::atomic<float>, numModulators> modPhases {};     // a WAVE's place in its cycle, for display
     std::array<std::atomic<int>, numModulators> modStages {};       // an ENVELOPE's stage, for display
+    std::array<std::atomic<float>, numModulators> modStageMs {};    // its time in that stage
+    std::array<std::atomic<float>, numModulators> modReleaseLevel {};
+    std::array<std::atomic<int>, numModulators> modReleasedFrom {};   // the stage a release began in
     std::atomic<int> modShown { 0 };                                // the modulator the MOD page shows
     std::atomic<int> armedMod { -1 };                               // ≥ 0: controller knobs set this modulator's depth
 

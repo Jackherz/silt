@@ -1251,6 +1251,9 @@ void SiltProcessor::applyModulation() noexcept
         modOutputs[(size_t) m].store (value[(size_t) m], std::memory_order_relaxed);
         modPhases[(size_t) m].store ((float) modulators[(size_t) m].getPhase(), std::memory_order_relaxed);
         modStages[(size_t) m].store (modulators[(size_t) m].getStage(), std::memory_order_relaxed);
+        modStageMs[(size_t) m].store (modulators[(size_t) m].getStageMs(), std::memory_order_relaxed);
+        modReleaseLevel[(size_t) m].store (modulators[(size_t) m].getReleaseLevel(), std::memory_order_relaxed);
+        modReleasedFrom[(size_t) m].store (modulators[(size_t) m].getReleasedFrom(), std::memory_order_relaxed);
     }
 
     for (size_t t = 0; t < targets.size(); ++t)

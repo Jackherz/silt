@@ -1057,16 +1057,6 @@ void drawPitch (juce::Graphics& g, juce::Rectangle<float> area, const SiltProces
 
 // --- MOD ---------------------------------------------------------------------------------
 
-// Each modulator's envelope stage as the screen last saw it, and when it began.
-struct EnvelopeClock
-{
-    int stage = 0;
-    double since = 0.0;
-    float lastMs = 0.0f;           // where along the drawn shape the dot last was
-    float releaseFromMs = -1.0f;   // ≥ 0: let go before sustain, from here
-};
-std::array<EnvelopeClock, SiltProcessor::numModulators> envelopeClocks {};
-
 void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcessor& silt, const ModRail& rail)
 {
     const int m = silt.modShown.load();
@@ -1171,53 +1161,41 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
                                                   : s * (1.0f - (ms - a - d - hold) / std::max (rel, 1.0e-3f));
             return at (ms, juce::jlimit (0.0f, 1.0f, level));
         };
+        // The envelope says how long it's been in its stage, so the dot can't
+        // drift from it (a REPEAT cycle shorter than a frame included).
         const int stage = silt.modStages[(size_t) m].load();
-        auto& clock = envelopeClocks[(size_t) m];
-        const double nowMs = juce::Time::getMillisecondCounterHiRes();
-        if (stage != clock.stage)
-        {
-            // A tap shorter than a frame goes straight from idle to release:
-            // place it up the attack by the level it reached.
-            if (clock.stage == 0 && stage == 4)
-                clock.lastMs = a * juce::jlimit (0.0f, 1.0f, silt.modOutputs[(size_t) m].load());
-            clock.stage = stage;
-            clock.since = nowMs;
-        }
-        const float elapsed = (float) (nowMs - clock.since);
+        const float elapsed = silt.modStageMs[(size_t) m].load();
         switch (stage)
         {
-            case 1: clock.lastMs = std::min (elapsed, a); playhead = onLine (clock.lastMs); clock.releaseFromMs = -1.0f; break;     // attack
-            case 2: clock.lastMs = a + std::min (elapsed, d); playhead = onLine (clock.lastMs); clock.releaseFromMs = -1.0f; break; // decay
-            case 3:                                                                                                                 // sustain: settles mid-hold
-                clock.lastMs = a + d + hold * 0.5f * std::min (1.0f, elapsed / 300.0f);
-                playhead = onLine (clock.lastMs);
-                clock.releaseFromMs = -1.0f;
-                break;
+            case 1: playhead = onLine (std::min (elapsed, a)); break;                                    // attack
+            case 2: playhead = onLine (a + std::min (elapsed, d)); break;                                // decay
+            case 3: playhead = onLine (a + d + hold * 0.5f * std::min (1.0f, elapsed / 300.0f)); break;  // sustain: settles mid-hold
             case 4:   // release
             {
-                // Let go before sustain (a quick tap): it falls from where it
-                // had got to, over RELEASE's time, along a faint line of its own.
-                if (clock.releaseFromMs < 0.0f && clock.lastMs < a + d && elapsed < 50.0f)
-                    clock.releaseFromMs = clock.lastMs;
                 const float progress = std::min (1.0f, elapsed / std::max (rel, 1.0f));
-                if (clock.releaseFromMs >= 0.0f)
+                const int from = silt.modReleasedFrom[(size_t) m].load();
+                if (from == 1 || from == 2)
                 {
-                    const auto from = onLine (clock.releaseFromMs);
-                    const auto to = juce::Point<float> (from.x + plot.getWidth() * rel / total, plot.getBottom());
+                    // Let go before sustain (a quick tap): it falls from where
+                    // it had got to, over RELEASE's time, along a line of its own.
+                    const float level = juce::jlimit (0.0f, 1.0f, silt.modReleaseLevel[(size_t) m].load());
+                    const float atMs = from == 1 ? a * level : a + d * (1.0f - level) / std::max (1.0f - s, 1.0e-3f);
+                    const auto start = onLine (std::min (atMs, a + d));
+                    const auto end = juce::Point<float> (start.x + plot.getWidth() * rel / total, plot.getBottom());
                     juce::Path ghost;
-                    ghost.startNewSubPath (from);
-                    ghost.lineTo (to);
+                    ghost.startNewSubPath (start);
+                    ghost.lineTo (end);
                     const float dashes[] { 3.0f, 3.0f };
                     juce::PathStrokeType (1.2f).createDashedStroke (ghost, ghost, dashes, 2);
                     g.setColour (colour.withAlpha (0.6f));
                     g.fillPath (ghost);
-                    playhead = from + (to - from) * progress;
+                    playhead = start + (end - start) * progress;
                 }
                 else
                     playhead = onLine (a + d + hold + rel * progress);
                 break;
             }
-            default: clock.lastMs = 0.0f; clock.releaseFromMs = -1.0f; break;
+            default: break;
         }
     }
     else
@@ -1311,8 +1289,8 @@ std::vector<float> insetKey (int page, const SiltProcessor& silt, const ModRail&
                 key.push_back ((float) rail.chip (m).getHistoryStart());   // the trace moves on
             else
                 key.insert (key.end(), { silt.modOutputs[(size_t) m].load(), silt.modPhases[(size_t) m].load() });   // the dot moves on
-            if (p.type == silt::ModType::envelope && silt.modStages[(size_t) m].load() != 0)
-                key.push_back (animationSeconds());   // the dot travels through each stage in time
+            if (p.type == silt::ModType::envelope)
+                key.insert (key.end(), { (float) silt.modStages[(size_t) m].load(), silt.modStageMs[(size_t) m].load() });   // the dot moves with the envelope
             break;
         }
         default: break;

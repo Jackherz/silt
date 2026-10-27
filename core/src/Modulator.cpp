@@ -155,11 +155,21 @@ float Modulator::envelope (const ModulatorParams& p, const ModContext& c) noexce
 {
     const float ms = (float) (c.numSamples * 1000.0 / c.sampleRate);
     const float sustain = std::clamp (p.sustain, 0.0f, 1.0f);
+    const auto entered = stage;
+    bool restarted = false;
 
     if (c.noteStarted)
+    {
         stage = Stage::attack;
+        restarted = true;
+    }
     else if (c.heldNotes == 0 && stage != Stage::idle && stage != Stage::release)
+    {
+        releasedFrom = (int) stage;
+        releaseLevel = level;
         stage = Stage::release;
+    }
+    const auto before = stage;
 
     switch (stage)
     {
@@ -193,6 +203,11 @@ float Modulator::envelope (const ModulatorParams& p, const ModContext& c) noexce
         case Stage::idle:
             break;
     }
+    // The time in this stage, for display: from 0 when one begins.
+    if (restarted || stage != entered)
+        stageMs = stage == before ? ms : 0.0f;
+    else
+        stageMs += ms;
     return level;
 }
 

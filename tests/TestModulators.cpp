@@ -339,3 +339,49 @@ TEST_CASE ("Random: a negative rate steps as fast as the positive one")
         CHECK (std::abs (changes - 8) <= 1);
     }
 }
+
+TEST_CASE ("Envelope, for display: time in each stage restarts every REPEAT cycle; a release says where it began")
+{
+    Modulator m;
+    m.reset();
+    ModulatorParams p;
+    p.type = ModType::envelope;
+    p.attackMs = 10.0f;   // shorter than a screen frame
+    p.decayMs = 100.0f;
+    p.sustain = 0.5f;
+    p.releaseMs = 200.0f;
+    p.repeat = true;
+    auto c = context();
+    c.heldNotes = 1;
+    c.noteStarted = true;
+    m.advance (p, c);
+    c.noteStarted = false;
+    float longest = 0.0f;
+    int restarts = 0;
+    float last = 0.0f;
+    for (int i = 0; i < (int) (1.0 * rate / block); ++i)
+    {
+        m.advance (p, c);
+        longest = std::max (longest, m.getStageMs());
+        restarts += m.getStageMs() < last ? 1 : 0;
+        last = m.getStageMs();
+    }
+    CHECK (longest <= 100.0f + 1000.0f * block / rate);   // never past a decay's length
+    CHECK (restarts >= 12);                               // two stages per ~110 ms cycle
+
+    // Let go partway down the decay.
+    m.reset();
+    p.repeat = false;
+    c.noteStarted = true;
+    m.advance (p, c);
+    c.noteStarted = false;
+    for (int i = 0; i < (int) (0.06 * rate / block); ++i)   // 10 ms up, then 50 ms of decay
+        m.advance (p, c);
+    REQUIRE (m.getStage() == 2);
+    c.heldNotes = 0;
+    m.advance (p, c);
+    CHECK (m.getStage() == 4);
+    CHECK (m.getReleasedFrom() == 2);
+    CHECK (m.getReleaseLevel() > 0.6f);
+    CHECK (m.getReleaseLevel() < 0.9f);
+}
