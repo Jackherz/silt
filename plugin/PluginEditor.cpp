@@ -1115,6 +1115,15 @@ void SiltEditor::updateSpaceSettings (float seconds)
     s.pingPong = juce::roundToInt (param ("spaceMode")) == 0;
     s.frozen = param ("spaceFreeze") > 0.5f;
 
+    // The reverb's controls only show while there's reverb: at 0% the sky is
+    // neutral, and they come in over the first 20%.
+    const float reverbIn = juce::jlimit (0.0f, 1.0f, s.reverb * 5.0f);
+    s.decay = 0.5f + (s.decay - 0.5f) * reverbIn;
+    s.size = 0.5f + (s.size - 0.5f) * reverbIn;
+    s.tone = 0.5f + (s.tone - 0.5f) * reverbIn;
+    s.shimmer *= reverbIn;
+    s.frozen = s.frozen && s.reverb > 0.0f;
+
     // What SPACE is adding now (its trace), and the time since the latest note.
     const double rate = silt.getSampleRate() > 0.0 ? silt.getSampleRate() : 48000.0;
     const unsigned count = silt.spaceTraceCount.load (std::memory_order_acquire);
