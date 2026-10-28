@@ -422,7 +422,7 @@ public:
     // and the grains' area together; wave: the waveform's, with its height per
     // pixel across.
     std::function<bool (juce::Graphics&, juce::Rectangle<int> scene, juce::Rectangle<int> wave, const std::vector<float>& envelope, bool over)> drawAroundWave;
-    void repaintWave() { repaint (waveRect().getUnion (rollArea())); }
+    void repaintWave() { repaint (glass.isEmpty() ? getLocalBounds() : glass); }
     const std::vector<float>& getWaveEnvelope() const noexcept { return waveEnvelope; }
 
     void paint (juce::Graphics& g) override
@@ -554,6 +554,10 @@ private:
         inner.removeFromBottom (6);
         const auto waveArea = inner;
 
+        // A page's scene behind everything on the glass (not in LIVE, or with no sample).
+        sceneBehind = ! live && ! overview.minimum.empty() && drawAroundWave != nullptr
+                   && drawAroundWave (g, glass, waveArea, waveEnvelope, false);
+
         g.setFont (monoFont (12.0f));
         g.setColour (juce::Colours::white);
 
@@ -586,8 +590,6 @@ private:
                         + (overview.mono ? "MONO" : "ST") + "  " + juce::String (overview.megabytes, overview.megabytes < 10.0 ? 1 : 0) + " MB",
                     top, juce::Justification::centredRight);
 
-        const auto sceneArea = waveArea.getUnion (rollArea);
-        sceneBehind = drawAroundWave != nullptr && drawAroundWave (g, sceneArea, waveArea, waveEnvelope, false);
         drawWave (g, waveArea);
         if (viewEnd - viewStart < 0.999f)
         {
@@ -633,7 +635,7 @@ private:
         }
         drawGrains (g, waveArea, rollArea);
         if (sceneBehind)
-            drawAroundWave (g, waveArea.getUnion (rollArea), waveArea, waveEnvelope, true);
+            drawAroundWave (g, glass, waveArea, waveEnvelope, true);
 
         g.setColour (juce::Colours::white);
         g.drawText (numViews > 0 ? hud : juce::String ("READY."), bottom, juce::Justification::centredLeft);

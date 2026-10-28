@@ -1123,6 +1123,12 @@ void SiltEditor::updateSpaceSettings (float seconds)
         peak = juce::jmax (peak, silt.spaceTraceAt (i));
     s.wet = juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (peak, -60.0f) + 54.0f) / 48.0f);
     s.sinceNote = (float) (count * SiltProcessor::spaceTraceStep / rate);
+    for (const auto& head : silt.voicePlayheads)   // where a note is playing, for its constellation
+        if (const float at = head.load(); at >= 0.0f)
+        {
+            s.notePlace = at;
+            break;
+        }
 
     // DUCK: dips while a note sounds, back over about half a second.
     static constexpr float duckAmounts[] { 0.0f, 0.35f, 0.65f, 1.0f };

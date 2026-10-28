@@ -49,60 +49,103 @@ juce::Colour starColour (juce::Random& r)
 }
 } // namespace
 
+// A bright star as a camera sees it: a small hot core, a soft glow falling
+// away fast, and (the brightest) thin spikes that taper to nothing.
+void SpaceScene::drawBrightStar (juce::Graphics& g, juce::Point<float> c, float size, juce::Colour colour, float alpha, bool spikes)
+{
+    if (alpha <= 0.01f)
+        return;
+    const float glow = 2.5f + 7.0f * size;
+    juce::ColourGradient halo (colour.withAlpha (0.45f * alpha), c.x, c.y, colour.withAlpha (0.0f), c.x + glow, c.y, true);
+    halo.addColour (0.12, colour.withAlpha (0.22f * alpha));
+    halo.addColour (0.35, colour.withAlpha (0.05f * alpha));
+    g.setGradientFill (halo);
+    g.fillEllipse (c.x - glow, c.y - glow, 2.0f * glow, 2.0f * glow);
+    if (spikes)
+    {
+        // Each spike a sliver, widest at the core, fading along its length.
+        const float len = glow * (1.6f + 1.4f * size), w = 0.55f + 0.5f * size;
+        const juce::Point<float> dirs[] { { 1.0f, 0.0f }, { -1.0f, 0.0f }, { 0.0f, 1.0f }, { 0.0f, -1.0f } };
+        for (const auto dir : dirs)
+        {
+            const auto side = juce::Point<float> (-dir.y, dir.x) * w;
+            juce::Path sliver;
+            sliver.startNewSubPath (c + side);
+            sliver.lineTo (c + dir * len);
+            sliver.lineTo (c - side);
+            sliver.closeSubPath();
+            g.setGradientFill (juce::ColourGradient (colour.withAlpha (0.7f * alpha), c.x, c.y, colour.withAlpha (0.0f),
+                                                     c.x + dir.x * len, c.y + dir.y * len, false));
+            g.fillPath (sliver);
+        }
+    }
+    const float core = 0.7f + 1.0f * size;
+    g.setColour (juce::Colours::white.withAlpha (juce::jmin (1.0f, alpha)));
+    g.fillEllipse (c.x - core, c.y - core, 2.0f * core, 2.0f * core);
+}
+
 void SpaceScene::buildSky (juce::Rectangle<int> area)
 {
-    // Twice and a bit the screen each way, so DECAY can pull well back.
-    skyW = juce::roundToInt ((float) area.getWidth() * 2.2f) / 4 * 4;
-    skyH = juce::roundToInt ((float) area.getHeight() * 2.2f) / 4 * 4;
-    const int qw = skyW / 4, qh = skyH / 4;
+    builtFor = area;
+    skyW = area.getWidth() * 2;
+    skyH = area.getHeight();
+    const int qw = juce::jmax (1, skyW / 4), qh = juce::jmax (1, skyH / 4);
     juce::Random r (7);
 
-    // The clouds, a quarter size (drawn up soft): a curving Milky Way band with
-    // dark dust lanes and a warmer core, and nebula wisps off it.
-    band = juce::Image (juce::Image::ARGB, qw, qh, true);
-    juce::Image wisps (juce::Image::ARGB, qw, qh, true);
+    // The clouds, worked out a quarter size, then drawn up to full size once: a
+    // curving Milky Way band with dark dust lanes and a warmer core, and
+    // nebula wisps off it.
+    juce::Image bandQ (juce::Image::ARGB, qw, qh, true), wispQ (juce::Image::ARGB, qw, qh, true);
     std::vector<float> density ((size_t) (qw * qh));
     {
-        juce::Image::BitmapData bandPixels (band, juce::Image::BitmapData::writeOnly);
-        juce::Image::BitmapData wispPixels (wisps, juce::Image::BitmapData::writeOnly);
+        juce::Image::BitmapData bandPixels (bandQ, juce::Image::BitmapData::writeOnly);
+        juce::Image::BitmapData wispPixels (wispQ, juce::Image::BitmapData::writeOnly);
         const float w = (float) skyW;
         for (int y = 0; y < qh; ++y)
             for (int x = 0; x < qw; ++x)
             {
                 const float X = (float) x * 4.0f, Y = (float) y * 4.0f;
-                const float across = ((Y / (float) skyH - 0.5f) - 0.22f * std::sin (6.2831853f * X / w)
-                                      - 0.08f * std::sin (12.566f * X / w + 1.3f)) * 2.4f;
+                const float across = ((Y / (float) skyH - 0.5f) - 0.2f * std::sin (6.2831853f * X / w)
+                                      - 0.07f * std::sin (12.566f * X / w + 1.3f)) * 2.2f;
                 const float core = std::exp (-across * across * 3.2f);
-                const float mottle = fbm (X, Y, w, 15, 5, 1);
-                const float dust = juce::jmax (0.0f, fbm (X, Y, w, 22, 5, 2) - 0.47f) * 3.2f * core;
+                const float mottle = fbm (X, Y, w, 12, 5, 1);
+                const float dust = juce::jmax (0.0f, fbm (X, Y, w, 18, 5, 2) - 0.47f) * 3.2f * core;
                 const float glow = juce::jmax (0.0f, core * (0.35f + 0.9f * mottle) - dust * 0.9f);
                 density[(size_t) (y * qw + x)] = juce::jmin (1.0f, core * (0.4f + mottle));
                 const float warm = std::exp (-across * across * 9.0f);
                 bandPixels.setPixelColour (x, y, juce::Colour::fromFloatRGBA ((200.0f + 40.0f * warm) / 255.0f, (186.0f + 10.0f * warm) / 255.0f,
                                                                               (176.0f - 50.0f * warm) / 255.0f, juce::jmin (1.0f, glow * 0.47f)));
-                const float wisp = juce::jmax (0.0f, fbm (X, Y, w, 10, 6, 3) - 0.52f) * 4.2f * (0.5f + fbm (X, Y, w, 43, 3, 4));
+                const float wisp = juce::jmax (0.0f, fbm (X, Y, w, 8, 6, 3) - 0.52f) * 4.2f * (0.5f + fbm (X, Y, w, 36, 3, 4));
                 wispPixels.setPixelColour (x, y, juce::Colours::white.withAlpha (juce::jmin (1.0f, wisp * 0.59f)));
             }
     }
-    // The nebula in two colours, for TONE: warm dust (dark) and cool blue (bright).
-    const auto tinted = [&] (juce::Colour colour)
+    const auto fullSize = [&] (const juce::Image& small, juce::Colour tint, bool tinted)
     {
-        juce::Image out (juce::Image::ARGB, qw, qh, true);
-        juce::Image::BitmapData src (wisps, juce::Image::BitmapData::readOnly);
-        juce::Image::BitmapData dst (out, juce::Image::BitmapData::writeOnly);
-        for (int y = 0; y < qh; ++y)
-            for (int x = 0; x < qw; ++x)
-                dst.setPixelColour (x, y, colour.withAlpha (src.getPixelColour (x, y).getFloatAlpha()));
+        juce::Image out (juce::Image::ARGB, skyW, skyH, true);
+        {
+            juce::Graphics g (out);
+            g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+            g.drawImage (small, 0, 0, skyW, skyH, 0, 0, qw, qh);
+        }
+        if (tinted)
+        {
+            // Keep the wisps' shape, in this colour.
+            juce::Image::BitmapData px (out, juce::Image::BitmapData::readWrite);
+            for (int y = 0; y < skyH; ++y)
+                for (int x = 0; x < skyW; ++x)
+                    px.setPixelColour (x, y, tint.withAlpha (px.getPixelColour (x, y).getFloatAlpha()));
+        }
         return out;
     };
-    nebulaWarm = tinted (juce::Colour (0xffaa6040));
-    nebulaCool = tinted (juce::Colour (0xff5c70be));
+    band = fullSize (bandQ, {}, false);
+    nebulaWarm = fullSize (wispQ, juce::Colour (0xffaa6040), true);
+    nebulaCool = fullSize (wispQ, juce::Colour (0xff5c70be), true);
 
-    // Stars: thicker along the band, mostly faint.
-    const auto stars = [&] (int count, float maxSize, float brightness, float bandBias)
+    // Stars, thicker along the band and mostly faint: the vast sky's many tiny
+    // ones, and the close sky's fewer, larger ones.
+    const float perPixel = (float) (skyW * skyH) / (2600.0f * 980.0f);
+    const auto scatter = [&] (juce::Graphics& g, int count, float minSize, float maxSize, float brightness, float bandBias)
     {
-        juce::Image img (juce::Image::ARGB, skyW, skyH, true);
-        juce::Graphics g (img);
         for (int k = 0; k < count; ++k)
         {
             float x = r.nextFloat() * (float) skyW, y = r.nextFloat() * (float) skyH;
@@ -113,107 +156,89 @@ void SpaceScene::buildSky (juce::Rectangle<int> area)
                 y = r.nextFloat() * (float) skyH;
             }
             const float m = std::pow (r.nextFloat(), 3.2f);
-            const float sz = 0.35f + maxSize * m;
+            const float sz = minSize + maxSize * m;
             g.setColour (starColour (r).withAlpha (juce::jmin (1.0f, brightness * (0.25f + 0.75f * m))));
             if (sz < 1.1f)
                 g.fillRect (x, y, sz, sz);
             else
-                g.fillEllipse (x - sz * 0.6f, y - sz * 0.6f, sz * 1.2f, sz * 1.2f);
+                g.fillEllipse (x - sz * 0.5f, y - sz * 0.5f, sz, sz);
         }
-        return img;
     };
-    const float areaScale = (float) (skyW * skyH) / (2600.0f * 980.0f);   // as many per pixel whatever the size
-    farStars = stars (juce::roundToInt (16000.0f * areaScale), 0.9f, 0.75f, 1.6f);
-    midStars = stars (juce::roundToInt (4200.0f * areaScale), 1.4f, 0.9f, 1.0f);
-    nearStars = stars (juce::roundToInt (900.0f * areaScale), 2.0f, 1.0f, 0.4f);
+    vastStars = juce::Image (juce::Image::ARGB, skyW, skyH, true);
+    {
+        juce::Graphics g (vastStars);
+        scatter (g, juce::roundToInt (16000.0f * perPixel), 0.3f, 0.7f, 0.75f, 1.6f);
+        scatter (g, juce::roundToInt (4000.0f * perPixel), 0.35f, 1.1f, 0.9f, 1.0f);
+    }
+    {
+        // Film grain in the vast sky's gaps.
+        juce::Image::BitmapData px (vastStars, juce::Image::BitmapData::readWrite);
+        for (int y = 0; y < skyH; y += 2)
+            for (int x = 0; x < skyW; x += 2)
+                if (r.nextFloat() < 0.5f && px.getPixelColour (x, y).getAlpha() == 0)
+                    px.setPixelColour (x, y, juce::Colours::white.withAlpha (0.02f + 0.04f * r.nextFloat()));
+    }
+    closeStars = juce::Image (juce::Image::ARGB, skyW, skyH, true);
+    {
+        juce::Graphics g (closeStars);
+        scatter (g, juce::roundToInt (1500.0f * perPixel), 0.5f, 1.6f, 0.95f, 0.3f);
+        scatter (g, juce::roundToInt (500.0f * perPixel), 0.8f, 2.4f, 1.0f, 0.2f);
+    }
 
     // The few bright ones, drawn live so they twinkle.
     bright.clear();
-    for (int k = 0; k < 26; ++k)
-        bright.push_back ({ r.nextFloat() * (float) skyW, r.nextFloat() * (float) skyH, 0.35f + std::pow (r.nextFloat(), 2.0f) * 0.65f,
-                            starColour (r), r.nextFloat() * 6.28f, 0.4f + r.nextFloat() * 1.4f, r.nextFloat() < 0.55f });
-
-    // Film grain, tiled into the back of the sky.
-    grain = juce::Image (juce::Image::ARGB, 128, 128, true);
-    {
-        juce::Image::BitmapData px (grain, juce::Image::BitmapData::writeOnly);
-        for (int y = 0; y < 128; ++y)
-            for (int x = 0; x < 128; ++x)
-                px.setPixelColour (x, y, (r.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (0.02f + 0.05f * r.nextFloat()));
-    }
-    compositeKey.clear();
-}
-
-void SpaceScene::buildComposites (juce::Rectangle<int> area, const Settings& s)
-{
-    // Rebuilt only when what they show changes (steps fine enough not to see).
-    const float v = std::round (view (s) * 64.0f) / 64.0f;
-    const auto key = juce::String (area.getWidth()) + "x" + juce::String (area.getHeight()) + "|" + juce::String (v, 4) + "|"
-                   + juce::String (juce::roundToInt (s.size * 40.0f)) + "|" + juce::String (juce::roundToInt (s.tone * 40.0f));
-    if (key == compositeKey && backComposite.isValid())
-        return;
-    compositeKey = key;
-
-    scale = (float) area.getWidth() / ((float) skyW * v);
-    const int cw = juce::jmax (1, juce::roundToInt ((float) skyW * scale)), ch = juce::jmax (1, juce::roundToInt ((float) skyH * scale));
-    const auto into = [&] (juce::Image& target, std::initializer_list<std::pair<const juce::Image*, float>> layers)
-    {
-        target = juce::Image (juce::Image::ARGB, cw, ch, true);
-        juce::Graphics g (target);
-        g.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
-        for (const auto& [img, alpha] : layers)
-            if (alpha > 0.005f)
-            {
-                g.setOpacity (juce::jmin (1.0f, alpha));
-                g.drawImage (*img, 0, 0, cw, ch, 0, 0, img->getWidth(), img->getHeight());
-            }
-    };
-    // SIZE: depth. The band and the far stars come in as it grows; TONE warms or cools.
-    into (backComposite, { { &band, (0.25f + 0.75f * s.size) * (0.55f + 0.45f * s.tone) },
-                           { &farStars, 0.15f + 0.85f * s.size },
-                           { &midStars, 0.45f + 0.55f * s.size } });
-    {
-        juce::Graphics g (backComposite);
-        g.setTiledImageFill (grain, 0, 0, 1.0f);
-        g.fillAll();
-    }
-    into (nebulaComposite, { { &nebulaWarm, (1.0f - s.tone) * 1.3f }, { &nebulaCool, s.tone * 1.3f } });
-    into (nearComposite, { { &nearStars, 1.0f } });
+    const int brightCount = juce::jmax (8, juce::roundToInt (60.0f * perPixel));
+    for (int k = 0; k < brightCount; ++k)
+        bright.push_back ({ r.nextFloat() * (float) skyW, r.nextFloat() * (float) skyH, 0.3f + std::pow (r.nextFloat(), 2.0f) * 0.7f,
+                            starColour (r), r.nextFloat() * 6.28f, 0.4f + r.nextFloat() * 1.4f, r.nextFloat() < 0.4f });
 
     // Darker corners, fixed to the screen.
     vignette = juce::Image (juce::Image::ARGB, area.getWidth(), area.getHeight(), true);
     juce::Graphics vg (vignette);
     const auto c = vignette.getBounds().toFloat().getCentre();
     vg.setGradientFill (juce::ColourGradient (juce::Colours::transparentBlack, c.x, c.y, juce::Colours::black.withAlpha (0.5f),
-                                              c.x + (float) area.getWidth() * 0.62f, c.y, true));
+                                              c.x + (float) area.getWidth() * 0.6f, c.y, true));
     vg.fillAll();
 }
 
 void SpaceScene::drawWrapped (juce::Graphics& g, const juce::Image& img, juce::Rectangle<int> area, float offset, float alpha) const
 {
-    // The sky's vertical middle in the middle of the area; wrapped across.
     if (alpha <= 0.005f || ! img.isValid())
         return;
     const int w = img.getWidth();
-    const int y = area.getY() - (img.getHeight() - area.getHeight()) / 2;
-    int x = area.getX() - (int) std::fmod (offset * scale, (float) w);
+    int x = area.getX() - (int) std::fmod (offset, (float) w);
     if (x > area.getX())
         x -= w;
     g.setOpacity (juce::jmin (1.0f, alpha));
     for (; x < area.getRight(); x += w)
-        g.drawImageAt (img, x, y);
+        g.drawImageAt (img, x, area.getY());
     g.setOpacity (1.0f);
 }
 
 void SpaceScene::advance (const Settings& s, float seconds, const std::vector<float>& envelope)
 {
+    // A new note (the time since one starts again): a constellation begins there.
+    if (s.sinceNote + 0.05f < lastSinceNote && s.delay > 0.01f)
+    {
+        constellations.push_back ({ juce::jlimit (0.08f, 0.92f, s.notePlace + (random.nextFloat() - 0.5f) * 0.1f),
+                                    0.3f + random.nextFloat() * 0.45f, now, random.nextFloat() * 6.28f, random.nextInt (100000) });
+        if (constellations.size() > 5)
+            constellations.erase (constellations.begin());
+    }
+    lastSinceNote = s.sinceNote;
     if (s.frozen)
         return;   // time stops
     now += seconds;
-    const float speed = 9.0f * (1.4f - s.size) * (float) skyW / 2600.0f;
-    const float depths[] { 0.25f, 0.55f, 1.0f };
-    for (int i = 0; i < 3; ++i)
-        drift[i] = std::fmod (drift[i] + seconds * speed * depths[i], (float) juce::jmax (1, skyW));
+
+    const float speed = 8.0f * (1.4f - s.size);
+    drift[0] = std::fmod (drift[0] + seconds * speed * 0.35f, (float) juce::jmax (1, skyW));
+    drift[1] = std::fmod (drift[1] + seconds * speed, (float) juce::jmax (1, skyW));
+
+    // A constellation goes once its last star has faded.
+    const float lifetime = s.echoSeconds * 12.0f + 4.0f;
+    constellations.erase (std::remove_if (constellations.begin(), constellations.end(),
+                                          [&] (const Constellation& c) { return now - c.born > lifetime; }),
+                          constellations.end());
 
     // SHIMMER: sparkles off the top of the waveform, more while SPACE is sounding.
     if (s.shimmer > 0.01f && ! envelope.empty())
@@ -241,12 +266,13 @@ void SpaceScene::advance (const Settings& s, float seconds, const std::vector<fl
 
 void SpaceScene::drawBehind (juce::Graphics& g, juce::Rectangle<int> area, juce::Rectangle<int> wave, const std::vector<float>& envelope, const Settings& s)
 {
+    juce::ignoreUnused (wave, envelope);
     if (area.isEmpty())
         return;
-    if (skyW == 0 || (float) area.getWidth() * 2.2f > (float) skyW * 1.15f || (float) area.getWidth() * 2.2f < (float) skyW * 0.7f
-        || (float) area.getHeight() * 2.2f > (float) skyH * 1.15f || (float) area.getHeight() * 2.2f < (float) skyH * 0.7f)
-        buildSky (area);   // made again only when the screen's size has changed a lot
-    buildComposites (area, s);
+    // Made again only when the screen's size changes by more than a little
+    // (it's drawn wrapped and cropped either way).
+    if (! band.isValid() || std::abs (area.getWidth() - builtFor.getWidth()) > 24 || std::abs (area.getHeight() - builtFor.getHeight()) > 2)
+        buildSky (area);
 
     juce::Graphics::ScopedSaveState state (g);
     g.reduceClipRegion (area);
@@ -254,87 +280,84 @@ void SpaceScene::drawBehind (juce::Graphics& g, juce::Rectangle<int> area, juce:
     g.setColour (juce::Colour (0xff05060a).withAlpha (mix));
     g.fillRect (area);
 
-    drawWrapped (g, backComposite, area, drift[0], dim);
-    drawWrapped (g, nebulaComposite, area, drift[1], s.reverb * (0.35f + 0.65f * s.wet) * dim);
-    drawWrapped (g, nearComposite, area, drift[2], dim);
+    // DECAY fades from the close space to the vast one; SIZE brings the band in.
+    const float vast = s.decay;
+    drawWrapped (g, band, area, drift[0], (0.15f + 0.85f * s.size) * (0.3f + 0.7f * vast) * (0.6f + 0.4f * s.tone) * dim);
+    drawWrapped (g, vastStars, area, drift[0], (0.2f + 0.8f * vast) * (0.6f + 0.4f * s.size) * dim);
+    drawWrapped (g, closeStars, area, drift[1], (1.0f - 0.75f * vast) * dim);
+    // REVERB: the nebula, breathing with the wet sound; TONE moves it from warm dust to cool blue.
+    const float neb = s.reverb * (0.35f + 0.65f * s.wet) * dim * 1.3f;
+    drawWrapped (g, nebulaWarm, area, drift[0], neb * (1.0f - s.tone));
+    drawWrapped (g, nebulaCool, area, drift[0], neb * s.tone);
 
-    // The bright stars: a soft halo, thin four-point spikes, twinkling more with TONE bright.
-    const float yOffset = (float) area.getY() - ((float) skyH * scale - (float) area.getHeight()) * 0.5f;
+    // The bright stars: larger in the close space, twinkling more with TONE bright.
     for (const auto& star : bright)
     {
-        const float x = (float) area.getX() + std::fmod (star.x - drift[2] + (float) skyW, (float) skyW) * scale;
-        const float y = yOffset + star.y * scale;
-        if (x < (float) area.getX() - 30.0f || x > (float) area.getRight() + 30.0f || y < (float) area.getY() - 30.0f || y > (float) area.getBottom() + 30.0f)
+        const float x = (float) area.getX() + std::fmod (star.x - drift[1] + (float) skyW, (float) skyW);
+        const float y = (float) area.getY() + star.y;
+        if (x < (float) area.getX() - 40.0f || x > (float) area.getRight() + 40.0f)
             continue;
         const float twinkle = 1.0f - (0.1f + 0.4f * s.tone) * 0.5f * (1.0f + std::sin (star.phase + now * star.rate));
-        const float a = star.size * twinkle * dim;
-        const float r = (3.0f + 9.0f * star.size) * std::sqrt (scale * 2.2f);
-        juce::ColourGradient halo (star.colour.withAlpha (0.55f * a), x, y, star.colour.withAlpha (0.0f), x + r, y, true);
-        halo.addColour (0.25, star.colour.withAlpha (0.12f * a));
-        g.setGradientFill (halo);
-        g.fillEllipse (x - r, y - r, 2.0f * r, 2.0f * r);
-        if (star.spikes)
-        {
-            const float len = r * (1.4f + 1.2f * star.size);
-            g.setColour (star.colour.withAlpha (0.5f * a));
-            g.drawLine (x - len, y, x + len, y, 0.7f);
-            g.drawLine (x, y - len, x, y + len, 0.7f);
-        }
-        g.setColour (juce::Colours::white.withAlpha (juce::jmin (1.0f, a * 1.2f)));
-        const float core = 0.8f + 1.2f * star.size;
-        g.fillEllipse (x - core, y - core, 2.0f * core, 2.0f * core);
+        drawBrightStar (g, { x, y }, star.size * (1.15f - 0.45f * vast), star.colour, star.size * twinkle * dim, star.spikes);
     }
 
-    // DELAY: ghosts of the waveform made of star-dust, further back and fainter
-    // each repeat, each flashing as it fires after the latest note.
-    if (s.delay > 0.01f && ! envelope.empty())
+    // DELAY: each note's constellation, a star per echo as it fires, joined by
+    // faint lines; a curling arm (STEREO) or a two-armed spiral (ping-pong).
+    if (s.delay > 0.01f)
     {
         const float timeShare = juce::jlimit (0.0f, 1.0f, std::log (juce::jmax (0.01f, s.echoSeconds) / 0.01f) / std::log (200.0f));
-        const float k = 0.88f - 0.32f * timeShare;   // longer TIME: further apart
-        struct Echo { int n; float level; };
-        std::vector<Echo> echoes;
-        float level = 1.0f;
-        for (int n = 1; n <= 12 && level > 0.04f; ++n)
+        const float step = 0.7f + 0.6f * timeShare;            // turn between stars
+        const float growth = 1.16f + 0.24f * timeShare;        // each further out
+        const float start = 7.0f + 6.0f * timeShare;
+        std::vector<float> levels;
+        for (float level = 1.0f; level > 0.04f && levels.size() < 12; level *= s.feedback)
         {
-            echoes.push_back ({ n, level });
-            level *= s.feedback;
+            levels.push_back (level);
             if (s.feedback < 0.02f)
                 break;
         }
-        const float w = (float) wave.getWidth(), h = (float) wave.getHeight() * 0.48f;
-        const auto centre = wave.getCentre().toFloat();
-        const float below = (float) area.getBottom() - centre.y;   // room to sink into
-        for (auto it = echoes.rbegin(); it != echoes.rend(); ++it)
+        for (const auto& c : constellations)
         {
-            const float sc = std::pow (k, (float) it->n);
-            const float since = s.sinceNote - (float) it->n * s.echoSeconds;
-            const float flash = since >= 0.0f ? std::exp (-since / 0.4f) : 0.0f;
-            const float side = s.pingPong ? (it->n % 2 ? -1.0f : 1.0f) : 0.0f;
-            // Down and away, into the grains' part of the sky.
-            const float ox = side * (1.0f - sc) * w * 0.42f, oy = (1.0f - sc) * below * (s.pingPong ? 0.8f : 0.95f);
-            const float a = juce::jmin (1.0f, s.delay * it->level * (0.6f + 0.4f * flash) * dim);
-            if (a < 0.01f)
-                continue;
-            g.setColour ((s.pingPong ? (it->n % 2 ? juce::Colour (0xffc8d6ff) : juce::Colour (0xffffceac)) : juce::Colour (0xffffe2c4)).withAlpha (a));
-            const float ew = w * sc, eh = h * sc, x0 = centre.x + ox - ew * 0.5f, y0 = centre.y + oy;
-            juce::Random dust (it->n * 977);
-            const int dots = (int) (520.0f * sc + 100.0f);
-            for (int d = 0; d < dots; ++d)
+            const float age = now - c.born;
+            const auto centre = juce::Point<float> ((float) area.getX() + c.u * (float) area.getWidth(), (float) area.getY() + c.v * (float) area.getHeight());
+            std::vector<juce::Point<float>> lit;
+            std::vector<float> glow;
+            for (size_t i = 0; i < levels.size(); ++i)
             {
-                const float u = dust.nextFloat();
-                const float height = envelope[(size_t) juce::jlimit (0, (int) envelope.size() - 1, (int) (u * (float) envelope.size()))] * eh;
-                const float v = dust.nextFloat() < 0.55f ? (dust.nextBool() ? -1.0f : 1.0f) * (0.85f + 0.15f * dust.nextFloat()) : dust.nextFloat() * 2.0f - 1.0f;
-                const float sz = dust.nextFloat() < 0.1f ? 2.0f : 1.3f;
-                g.fillRect (x0 + u * ew, y0 + v * height, sz, sz);
+                const int n = (int) i + 1;
+                const float fire = (float) n * s.echoSeconds;
+                if (age < fire)
+                    break;
+                const int arm = s.pingPong ? n % 2 : 0;
+                const int along = s.pingPong ? (n + 1) / 2 : n;
+                const float angle = c.turn + (float) along * step + (float) arm * juce::MathConstants<float>::pi;
+                const float radius = start * std::pow (growth, (float) along);
+                lit.push_back (centre + juce::Point<float> (std::cos (angle), std::sin (angle) * 0.75f) * radius);
+                const float flash = std::exp (-(age - fire) / 0.3f);
+                const float fade = juce::jlimit (0.0f, 1.0f, 1.0f - (age - fire - 2.0f) / 3.0f);
+                glow.push_back (juce::jmin (1.0f, s.delay * levels[i] * fade * (0.55f + 1.2f * flash) * dim));
             }
+            // Lines first, between each star and the one before it on its arm.
+            const size_t back = s.pingPong ? 2 : 1;
+            for (size_t i = back; i < lit.size(); ++i)
+            {
+                g.setColour (juce::Colour (0xffc8d6ff).withAlpha (0.3f * juce::jmin (glow[i], glow[i - back])));
+                g.drawLine (juce::Line<float> (lit[i - back], lit[i]), 0.6f);
+            }
+            if (s.pingPong && lit.size() >= 2)
+            {
+                g.setColour (juce::Colour (0xffc8d6ff).withAlpha (0.3f * juce::jmin (glow[0], glow[1])));
+                g.drawLine (juce::Line<float> (lit[0], lit[1]), 0.6f);
+            }
+            for (size_t i = 0; i < lit.size(); ++i)
+                drawBrightStar (g, lit[i], 0.35f + 0.4f * levels[i], i % 2 && s.pingPong ? juce::Colour (0xffffd6aa) : juce::Colour (0xffd8e4ff),
+                                glow[i], i == 0);
         }
     }
-    if (vignette.isValid())
-    {
-        g.setOpacity (mix);
-        g.drawImageAt (vignette, area.getX(), area.getY());
-        g.setOpacity (1.0f);
-    }
+
+    g.setOpacity (mix);
+    g.drawImageAt (vignette, area.getX(), area.getY());
+    g.setOpacity (1.0f);
 }
 
 void SpaceScene::drawOver (juce::Graphics& g, juce::Rectangle<int> area, juce::Rectangle<int> wave, const Settings& s)
