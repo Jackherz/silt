@@ -159,10 +159,10 @@ shape; a moving playhead on both; or the others' trace).
 and the grains, fading in with DELAY and REVERB. DECAY fades from a close, small space (fewer,
 larger stars) to a vast one (dense faint stars, the Milky Way); SIZE brings the band in;
 REVERB is nebula that breathes with what SPACE is adding; TONE runs from warm dust to blue
-nebula and twinkling; SHIMMER sends sparkles up off the waveform. DELAY: each note draws a
-constellation, a star per echo as it fires, joined by faint lines: a curling arm like the
-Northern Crown opening out (STEREO) or a two-armed galaxy spiral, repeats alternating arms
-(ping-pong); TIME spaces the stars, FEEDBACK says how many. FREEZE stops the sky; DUCK dims it
+nebula and twinkling; SHIMMER sends sparkles up off the waveform. DELAY: light echoes, as round
+a star that flares: each note flares, and every echo sends a ring of lit dust out from it, so
+TIME is the spacing between the rings, FEEDBACK how many (each fainter), DELAY how bright;
+ping-pong alternates them between two stars side by side. FREEZE stops the sky; DUCK dims it
 while a note sounds.
 
 **Presets** (header: ◀ name ▶, SAVE): a preset is the sound (every parameter, the

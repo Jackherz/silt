@@ -729,3 +729,45 @@ TEST_CASE ("Preset browser: the star favourites a preset without playing it")
     CHECK (browser->isFavourite (0) == was);
     browser->close (false);
 }
+
+#include "../plugin/SpaceScene.h"
+
+// Not run with the suite: renders SPACE's sky partway through a note's light
+// echoes, to SILT_SCENE_OUT/scene-*.png, to look at.
+TEST_CASE ("SPACE sky: a frame of the light echoes", "[.][scene]")
+{
+    juce::ScopedJuceInitialiser_GUI juce;
+    const auto out = juce::SystemStats::getEnvironmentVariable ("SILT_SCENE_OUT", {});
+    for (const bool ping : { false, true })
+    {
+        silt::ui::SpaceScene scene;
+        silt::ui::SpaceScene::Settings s;
+        s.delay = 0.7f; s.feedback = 0.6f; s.echoSeconds = 0.3f; s.reverb = 0.4f; s.decay = 0.6f; s.size = 0.6f; s.tone = 0.5f;
+        s.pingPong = ping;
+        std::vector<float> envelope (1000);
+        for (size_t i = 0; i < envelope.size(); ++i)
+            envelope[i] = 0.3f + 0.4f * std::abs (std::sin ((float) i * 0.01f));
+        juce::Image image (juce::Image::RGB, 1000, 380, true);
+        const juce::Rectangle<int> area (0, 0, 1000, 380), wave (0, 20, 1000, 200);
+        s.sinceNote = 5.0f;
+        scene.advance (s, 0.03f, envelope);
+        s.sinceNote = 0.0f;   // a note
+        scene.advance (s, 0.03f, envelope);
+        for (float t = 0.0f; t < 1.4f; t += 1.0f / 30.0f)
+        {
+            s.sinceNote += 1.0f / 30.0f;
+            scene.advance (s, 1.0f / 30.0f, envelope);
+        }
+        juce::Graphics g (image);
+        scene.drawBehind (g, area, wave, envelope, s);
+        scene.drawOver (g, area, wave, s);
+        if (out.isNotEmpty())
+        {
+            juce::FileOutputStream stream (juce::File (out).getChildFile (ping ? "scene-pingpong.png" : "scene-stereo.png"));
+            stream.setPosition (0);
+            stream.truncate();
+            juce::PNGImageFormat().writeImageToStream (image, stream);
+        }
+    }
+    SUCCEED();
+}

@@ -217,13 +217,13 @@ void SpaceScene::drawWrapped (juce::Graphics& g, const juce::Image& img, juce::R
 
 void SpaceScene::advance (const Settings& s, float seconds, const std::vector<float>& envelope)
 {
-    // A new note (the time since one starts again): a constellation begins there.
+    // A new note (the time since one starts again): a flare there, near where it plays.
     if (s.sinceNote + 0.05f < lastSinceNote && s.delay > 0.01f)
     {
-        constellations.push_back ({ juce::jlimit (0.08f, 0.92f, s.notePlace + (random.nextFloat() - 0.5f) * 0.1f),
-                                    0.3f + random.nextFloat() * 0.45f, now, random.nextFloat() * 6.28f, random.nextInt (100000) });
-        if (constellations.size() > 5)
-            constellations.erase (constellations.begin());
+        flares.push_back ({ juce::jlimit (0.08f, 0.92f, s.notePlace + (random.nextFloat() - 0.5f) * 0.1f),
+                            0.3f + random.nextFloat() * 0.4f, now, random.nextInt (100000) });
+        if (flares.size() > 3)
+            flares.erase (flares.begin());
     }
     lastSinceNote = s.sinceNote;
     if (s.frozen)
@@ -234,11 +234,9 @@ void SpaceScene::advance (const Settings& s, float seconds, const std::vector<fl
     drift[0] = std::fmod (drift[0] + seconds * speed * 0.35f, (float) juce::jmax (1, skyW));
     drift[1] = std::fmod (drift[1] + seconds * speed, (float) juce::jmax (1, skyW));
 
-    // A constellation goes once its last star has faded.
-    const float lifetime = s.echoSeconds * 12.0f + 4.0f;
-    constellations.erase (std::remove_if (constellations.begin(), constellations.end(),
-                                          [&] (const Constellation& c) { return now - c.born > lifetime; }),
-                          constellations.end());
+    // A flare goes once its last ring has spread and faded.
+    const float lifetime = s.echoSeconds * 12.0f + 8.0f;
+    flares.erase (std::remove_if (flares.begin(), flares.end(), [&] (const Flare& f) { return now - f.born > lifetime; }), flares.end());
 
     // SHIMMER: sparkles off the top of the waveform, more while SPACE is sounding.
     if (s.shimmer > 0.01f && ! envelope.empty())
@@ -301,14 +299,14 @@ void SpaceScene::drawBehind (juce::Graphics& g, juce::Rectangle<int> area, juce:
         drawBrightStar (g, { x, y }, star.size * (1.15f - 0.45f * vast), star.colour, star.size * twinkle * dim, star.spikes);
     }
 
-    // DELAY: each note's constellation, a star per echo as it fires, joined by
-    // faint lines; a curling arm (STEREO) or a two-armed spiral (ping-pong).
+    // DELAY: light echoes. Each note flares; every echo sends a ring of lit
+    // dust out from it, so the rings (expanding at a steady speed) are spaced
+    // by TIME; FEEDBACK says how many, each fainter; they fade as they spread.
+    // Ping-pong: two stars side by side, the rings alternating between them.
     if (s.delay > 0.01f)
     {
-        const float timeShare = juce::jlimit (0.0f, 1.0f, std::log (juce::jmax (0.01f, s.echoSeconds) / 0.01f) / std::log (200.0f));
-        const float step = 0.7f + 0.6f * timeShare;            // turn between stars
-        const float growth = 1.16f + 0.24f * timeShare;        // each further out
-        const float start = 7.0f + 6.0f * timeShare;
+        const float speed = 90.0f * (float) area.getHeight() / 300.0f;   // pixels a second
+        const float reach = (float) area.getWidth() * 0.42f;
         std::vector<float> levels;
         for (float level = 1.0f; level > 0.04f && levels.size() < 12; level *= s.feedback)
         {
@@ -316,42 +314,59 @@ void SpaceScene::drawBehind (juce::Graphics& g, juce::Rectangle<int> area, juce:
             if (s.feedback < 0.02f)
                 break;
         }
-        for (const auto& c : constellations)
+        for (const auto& f : flares)
         {
-            const float age = now - c.born;
-            const auto centre = juce::Point<float> ((float) area.getX() + c.u * (float) area.getWidth(), (float) area.getY() + c.v * (float) area.getHeight());
-            std::vector<juce::Point<float>> lit;
-            std::vector<float> glow;
+            const float age = now - f.born;
+            const auto centre = juce::Point<float> ((float) area.getX() + f.u * (float) area.getWidth(), (float) area.getY() + f.v * (float) area.getHeight());
+            const float apart = 14.0f * (float) area.getHeight() / 300.0f;
+            const auto source = [&] (int n) { return s.pingPong ? centre + juce::Point<float> (n % 2 ? apart : -apart, 0.0f) : centre; };
+            const float lastRing = (float) levels.size() * s.echoSeconds;
+            const float fadeOut = juce::jlimit (0.0f, 1.0f, 1.0f - (age - lastRing) / (reach / speed));
+
+            // The stars themselves: a flash on the note, and on each echo they send.
+            for (int star = 0; star < (s.pingPong ? 2 : 1); ++star)
+            {
+                float flash = std::exp (-age / 0.3f);
+                for (size_t i = 0; i < levels.size(); ++i)
+                    if (const float since = age - (float) (i + 1) * s.echoSeconds; since >= 0.0f && (! s.pingPong || (int) (i + 1) % 2 == star))
+                        flash = juce::jmax (flash, levels[i] * std::exp (-since / 0.25f));
+                drawBrightStar (g, source (star), 0.6f, star ? juce::Colour (0xffffd6aa) : juce::Colour (0xffd8e4ff),
+                                juce::jmin (1.0f, s.delay * dim * fadeOut * (0.35f + 0.9f * flash)), true);
+            }
+
             for (size_t i = 0; i < levels.size(); ++i)
             {
                 const int n = (int) i + 1;
-                const float fire = (float) n * s.echoSeconds;
-                if (age < fire)
+                const float ringAge = age - (float) n * s.echoSeconds;
+                if (ringAge <= 0.0f)
                     break;
-                const int arm = s.pingPong ? n % 2 : 0;
-                const int along = s.pingPong ? (n + 1) / 2 : n;
-                const float angle = c.turn + (float) along * step + (float) arm * juce::MathConstants<float>::pi;
-                const float radius = start * std::pow (growth, (float) along);
-                lit.push_back (centre + juce::Point<float> (std::cos (angle), std::sin (angle) * 0.75f) * radius);
-                const float flash = std::exp (-(age - fire) / 0.3f);
-                const float fade = juce::jlimit (0.0f, 1.0f, 1.0f - (age - fire - 2.0f) / 3.0f);
-                glow.push_back (juce::jmin (1.0f, s.delay * levels[i] * fade * (0.55f + 1.2f * flash) * dim));
+                const float radius = ringAge * speed;
+                if (radius > reach)
+                    continue;
+                const float spread = 1.0f - radius / reach;
+                const float a = juce::jmin (1.0f, s.delay * levels[i] * spread * (0.55f + 0.8f * std::exp (-ringAge / 0.25f)) * dim);
+                if (a < 0.01f)
+                    continue;
+                const auto c = source (n);
+                const auto colour = s.pingPong && n % 2 ? juce::Colour (0xffffdcbc) : juce::Colour (0xffd6e2ff);
+                // A faint sheet of light, then the dust lit along it, clumpy and fixed to the ring.
+                g.setColour (colour.withAlpha (0.18f * a));
+                g.drawEllipse (c.x - radius, c.y - radius * 0.82f, 2.0f * radius, 1.64f * radius, 1.0f);
+                juce::Random dust (f.seed + n * 131);
+                const float clump = dust.nextFloat() * 6.28f;
+                const int count = juce::jlimit (16, 240, (int) (6.2831853f * radius / 3.0f));
+                for (int k = 0; k < count; ++k)
+                {
+                    const float angle = 6.2831853f * ((float) k + dust.nextFloat()) / (float) count;
+                    const float thick = 0.5f + 0.5f * std::sin (angle * 3.0f + clump) * std::sin (angle * 5.0f + clump * 1.7f);
+                    if (dust.nextFloat() > 0.25f + 0.75f * thick)
+                        continue;
+                    const float rr = radius * (1.0f + 0.05f * (dust.nextFloat() - 0.5f)) + (dust.nextFloat() - 0.5f) * 3.0f;
+                    g.setColour (colour.withAlpha (juce::jmin (1.0f, a * (0.4f + 0.8f * thick))));
+                    const float sz = dust.nextFloat() < 0.1f ? 1.7f : 1.1f;
+                    g.fillRect (c.x + std::cos (angle) * rr, c.y + std::sin (angle) * rr * 0.82f, sz, sz);
+                }
             }
-            // Lines first, between each star and the one before it on its arm.
-            const size_t back = s.pingPong ? 2 : 1;
-            for (size_t i = back; i < lit.size(); ++i)
-            {
-                g.setColour (juce::Colour (0xffc8d6ff).withAlpha (0.3f * juce::jmin (glow[i], glow[i - back])));
-                g.drawLine (juce::Line<float> (lit[i - back], lit[i]), 0.6f);
-            }
-            if (s.pingPong && lit.size() >= 2)
-            {
-                g.setColour (juce::Colour (0xffc8d6ff).withAlpha (0.3f * juce::jmin (glow[0], glow[1])));
-                g.drawLine (juce::Line<float> (lit[0], lit[1]), 0.6f);
-            }
-            for (size_t i = 0; i < lit.size(); ++i)
-                drawBrightStar (g, lit[i], 0.35f + 0.4f * levels[i], i % 2 && s.pingPong ? juce::Colour (0xffffd6aa) : juce::Colour (0xffd8e4ff),
-                                glow[i], i == 0);
         }
     }
 

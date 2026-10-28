@@ -12,11 +12,10 @@
 //   REVERB    nebula wisps, breathing with what SPACE is adding now
 //   TONE      warm dust (dark) to blue nebula and twinkling (bright)
 //   SHIMMER   four-point sparkles rising off the waveform
-//   DELAY     each note draws a constellation, a star per echo as it fires,
-//             joined by faint lines: a curling arm like the Northern Crown
-//             opening out (STEREO), or a two-armed galaxy spiral, the repeats
-//             alternating arms (ping-pong). TIME spaces the stars along it,
-//             FEEDBACK says how many, each fainter
+//   DELAY     light echoes: each note flares, and every echo sends a ring of
+//             lit dust out from it, so TIME is the spacing between rings,
+//             FEEDBACK how many (each fainter), DELAY how bright; ping-pong
+//             alternates the rings between two stars side by side
 //   FREEZE    the sky stops and a cold hush falls
 //   DUCK      the sky dims while a note sounds
 // The whole scene fades in with DELAY and REVERB; with both down it's not there.
@@ -46,10 +45,10 @@ public:
 
     static bool visible (const Settings& s) { return s.mix() > 0.001f; }
 
-    // Moves it on: the drift, the sparkles, the constellations (nothing moves while frozen).
+    // Moves it on: the drift, the sparkles, the light echoes (nothing moves while frozen).
     void advance (const Settings&, float seconds, const std::vector<float>& envelope);
 
-    // Behind the waveform and grains (sky, nebula, constellations) and over them
+    // Behind the waveform and grains (sky, nebula, light echoes) and over them
     // (sparkles, the freeze's hush). area: the whole scene; wave: the
     // waveform's part of it, with its height (0…1 of half) per pixel across.
     void drawBehind (juce::Graphics&, juce::Rectangle<int> area, juce::Rectangle<int> wave, const std::vector<float>& envelope, const Settings&);
@@ -58,7 +57,7 @@ public:
 private:
     struct Star { float x, y, size; juce::Colour colour; float phase, rate; bool spikes; };
     struct Sparkle { float u, y, vy, vx, life, span; };
-    struct Constellation { float u, v, born, turn; int seed; };   // where (shares of the scene), when, its rotation
+    struct Flare { float u, v, born; int seed; };   // where a note flared (shares of the scene) and when
 
     void buildSky (juce::Rectangle<int> area);
     void drawWrapped (juce::Graphics&, const juce::Image&, juce::Rectangle<int> area, float offset, float alpha) const;
@@ -73,7 +72,7 @@ private:
     float drift[2] {};   // vast, close: how far each has moved, in pixels
     float now = 0.0f, lastSinceNote = 99.0f;
     std::vector<Sparkle> sparkles;
-    std::vector<Constellation> constellations;
+    std::vector<Flare> flares;
     juce::Random random { 11 };
 };
 } // namespace silt::ui
