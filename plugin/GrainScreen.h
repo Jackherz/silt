@@ -411,10 +411,19 @@ public:
         return area.withRight (juce::jmin (area.getRight(), insetArea().getX() - 10));
     }
 
-    // A page's own picture in the strip where the scope goes (SPACE's
-    // timeline); returns false when the page has none.
+    // A page's own picture in the strip where the scope goes; returns false
+    // when the page has none.
     std::function<bool (juce::Graphics&, juce::Rectangle<float>)> drawStrip;
     void repaintStrip() { repaint (scopeArea().expanded (0, 2)); }
+
+    // A page's scene round the waveform and the grains (SPACE's sky): called
+    // behind them (over false; returns whether it drew, and the grain field then
+    // leaves out its own backdrop) and over them (true). scene: the waveform's
+    // and the grains' area together; wave: the waveform's, with its height per
+    // pixel across.
+    std::function<bool (juce::Graphics&, juce::Rectangle<int> scene, juce::Rectangle<int> wave, const std::vector<float>& envelope, bool over)> drawAroundWave;
+    void repaintWave() { repaint (waveRect().getUnion (rollArea())); }
+    const std::vector<float>& getWaveEnvelope() const noexcept { return waveEnvelope; }
 
     void paint (juce::Graphics& g) override
     {
@@ -577,6 +586,8 @@ private:
                         + (overview.mono ? "MONO" : "ST") + "  " + juce::String (overview.megabytes, overview.megabytes < 10.0 ? 1 : 0) + " MB",
                     top, juce::Justification::centredRight);
 
+        const auto sceneArea = waveArea.getUnion (rollArea);
+        sceneBehind = drawAroundWave != nullptr && drawAroundWave (g, sceneArea, waveArea, waveEnvelope, false);
         drawWave (g, waveArea);
         if (viewEnd - viewStart < 0.999f)
         {
@@ -621,6 +632,8 @@ private:
             }
         }
         drawGrains (g, waveArea, rollArea);
+        if (sceneBehind)
+            drawAroundWave (g, waveArea.getUnion (rollArea), waveArea, waveEnvelope, true);
 
         g.setColour (juce::Colours::white);
         g.drawText (numViews > 0 ? hud : juce::String ("READY."), bottom, juce::Justification::centredLeft);
@@ -637,6 +650,7 @@ private:
             // The columns in view, each pixel taking the loudest of those under it.
             // At the sample gain: columns pushed past full scale are drawn red.
             const double first = viewStart * cols, perPixel = (viewEnd - viewStart) * cols / juce::jmax (1, area.getWidth());
+            waveEnvelope.assign ((size_t) area.getWidth(), 0.0f);
             for (int x = 0; x < area.getWidth(); ++x)
             {
                 const int c0 = juce::jlimit (0, cols - 1, (int) (first + x * perPixel));
@@ -650,6 +664,7 @@ private:
                 hi *= displayGain;
                 lo *= displayGain;
                 const bool clipped = hi > 1.0f || lo < -1.0f;
+                waveEnvelope[(size_t) x] = juce::jmin (1.0f, juce::jmax (hi, -lo));
                 const float top = mid - juce::jmin (1.0f, hi) * half;
                 const float bottom = mid - juce::jmax (-1.0f, lo) * half;
                 c.setColour (clipped ? signalRed : screenPale);
@@ -902,7 +917,8 @@ private:
         const float rollTop = (float) roll.getY() + laneH * 1.5f, rollBottom = (float) roll.getBottom() - laneH * 1.5f;
         const auto panToY = [=] (float pan) { return juce::jmap (pan, -1.0f, 1.0f, rollTop, rollBottom); };
 
-        drawFieldBackdrop (g, roll);
+        if (! sceneBehind)   // a page's scene shows through instead
+            drawFieldBackdrop (g, roll);
 
         // Stereo guides: L at the top, centre, R at the bottom.
         g.setFont (monoFont (10.0f));
@@ -945,6 +961,8 @@ private:
 
     SiltProcessor::Overview overview;
     juce::Image waveCache;
+    std::vector<float> waveEnvelope;   // the waveform's height per pixel across (0…1 of half), as last drawn
+    bool sceneBehind = false;           // a page's scene is behind the waveform and grains this paint
     float displayGain = 1.0f;
     bool live = false, frozen = false, transientsShown = false, selfFeed = false;
     std::vector<float> slices;

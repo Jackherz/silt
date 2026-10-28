@@ -9,6 +9,7 @@
 #include "RandomAmountBox.h"
 #include "Settings.h"
 #include "ScreenInsets.h"
+#include "SpaceScene.h"
 
 using namespace silt::ui;
 namespace layout = silt::layout;
@@ -252,7 +253,17 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     presetBar->onBrowse = [this] { presetBrowser->isVisible() ? presetBrowser->close (true) : presetBrowser->open(); };
     presetBrowser->onClosed = [this] { presetBar->refresh(); refreshLayout(); };
     screen->drawInset = [this] (juce::Graphics& g, juce::Rectangle<float> area) { return drawPageInset (g, area, page, silt, *rail); };
-    screen->drawStrip = [this] (juce::Graphics& g, juce::Rectangle<float> area) { return page == layout::space && drawSpaceTimeline (g, area, silt); };
+    // SPACE: the waveform adrift in a night sky (the scene fades in with DELAY and REVERB).
+    screen->drawAroundWave = [this] (juce::Graphics& g, juce::Rectangle<int> scene, juce::Rectangle<int> wave, const std::vector<float>& envelope, bool over)
+    {
+        if (page != layout::space || ! SpaceScene::visible (spaceSettings))
+            return false;
+        if (over)
+            spaceScene->drawOver (g, scene, wave, spaceSettings);
+        else
+            spaceScene->drawBehind (g, scene, wave, envelope, spaceSettings);
+        return true;
+    };
     if (auto* gain = dynamic_cast<juce::RangedAudioParameter*> (silt.params.getParameter ("sampleGain")))
     {
         sampleGainBox = std::make_unique<SampleGainBox> (*gain, [this] { return silt.normalisingGainDb(); });
@@ -1086,6 +1097,42 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
     return steps;
 }
 
+// SPACE's scene settings, from the module's controls and what it's doing now.
+void SiltEditor::updateSpaceSettings (float seconds)
+{
+    auto& s = spaceSettings;
+    const float decaySeconds = juce::jmax (0.3f, param ("spaceDecay"));
+    s.decay = juce::jlimit (0.0f, 1.0f, std::log (decaySeconds / 0.3f) / std::log (100.0f));
+    s.size = param ("spaceSize") * 0.01f;
+    s.reverb = param ("spaceReverb") * 0.01f;
+    s.tone = param ("spaceTone") * 0.01f;
+    s.shimmer = param ("spaceShimmer") * 0.01f;
+    s.delay = param ("spaceDelay") * 0.01f;
+    s.feedback = param ("spaceFeedback") * 0.01f;
+    s.echoSeconds = param ("spaceSync") > 0.5f
+                      ? (float) (SiltProcessor::divisionQuarters (juce::roundToInt (param ("spaceDiv"))) * 60.0 / juce::jlimit (20.0, 400.0, silt.hostBpm.load()))
+                      : param ("spaceTime") * 0.001f;
+    s.pingPong = juce::roundToInt (param ("spaceMode")) == 0;
+    s.frozen = param ("spaceFreeze") > 0.5f;
+
+    // What SPACE is adding now (its trace), and the time since the latest note.
+    const double rate = silt.getSampleRate() > 0.0 ? silt.getSampleRate() : 48000.0;
+    const unsigned count = silt.spaceTraceCount.load (std::memory_order_acquire);
+    float peak = 0.0f;
+    for (unsigned i = count > 8 ? count - 8 : 0; i < count; ++i)
+        peak = juce::jmax (peak, silt.spaceTraceAt (i));
+    s.wet = juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (peak, -60.0f) + 54.0f) / 48.0f);
+    s.sinceNote = (float) (count * SiltProcessor::spaceTraceStep / rate);
+
+    // DUCK: dips while a note sounds, back over about half a second.
+    static constexpr float duckAmounts[] { 0.0f, 0.35f, 0.65f, 1.0f };
+    bool sounding = false;
+    for (const auto& head : silt.voicePlayheads)
+        sounding = sounding || head.load() >= 0.0f;
+    const float target = sounding ? 1.0f - 0.8f * duckAmounts[juce::jlimit (0, 3, juce::roundToInt (param ("spaceDuck")))] : 1.0f;
+    s.duck += (target - s.duck) * juce::jmin (1.0f, seconds * (target < s.duck ? 30.0f : 7.0f));
+}
+
 void SiltEditor::randomise()
 {
     const int changed = silt.randomisePage (page);
@@ -1551,17 +1598,22 @@ void SiltEditor::timerCallback()
 
     // The live scope, on pages whose module it shows: only redrawn when new audio arrived.
     updateScope();
-    if (page == layout::space)
+    // SPACE's sky: moved on and redrawn while it shows, cleared when it goes.
     {
-        // SPACE's timeline: redrawn as the trace grows (and when the settings move, below).
-        const unsigned trace = silt.spaceTraceCount.load();
-        if (trace != spaceTraceSeen || page != spacePageSeen || spaceTimelineMoves (silt))
-            screen->repaintStrip();
-        spaceTraceSeen = trace;
+        const auto nowMs = juce::Time::getMillisecondCounterHiRes();
+        const float seconds = (float) juce::jlimit (0.0, 0.1, (nowMs - spaceTickAt) * 0.001);
+        spaceTickAt = nowMs;
+        updateSpaceSettings (seconds);
+        const bool shown = page == layout::space && SpaceScene::visible (spaceSettings) && ! silt.liveMode.load();
+        if (shown)
+        {
+            spaceScene->advance (spaceSettings, seconds, screen->getWaveEnvelope());
+            screen->repaintWave();
+        }
+        else if (spaceSceneShown)
+            screen->repaintWave();
+        spaceSceneShown = shown;
     }
-    if (page != spacePageSeen)
-        screen->repaintStrip();
-    spacePageSeen = page;
     if (chainView->isVisible())
         chainView->update();
 
@@ -1651,8 +1703,6 @@ void SiltEditor::timerCallback()
     {
         insetSeen = std::move (key);
         screen->repaintInset();
-        if (page == layout::space)
-            screen->repaintStrip();
     }
 
     std::array<float, SiltProcessor::numModulators> stripes {};

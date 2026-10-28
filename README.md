@@ -155,6 +155,14 @@ on a keyboard and the pattern's steps, MOD the shown modulator (one cycle of a W
 from its PHASE, drawn the way it runs, with a dot when it RETRIGs; an ENVELOPE's
 shape; a moving playhead on both; or the others' trace).
 
+**SPACE's sky:** on the SPACE page the waveform and the grains sit in a night sky that
+fades in with DELAY and REVERB. DECAY pulls the camera back (more of the sky), SIZE brings
+in the Milky Way and the far stars, REVERB is nebula that breathes with what SPACE is adding,
+TONE runs from warm dust and orange stars to blue nebula and twinkling, SHIMMER sends
+sparkles up off the waveform, each echo is a ghost of the waveform in star-dust sinking
+away (TIME spaces them, FEEDBACK says how many, ping-pong swings them side to side, and each
+flashes as it fires), FREEZE stops the sky, and DUCK dims it while a note sounds.
+
 **Presets** (header: ◀ name ▶, SAVE): a preset is the sound (every parameter, the
 modulation routes, the shown modulator), not the sample, the controller mapping or
 the window. Sixteen factory presets are built in (Init, Glass Cloud, Tape Choir, Rust

@@ -5,6 +5,8 @@
 #include "PluginProcessor.h"
 #include "Tour.h"
 
+#include "SpaceScene.h"
+
 namespace silt::ui
 {
 class PanelLook;
@@ -210,9 +212,12 @@ private:
     void stepUndo (bool redo);
     void chooseFile();   // LOAD's file chooser
     void updateScope();
-    unsigned spaceTraceSeen = 0;
     int resonatorHalfSeen = -1;
-    int spacePageSeen = -1;
+    std::unique_ptr<silt::ui::SpaceScene> spaceScene = std::make_unique<silt::ui::SpaceScene>();
+    silt::ui::SpaceScene::Settings spaceSettings;
+    void updateSpaceSettings (float seconds);
+    double spaceTickAt = 0.0;
+    bool spaceSceneShown = false;
     std::vector<silt::ui::Tour::Step> tourSteps();
     std::unique_ptr<silt::ui::Tour> tour;
     juce::TextButton tourButton { "?" };

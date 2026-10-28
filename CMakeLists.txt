@@ -89,6 +89,7 @@ set(SILT_PLUGIN_SOURCES
     plugin/PluginProcessor.cpp
     plugin/Presets.cpp
     plugin/ScreenInsets.cpp
+    plugin/SpaceScene.cpp
     plugin/Tour.cpp)
 
 # The factory samples (the one Silt opens with, and the rest of LOAD's list):

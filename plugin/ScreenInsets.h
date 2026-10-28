@@ -17,10 +17,6 @@ bool pageHasInset (int page);
 // Draws the inset; false (nothing drawn) for pages without one.
 bool drawPageInset (juce::Graphics&, juce::Rectangle<float> area, int page, const SiltProcessor&, const ModRail&);
 
-// SPACE's timeline, across the screen's lower strip: the repeats and the
-// reverb from a note on, and the level SPACE is really adding since the last one.
-bool drawSpaceTimeline (juce::Graphics&, juce::Rectangle<float> area, const SiltProcessor&);
-bool spaceTimelineMoves (const SiltProcessor&);   // whether it animates (repeats flash, the tail sparkles)
 
 // What the inset depends on, so the editor repaints it only when that changes.
 std::vector<float> insetKey (int page, const SiltProcessor&, const ModRail&);
