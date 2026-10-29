@@ -165,6 +165,11 @@ TIME is the spacing between the rings, FEEDBACK how many (each fainter), DELAY h
 ping-pong alternates them between two stars side by side. FREEZE stops the sky; DUCK dims it
 while a note sounds.
 
+**Type:** lettering is Jost (light, widely spaced capitals); numbers and readouts are IBM
+Plex Mono. Both are embedded, under the SIL Open Font License (`resources/fonts/*/OFL.txt`).
+Keys, menus and value boxes are capsules: keys in a hairline (the page shown filled), value
+boxes and the display dark.
+
 **Presets** (header: ◀ name ▶, SAVE): a preset is the sound (every parameter, the
 modulation routes, the shown modulator), not the sample, the controller mapping or
 the window. Sixteen factory presets are built in (Init, Glass Cloud, Tape Choir, Rust

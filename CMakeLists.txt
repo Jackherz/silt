@@ -103,6 +103,19 @@ juce_add_binary_data(silt_samples
         resources/samples/rain-bells.flac
         resources/samples/guitar-harmonics.flac)
 
+# The panel's fonts (SIL Open Font License; the licences are beside them):
+# Jost for lettering, IBM Plex Mono for numbers and readouts.
+juce_add_binary_data(silt_fonts
+    HEADER_NAME SiltFonts.h
+    NAMESPACE SiltFonts
+    SOURCES
+        resources/fonts/jost/Jost-300-Light.ttf
+        resources/fonts/jost/Jost-400-Book.ttf
+        resources/fonts/jost/Jost-500-Medium.ttf
+        resources/fonts/plexmono/IBMPlexMono-Light.ttf
+        resources/fonts/plexmono/IBMPlexMono-Regular.ttf
+        resources/fonts/plexmono/IBMPlexMono-Medium.ttf)
+
 # Host check: loads a built VST3 and round-trips a sample through its state.
 juce_add_console_app(silt_hostcheck PRODUCT_NAME "silt-hostcheck")
 target_sources(silt_hostcheck PRIVATE tools/hostcheck/Main.cpp)
@@ -119,7 +132,7 @@ target_compile_definitions(silt_snapshot PRIVATE
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1
     JucePlugin_Name="Silt" JucePlugin_IsSynth=1 JucePlugin_VersionString="${PROJECT_VERSION}")
 target_link_libraries(silt_snapshot
-    PRIVATE silt_core silt_samples juce::juce_audio_utils
+    PRIVATE silt_core silt_samples silt_fonts juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
 # Plug-in level tests: the instrument's processor built into a Catch2 runner.
@@ -130,7 +143,7 @@ if(SILT_BUILD_TESTS)
         JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1
         JucePlugin_Name="Silt" JucePlugin_IsSynth=1 JucePlugin_VersionString="${PROJECT_VERSION}")
     target_link_libraries(silt_plugin_tests
-        PRIVATE silt_core silt_samples juce::juce_audio_utils Catch2::Catch2WithMain
+        PRIVATE silt_core silt_samples silt_fonts juce::juce_audio_utils Catch2::Catch2WithMain
         PUBLIC juce::juce_recommended_config_flags)
     catch_discover_tests(silt_plugin_tests)
 endif()
@@ -176,6 +189,7 @@ function(silt_add_plugin target)
         PRIVATE
             silt_core
             silt_samples
+            silt_fonts
             juce::juce_audio_utils
         PUBLIC
             juce::juce_recommended_config_flags

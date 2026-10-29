@@ -247,6 +247,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     rail = std::make_unique<ModRail> (silt, modActions);
     addAndMakeVisible (*rail);
     presetBar = std::make_unique<PresetBar> (silt);
+    presetBar->getProperties().set ("onFrame", true);   // its keys sit on the header band
+    tourButton.getProperties().set ("onFrame", true);
     addAndMakeVisible (*presetBar);
     presetBrowser = std::make_unique<PresetBrowser> (silt);
     addChildComponent (*presetBrowser);
@@ -1799,7 +1801,7 @@ void SiltEditor::resized()
 
     // Header: the name and stripes over the left column, presets over
     // columns 1–4, ? and the LCD over 5–8.
-    stripesArea = header.withX (header.getX() + 70).withWidth (juce::jmax (40, railWidth - 82)).withSizeKeepingCentre (juce::jmax (40, railWidth - 82), 19);
+    stripesArea = header.withX (header.getX() + 118).withWidth (juce::jmax (30, railWidth - 128)).withSizeKeepingCentre (juce::jmax (30, railWidth - 128), 19);
     presetBar->setBounds (column (header, 0, 4).reduced (4, 0).withSizeKeepingCentre (column (header, 0, 4).getWidth() - 8, 26));
     lcdArea = column (header, 4, 4).reduced (4, 7);
     tourButton.setBounds (lcdArea.removeFromLeft (30).withSizeKeepingCentre (28, 28));
@@ -2015,16 +2017,29 @@ void SiltEditor::paint (juce::Graphics& g)
         b.fillRoundedRectangle (band, 5.0f);
         b.setColour (juce::Colours::white.withAlpha (0.1f));
         b.drawHorizontalLine ((int) band.getY() + 1, band.getX() + 4.0f, band.getRight() - 4.0f);
-        b.setColour (juce::Colour (0xff0d0b0a));
-        b.fillRoundedRectangle (lcdArea.toFloat(), 3.0f);
-        drawSunk (b, lcdArea.reduced (3).toFloat(), lcdGreen);
-        drawRecess (b, tray.toFloat(), 6.0f);
+        PanelLook::drawSunkBox (b, lcdArea.toFloat(), lcdGreen, {});   // the display: a dark capsule
+        // The page keys' tray: a hairline capsule.
+        b.setColour (PanelLook::hairline());
+        b.drawRoundedRectangle (tray.toFloat().reduced (0.5f), (float) tray.getHeight() * 0.5f, 1.0f);
         drawRecess (b, wellArea.toFloat(), 8.0f);
     }
     g.drawImageAt (backdrop, 0, 0);
-    g.setColour (onFrame);
-    g.setFont (panelFont (20.0f));
-    g.drawText (juce::String (JucePlugin_Name).toUpperCase(), header.withTrimmedLeft (16), juce::Justification::centredLeft);
+    // The wordmark: light, widely spaced, in an orbit with a sparkle.
+    {
+        const auto word = juce::String (JucePlugin_Name).toUpperCase();
+        const auto font = panelFont (19.0f, Weight::regular, 0.48f);
+        const auto area = header.withTrimmedLeft (18).toFloat();
+        const float width = juce::GlyphArrangement::getStringWidth (font, word);
+        const float cx = area.getX() + width * 0.46f, cy = area.getCentreY();
+        juce::Path orbit;
+        orbit.addEllipse (-width * 0.62f, -9.0f, width * 1.24f, 18.0f);
+        g.setColour (screenLime.withAlpha (0.85f));
+        g.strokePath (orbit, juce::PathStrokeType (1.0f), juce::AffineTransform::rotation (-0.14f).translated (cx, cy));
+        g.setColour (onFrame);
+        g.setFont (font);
+        g.drawText (word, area, juce::Justification::centredLeft);
+        drawSparkle (g, { area.getX() + width + 2.0f, cy - 9.0f }, 10.0f, screenLime);
+    }
     paintStripes (g);
 
     const auto lcd = lcdArea;
@@ -2039,16 +2054,22 @@ void SiltEditor::paint (juce::Graphics& g)
         g.drawVerticalLine (slotBounds (s).getX(), (float) controlRow.getY() + 8.0f, (float) controlRow.getBottom() - 8.0f);
 
     g.setColour (ink);
-    g.setFont (panelFont (10.5f));
+    const auto labelFont = panelFont (10.5f, Weight::regular, 0.3f);
+    const auto sparkle = chassis.getPerceivedBrightness() < 0.5f ? screenLime : rust;   // amber on a dark panel, the accent on a light one
+    g.setFont (labelFont);
     for (auto& c : controls)
         if (c->entry->inSlot() && c->component().isVisible())
         {
             const auto labelArea = slotParts (c->entry->slot).label;
             g.drawText (c->entry->label, labelArea, juce::Justification::centred);
+            // A small sparkle before each label.
+            const float labelWidth = juce::GlyphArrangement::getStringWidth (labelFont, c->entry->label);
+            drawSparkle (g, { (float) labelArea.getCentreX() - labelWidth * 0.5f - 8.0f, (float) labelArea.getCentreY() }, 6.0f, sparkle);
+            g.setColour (ink);
             if (silt.isRandomExcluded (c->entry->id))
             {
                 // Left out of RANDOM: a small crossed-out die after the label.
-                const float w = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), c->entry->label);
+                const float w = labelWidth;
                 const auto die = juce::Rectangle<float> (8.0f, 8.0f).withCentre ({ (float) labelArea.getCentreX() + w * 0.5f + 9.0f, (float) labelArea.getCentreY() });
                 g.setColour (inkSoft);
                 g.drawRoundedRectangle (die, 1.5f, 1.0f);

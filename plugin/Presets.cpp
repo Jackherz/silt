@@ -683,8 +683,13 @@ void PresetBrowser::resized()
 
 PresetBar::PresetBar (SiltProcessor& p) : presets (p)
 {
-    previous.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x25c0));
-    next.setButtonText (juce::String::charToString ((juce::juce_wchar) 0x25b6));
+    // Arrows drawn by the panel's look (the lettering's font has none).
+    previous.setButtonText ({});
+    next.setButtonText ({});
+    previous.getProperties().set ("arrow", -1);
+    next.getProperties().set ("arrow", 1);
+    previous.setTitle ("Previous preset");
+    next.setTitle ("Next preset");
     previous.onClick = [this] { presets.step (-1); refresh(); };
     next.onClick = [this] { presets.step (1); refresh(); };
     name.onClick = [this]

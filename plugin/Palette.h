@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "SiltFonts.h"
 
 #include <array>
 
@@ -86,6 +87,58 @@ inline void applyTheme (int index)
     knobFace = juce::Colour (t.knobFace); knobCollar = juce::Colour (t.knobCollar); knobTick = juce::Colour (t.knobTick); knobDot = juce::Colour (t.knobDot);
 }
 
-inline juce::Font panelFont (float size) { return juce::Font (juce::FontOptions (size, juce::Font::bold)); }
-inline juce::Font monoFont (float size) { return juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), size, juce::Font::bold)); }
+// The type: Jost for lettering (light, widely spaced capitals), IBM Plex Mono
+// for every number and readout. Both are embedded (SIL Open Font License).
+enum class Weight { light, regular, medium };
+
+// Loaded once, and let go when JUCE shuts down (not after, when freeing a
+// typeface would find its locks already gone).
+struct SiltTypefaces final : juce::DeletedAtShutdown
+{
+    juce::Typeface::Ptr faces[2][3];
+    ~SiltTypefaces() override { clearSingletonInstance(); }
+    JUCE_DECLARE_SINGLETON_INLINE (SiltTypefaces, false)
+};
+
+inline juce::Typeface::Ptr siltTypeface (bool mono, Weight weight)
+{
+    auto& face = SiltTypefaces::getInstance()->faces[mono ? 1 : 0][(int) weight];
+    if (face == nullptr)
+    {
+        const struct { const char* data; int size; } files[2][3] {
+            { { SiltFonts::Jost300Light_ttf, SiltFonts::Jost300Light_ttfSize }, { SiltFonts::Jost400Book_ttf, SiltFonts::Jost400Book_ttfSize },
+              { SiltFonts::Jost500Medium_ttf, SiltFonts::Jost500Medium_ttfSize } },
+            { { SiltFonts::IBMPlexMonoLight_ttf, SiltFonts::IBMPlexMonoLight_ttfSize }, { SiltFonts::IBMPlexMonoRegular_ttf, SiltFonts::IBMPlexMonoRegular_ttfSize },
+              { SiltFonts::IBMPlexMonoMedium_ttf, SiltFonts::IBMPlexMonoMedium_ttfSize } },
+        };
+        const auto& file = files[mono ? 1 : 0][(int) weight];
+        face = juce::Typeface::createSystemTypefaceFor (file.data, (size_t) file.size);
+    }
+    return face;
+}
+
+// Lettering: tracking is extra space between letters, as a share of the size.
+inline juce::Font panelFont (float size, Weight weight = Weight::regular, float tracking = 0.12f)
+{
+    return juce::Font (juce::FontOptions (siltTypeface (false, weight)).withHeight (size).withKerningFactor (tracking));
+}
+inline juce::Font monoFont (float size, Weight weight = Weight::regular)
+{
+    return juce::Font (juce::FontOptions (siltTypeface (true, weight)).withHeight (size).withKerningFactor (0.04f));
+}
+
+// The four-point sparkle glyph (labels, the wordmark, the display).
+inline void drawSparkle (juce::Graphics& g, juce::Point<float> centre, float size, juce::Colour colour)
+{
+    const float r = size * 0.5f, k = r * 0.14f;
+    juce::Path p;
+    p.startNewSubPath (centre.x, centre.y - r);
+    p.quadraticTo (centre.x + k, centre.y - k, centre.x + r, centre.y);
+    p.quadraticTo (centre.x + k, centre.y + k, centre.x, centre.y + r);
+    p.quadraticTo (centre.x - k, centre.y + k, centre.x - r, centre.y);
+    p.quadraticTo (centre.x - k, centre.y - k, centre.x, centre.y - r);
+    p.closeSubPath();
+    g.setColour (colour);
+    g.fillPath (p);
+}
 } // namespace silt::ui

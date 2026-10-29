@@ -55,17 +55,22 @@ void ModChip::paint (juce::Graphics& g)
     const int routes = silt.routeCount (m);
     auto r = getLocalBounds().toFloat().reduced (1.5f);
 
-    g.setColour (muted ? chassis.darker (0.08f) : bone);
-    g.fillRoundedRectangle (r, 3.0f);
+    // A rounded card in a hairline; armed: its colour; shown on MOD: ink.
+    constexpr float corner = 10.0f;
+    if (muted)
+    {
+        g.setColour (ink.withAlpha (0.04f));
+        g.fillRoundedRectangle (r, corner);
+    }
     if (armed)
     {
         g.setColour (colour.base);
-        g.drawRoundedRectangle (r, 3.0f, 2.5f);
+        g.drawRoundedRectangle (r, corner, 2.0f);
     }
     else
     {
-        g.setColour (selected ? ink : boneLip);
-        g.drawRoundedRectangle (r, 3.0f, selected ? 1.6f : 1.0f);
+        g.setColour (selected ? ink.withAlpha (0.8f) : ink.withAlpha (0.32f));
+        g.drawRoundedRectangle (r, corner, selected ? 1.4f : 1.0f);
     }
 
     auto area = getLocalBounds().reduced (5, 3);
@@ -75,9 +80,9 @@ void ModChip::paint (juce::Graphics& g)
     // Swatch with the number: colour plus a label, never colour alone.
     auto swatch = top.removeFromLeft (18).withSizeKeepingCentre (18, 13).toFloat();
     g.setColour (muted ? colour.dim : colour.base);
-    g.fillRoundedRectangle (swatch, 2.0f);
+    g.fillEllipse (swatch.withSizeKeepingCentre (14.0f, 14.0f));
     g.setColour (colour.ink);
-    g.setFont (monoFont (10.0f));
+    g.setFont (monoFont (9.5f, Weight::medium));
     g.drawText (juce::String (m + 1), swatch, juce::Justification::centred);
     top.removeFromLeft (5);
 
@@ -109,7 +114,7 @@ void ModChip::paint (juce::Graphics& g)
         g.drawText ("V", badge, juce::Justification::centred);
     }
 
-    g.setFont (monoFont (11.0f));
+    g.setFont (panelFont (10.0f, Weight::regular, 0.24f));
     g.setColour (pendingClear ? signalRed : text);
     const auto label = pendingClear ? juce::String ("CLICK AGAIN")
                      : muted ? juce::String ("MUTED")
