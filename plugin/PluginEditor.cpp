@@ -518,6 +518,9 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     helpWatcher.onHover = [this] (const juce::String& id) { showHelpFor (id); };
     addMouseListener (&helpWatcher, true);
     screen->setView (startZoom.x, startZoom.y);
+    // The parts made before they joined the panel (knobs make their value
+    // boxes as they're made) take on the panel's look.
+    sendLookAndFeelChange();
 
     setWantsKeyboardFocus (true);
     const int w = silt.editorWidth.load(), h = silt.editorHeight.load();   // before the limits resize us

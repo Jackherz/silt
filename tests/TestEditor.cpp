@@ -771,3 +771,25 @@ TEST_CASE ("SPACE sky: a frame of the light echoes", "[.][scene]")
     }
     SUCCEED();
 }
+
+TEST_CASE ("A value box being typed into stays the capsule: see-through, unoutlined, centred editor")
+{
+    EditorRig rig;
+    auto* knob = rig.editor->findKnob ("spray");
+    REQUIRE (knob != nullptr);
+    juce::Label* box = nullptr;
+    for (auto* child : knob->getChildren())
+        if (auto* l = dynamic_cast<juce::Label*> (child))
+            box = l;
+    REQUIRE (box != nullptr);
+    rig.editor->setVisible (true);
+    box->showEditor();
+    auto* ed = box->getCurrentTextEditor();
+    REQUIRE (ed != nullptr);
+    CHECK (ed->findColour (juce::TextEditor::backgroundColourId).getAlpha() == 0);
+    CHECK (ed->findColour (juce::TextEditor::outlineColourId).getAlpha() == 0);
+    CHECK (ed->findColour (juce::TextEditor::focusedOutlineColourId).getAlpha() == 0);
+    CHECK (ed->getJustificationType() == juce::Justification::centred);
+    CHECK (ed->getFont().getTypefacePtr() == silt::ui::siltTypeface (true, silt::ui::Weight::regular));
+    box->hideEditor (true);
+}

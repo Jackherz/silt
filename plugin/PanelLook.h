@@ -322,11 +322,38 @@ public:
 
     juce::Font getComboBoxFont (juce::ComboBox& box) override { return panelFont (juce::jmin (11.0f, (float) box.getHeight() * 0.48f), Weight::regular, 0.18f); }
     juce::Font getPopupMenuFont() override { return panelFont (13.0f, Weight::regular, 0.08f); }
+    // A knob's value box. Clicked to type a value, it stays the same dark
+    // capsule: the editor is see-through, unoutlined, centred, in the same type.
+    struct ValueBox final : juce::Label
+    {
+        void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override {}   // the knob takes the wheel
+
+        juce::TextEditor* createEditorComponent() override
+        {
+            auto* ed = juce::Label::createEditorComponent();
+            ed->setJustification (juce::Justification::centred);
+            ed->setBorder ({});
+            ed->setIndents (0, 0);
+            for (const auto id : { juce::TextEditor::backgroundColourId, juce::TextEditor::outlineColourId, juce::TextEditor::focusedOutlineColourId })
+                ed->setColour (id, juce::Colours::transparentBlack);
+            ed->setColour (juce::TextEditor::textColourId, lcdText);
+            ed->setColour (juce::TextEditor::highlightColourId, rust.withAlpha (0.35f));
+            ed->setColour (juce::TextEditor::highlightedTextColourId, lcdText);
+            ed->setColour (juce::CaretComponent::caretColourId, lcdText);
+            ed->applyFontToAllText (monoFont (juce::jmin (12.0f, (float) getHeight() * 0.7f)));
+            return ed;
+        }
+    };
+
     juce::Label* createSliderTextBox (juce::Slider& s) override
     {
-        auto* l = LookAndFeel_V4::createSliderTextBox (s);
-        l->setFont (monoFont (11.5f));
+        auto* l = new ValueBox();
         l->setJustificationType (juce::Justification::centred);
+        l->setKeyboardType (juce::TextInputTarget::decimalKeyboard);
+        l->setFont (monoFont (11.5f));
+        l->setColour (juce::Label::textColourId, s.findColour (juce::Slider::textBoxTextColourId));
+        l->setColour (juce::Label::backgroundColourId, s.findColour (juce::Slider::textBoxBackgroundColourId));
+        l->setColour (juce::Label::outlineColourId, s.findColour (juce::Slider::textBoxOutlineColourId));
         return l;
     }
 };
