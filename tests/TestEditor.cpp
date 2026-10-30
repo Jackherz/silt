@@ -793,3 +793,33 @@ TEST_CASE ("A value box being typed into stays the capsule: see-through, unoutli
     CHECK (ed->getFont().getTypefacePtr() == silt::ui::siltTypeface (true, silt::ui::Weight::regular));
     box->hideEditor (true);
 }
+
+TEST_CASE ("Knob drags: Shift goes fine whether pressed before the click or during the drag, with no jump")
+{
+    EditorRig rig;
+    auto* knob = rig.editor->findKnob ("spray");
+    REQUIRE (knob != nullptr);
+    rig.silt.clearUndoHistory();
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    const auto event = [&] (float y, bool shift)
+    {
+        const auto now = juce::Time::getCurrentTime();
+        const auto mods = juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier | (shift ? juce::ModifierKeys::shiftModifier : 0));
+        return juce::MouseEvent (source, { 30.0f, y }, mods, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, knob, knob, now, { 30.0f, 100.0f }, now, 1, y != 100.0f);
+    };
+    const auto value = [&] { return (float) knob->valueToProportionOfLength (knob->getValue()); };
+    const float start = value();
+
+    auto* asComponent = static_cast<juce::Component*> (knob);
+    asComponent->mouseDown (event (100.0f, false));
+    asComponent->mouseDrag (event (80.0f, false));          // 20 px up: 20/250 of the way
+    CHECK (value() - start == Catch::Approx (0.08f).margin (0.002f));
+    asComponent->mouseDrag (event (60.0f, true));           // Shift pressed now: 20 px more, ten times finer
+    CHECK (value() - start == Catch::Approx (0.088f).margin (0.002f));
+    asComponent->mouseDrag (event (40.0f, false));          // and let go: full speed again, from there
+    CHECK (value() - start == Catch::Approx (0.168f).margin (0.003f));
+    asComponent->mouseUp (event (40.0f, false));
+
+    REQUIRE (rig.silt.undoRoutes());                        // the whole drag, one step
+    CHECK (value() == Catch::Approx (start).margin (0.001f));
+}

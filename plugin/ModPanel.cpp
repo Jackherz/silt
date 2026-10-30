@@ -400,7 +400,8 @@ public:
     {
         if (e.eventComponent == &depth)
         {
-            amountAtStart = silt.routeAmount (route.modulator, route.target);
+            amountRunning = silt.routeAmount (route.modulator, route.target);
+            lastY = e.position.y;
             silt.beginRouteGesture();
             dragging = true;
         }
@@ -410,8 +411,10 @@ public:
     {
         if (e.eventComponent != &depth)
             return;
-        const float amount = amountAtStart - (float) e.getDistanceFromDragStartY() / (e.mods.isShiftDown() ? 1000.0f : 150.0f);
-        silt.editRoutes ([&] { silt.setRouteAmount (route.modulator, route.target, snapped (amount)); });
+        // Each move adds its own change at the rate Shift sets now (pressed or let go mid-drag).
+        amountRunning = juce::jlimit (-1.0f, 1.0f, amountRunning + (lastY - e.position.y) / (e.mods.isShiftDown() ? 1000.0f : 150.0f));
+        lastY = e.position.y;
+        silt.editRoutes ([&] { silt.setRouteAmount (route.modulator, route.target, snapped (amountRunning)); });
         refresh();
     }
 
@@ -459,7 +462,7 @@ private:
     juce::Label depth;
     juce::TextButton polarity, remove;
     juce::String span;
-    float amountAtStart = 0.0f;
+    float amountRunning = 0.0f, lastY = 0.0f;   // a drag's amount so far (unrounded) and where the mouse last was
     bool dragging = false;   // a depth at 0 mid-drag stays listed until the drag ends
 };
 

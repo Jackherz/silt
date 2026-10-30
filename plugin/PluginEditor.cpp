@@ -28,7 +28,8 @@ void SiltEditor::FineSlider::beginDepth (int modulator)
     if (routeGesture)
         routeGesture();
     depthModulatorNow = modulator;
-    amountAtStart = amountOf (modulator);
+    depthRunning = amountOf (modulator);
+    depthPixels = 0.0f;
     if (depthDragged)
         depthDragged (modulator, true);
 }
@@ -37,8 +38,11 @@ void SiltEditor::FineSlider::dragDepth (float pixelsUp, bool fine)
 {
     if (depthModulatorNow < 0)
         return;
-    float amount = amountAtStart + pixelsUp / (fine ? 1000.0f : 150.0f);
-    amount = std::abs (amount) < 0.02f ? 0.0f : juce::jlimit (-1.0f, 1.0f, amount);   // 0 is under a pixel wide otherwise
+    // Each move adds its own change, at the rate Shift sets now, so pressing
+    // or letting go of Shift mid-drag changes the speed without a jump.
+    depthRunning = juce::jlimit (-1.0f, 1.0f, depthRunning + (pixelsUp - depthPixels) / (fine ? 1000.0f : 150.0f));
+    depthPixels = pixelsUp;
+    const float amount = std::abs (depthRunning) < 0.02f ? 0.0f : depthRunning;   // 0 is under a pixel wide otherwise
     setAmount (depthModulatorNow, amount);
     if (depthDragged)
         depthDragged (depthModulatorNow, true);
@@ -125,7 +129,10 @@ void SiltEditor::FineSlider::mouseDown (const juce::MouseEvent& e)
         beginDepth (depthModulator());
         return;
     }
-    setMouseDragSensitivity (e.mods.isShiftDown() ? 2500 : 250);
+    // The value's own drag: Slider starts and ends it (the gesture, one undo
+    // step); the moves are ours, so Shift can turn fine on or off mid-drag.
+    dragLast = e.position;
+    dragRunning = (float) valueToProportionOfLength (getValue());
     juce::Slider::mouseDown (e);
 }
 
@@ -133,8 +140,14 @@ void SiltEditor::FineSlider::mouseDrag (const juce::MouseEvent& e)
 {
     if (isSettingDepth())
         dragDepth ((float) -e.getDistanceFromDragStartY(), e.mods.isShiftDown());
-    else if (! e.mods.isPopupMenu())
-        juce::Slider::mouseDrag (e);
+    else if (! e.mods.isPopupMenu() && isEnabled())
+    {
+        // Up or right raises it; 250 px from end to end, ten times finer with Shift (held now).
+        const float pixels = (dragLast.y - e.position.y) + (e.position.x - dragLast.x);
+        dragLast = e.position;
+        dragRunning = juce::jlimit (0.0f, 1.0f, dragRunning + pixels / (e.mods.isShiftDown() ? 2500.0f : 250.0f));
+        setValue (proportionOfLengthToValue (dragRunning), juce::sendNotificationSync);
+    }
 }
 
 void SiltEditor::FineSlider::mouseUp (const juce::MouseEvent& e)

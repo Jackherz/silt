@@ -116,7 +116,9 @@ public:
 
     private:
         int depthModulatorNow = -1;
-        float amountAtStart = 0.0f;
+        float depthRunning = 0.0f, depthPixels = 0.0f;   // a depth drag's amount so far, unrounded, and where it was
+        juce::Point<float> dragLast;                     // a value drag: where the mouse last was
+        float dragRunning = 0.0f;                        // and the value so far (0…1), unrounded
     };
 
 private:

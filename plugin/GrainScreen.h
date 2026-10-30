@@ -1101,14 +1101,20 @@ public:
             });
             return;
         }
-        dbAtStart = parameter.convertFrom0to1 (parameter.getValue());
+        dbRunning = parameter.convertFrom0to1 (parameter.getValue());
+        lastY = e.position.y;
         attachment.beginGesture();
         dragging = true;
     }
     void mouseDrag (const juce::MouseEvent& e) override
     {
         if (dragging)
-            attachment.setValueAsPartOfGesture (juce::jlimit (-24.0f, 24.0f, dbAtStart - (float) e.getDistanceFromDragStartY() * (e.mods.isShiftDown() ? 0.02f : 0.15f)));
+        {
+            // Each move adds its own change at the rate Shift sets now (pressed or let go mid-drag).
+            dbRunning = juce::jlimit (-24.0f, 24.0f, dbRunning + (lastY - e.position.y) * (e.mods.isShiftDown() ? 0.02f : 0.15f));
+            lastY = e.position.y;
+            attachment.setValueAsPartOfGesture (dbRunning);
+        }
     }
     void mouseUp (const juce::MouseEvent&) override
     {
@@ -1127,7 +1133,7 @@ private:
     juce::RangedAudioParameter& parameter;
     std::function<float()> normalise;
     juce::ParameterAttachment attachment;
-    float dbAtStart = 0.0f;
+    float dbRunning = 0.0f, lastY = 0.0f;   // a drag's level so far and where the mouse last was
     bool dragging = false;
 };
 

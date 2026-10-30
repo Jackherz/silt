@@ -27,10 +27,17 @@ public:
         g.drawText (juce::String (juce::roundToInt (silt.randomAmount.load() * 100.0f)) + "%", r, juce::Justification::centred);
     }
 
-    void mouseDown (const juce::MouseEvent&) override { atStart = silt.randomAmount.load(); }
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        running = silt.randomAmount.load();
+        lastY = e.position.y;
+    }
     void mouseDrag (const juce::MouseEvent& e) override
     {
-        set (atStart - (float) e.getDistanceFromDragStartY() / (e.mods.isShiftDown() ? 1000.0f : 200.0f));
+        // Each move adds its own change at the rate Shift sets now (pressed or let go mid-drag).
+        running = juce::jlimit (0.01f, 1.0f, running + (lastY - e.position.y) / (e.mods.isShiftDown() ? 1000.0f : 200.0f));
+        lastY = e.position.y;
+        set (running);
     }
     void mouseDoubleClick (const juce::MouseEvent&) override { set (0.5f); }
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) override
@@ -46,6 +53,6 @@ public:
 
 private:
     SiltProcessor& silt;
-    float atStart = 0.5f;
+    float running = 0.5f, lastY = 0.0f;   // a drag's amount so far (unrounded) and where the mouse last was
 };
 } // namespace silt::ui
