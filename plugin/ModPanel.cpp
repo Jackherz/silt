@@ -211,6 +211,10 @@ void ModChip::mouseDrag (const juce::MouseEvent& e)
     if (dragging || e.mods.isPopupMenu() || e.getDistanceFromDragStart() < 5)
         return;
     dragging = true;
+    // Dragging this one while another is armed: this one takes over (armed and
+    // shown), so the highlight follows the chip in hand.
+    if (const int armed = silt.armedMod.load(); armed >= 0 && armed != m)
+        actions.select (m, true);
     if (auto* container = juce::DragAndDropContainer::findParentDragContainerFor (this))
         container->startDragging ("mod:" + juce::String (m + 1), this, juce::ScaledImage (createComponentSnapshot (getLocalBounds())));
 }

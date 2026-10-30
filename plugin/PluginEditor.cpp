@@ -1765,8 +1765,8 @@ void SiltEditor::timerCallback()
     // Redraw the SHAPE preview only when its values change.
     if (page == layout::shape)
     {
-        const std::array<float, 7> now { param ("fade"), param ("slant"), param ("ease"), param ("attack"),
-                                         param ("decay"), param ("sustain"), param ("release") };
+        const std::array<float, 7> now { heard ("fade"), heard ("slant"), heard ("ease"), heard ("attack"),
+                                         heard ("decay"), heard ("sustain"), heard ("release") };
         if (now != previewSeen)
         {
             previewSeen = now;
@@ -1955,7 +1955,7 @@ void SiltEditor::paintPreview (juce::Graphics& g)
         const auto area = plot (grainBox);
         silt::HannWindow hann;
         silt::GrainEnvelope env;
-        env.set (param ("fade") * 0.01, param ("slant") * 0.01, param ("ease") * 0.01, 1000, 0.0);
+        env.set (heard ("fade") * 0.01, heard ("slant") * 0.01, heard ("ease") * 0.01, 1000, 0.0);
         for (int i = 0; i <= 100; ++i)
         {
             const float t = (float) i / 100.0f;
@@ -1971,7 +1971,7 @@ void SiltEditor::paintPreview (juce::Graphics& g)
     {
         // Attack, decay and release on a shared time scale, with a fixed sustain hold.
         const auto area = plot (noteBox);
-        const float a = param ("attack"), d = param ("decay"), s = param ("sustain") * 0.01f, rel = param ("release");
+        const float a = heard ("attack"), d = heard ("decay"), s = heard ("sustain") * 0.01f, rel = heard ("release");
         const float hold = 0.25f * (a + d + rel) + 1.0f;
         const float total = a + d + hold + rel;
         const auto at = [&] (float ms, float level)

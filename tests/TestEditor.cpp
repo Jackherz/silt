@@ -823,3 +823,31 @@ TEST_CASE ("Knob drags: Shift goes fine whether pressed before the click or duri
     REQUIRE (rig.silt.undoRoutes());                        // the whole drag, one step
     CHECK (value() == Catch::Approx (start).margin (0.001f));
 }
+
+TEST_CASE ("Dragging a mod chip while another is armed makes the dragged one the armed, shown one")
+{
+    EditorRig rig;
+    rig.silt.armedMod.store (0);   // MOD 1 armed
+    rig.silt.modShown.store (0);
+    silt::ui::ModActions actions;
+    actions.select = [&] (int m, bool arm)
+    {
+        rig.silt.modShown.store (m);
+        if (arm)
+            rig.silt.armedMod.store (rig.silt.armedMod.load() == m ? -1 : m);
+    };
+    silt::ui::ModChip chip (rig.silt, actions, 1);   // MOD 2
+    chip.setBounds (0, 0, 160, 40);
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    const auto event = [&] (float x)
+    {
+        const auto now = juce::Time::getCurrentTime();
+        return juce::MouseEvent (source, { x, 20.0f }, juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                 &chip, &chip, now, { 40.0f, 20.0f }, now, 1, x != 40.0f);
+    };
+    chip.mouseDown (event (40.0f));
+    chip.mouseDrag (event (60.0f));   // far enough to be a drag
+    chip.mouseUp (event (60.0f));
+    CHECK (rig.silt.armedMod.load() == 1);
+    CHECK (rig.silt.modShown.load() == 1);
+}

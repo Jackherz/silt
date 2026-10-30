@@ -893,7 +893,7 @@ TEST_CASE ("RANDOM moves a page's slot controls by the amount, skips the exclude
     // At 100% the knobs land anywhere; menus and switches too.
     rig.silt.randomAmount.store (1.0f);
     float moved = 0.0f;
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 20; ++i)   // each try lands within 0.2 of the middle 40% of the time: 20 make a miss near impossible
     {
         rig.silt.randomisePage (page);
         moved = std::max (moved, std::abs (rig.value ("pitch") - before["pitch"]));

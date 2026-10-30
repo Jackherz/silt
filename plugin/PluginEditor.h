@@ -153,6 +153,13 @@ private:
         jassert (value != nullptr);   // a typo in an id
         return value != nullptr ? value->load() : 0.0f;
     }
+    // The value as heard: where modulation has it now, for a modulated control.
+    float heard (const char* id) const
+    {
+        if (const int t = silt.modulationTarget (id); t >= 0)
+            return silt.targetParameter (t).convertFrom0to1 (silt.modulatedValue01 (t));
+        return param (id);
+    }
 
     SiltProcessor& silt;
     std::unique_ptr<silt::ui::PanelLook> look;
