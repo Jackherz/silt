@@ -83,26 +83,40 @@ std::vector<Entry> build (bool instrument)
     const Shown sampleMode = [] (const Context& c) { const int m = juce::roundToInt (c.v ("keyMode")); return m == 0 || m == 3; };
     const Shown liveMode = [] (const Context& c) { const int m = juce::roundToInt (c.v ("keyMode")); return m == 1 || m == 2; };
     const auto pitchMode = is ("keyMode", 0), sliceMode = is ("keyMode", 3);
-    menu (play, 0, "keyMode", "MODE", { "PITCH", "LIVE", "FEED", "SLICE" });
-    knob (play, 1, "start", "START", sampleMode);
-    knob (play, 2, "length", "LENGTH", sampleMode);
-    knob (play, 3, "scan", "SCAN", pitchMode);
-    knob (play, 3, "sliceCount", "SLICES", both (sliceMode, is ("sliceMode", 0)));
-    const Shown notEqual = [] (const Context& c) { return juce::roundToInt (c.v ("sliceMode")) != 0; };
-    knob (play, 3, "scan", "SCAN", both (sliceMode, notEqual));   // at hits or by hand, the count isn't a knob
-    under (Kind::underMenu, play, 3, "sliceMode", 92, { "EQUAL", "AT HITS", "MANUAL" }, {}, sliceMode);
-    menu (play, 4, "endMode", "AT THE END", { "LOOP", "HOLD", "STOP" }, sampleMode);
-    under (Kind::underMenu, play, 1, "snap", 104, { "SNAP OFF", "SNAP ZERO", "SNAP TRANS" }, {}, sampleMode);
-    knob (play, 1, "liveDelay", "DELAY", both (liveMode, off ("delaySync")));
-    knob (play, 1, "delayDiv", "DELAY", both (liveMode, on ("delaySync")));
-    knob (play, 2, "feedback", "FEEDBACK", liveMode);
-    button (play, 3, "freeze", "FREEZE", "FREEZE", liveMode);
-    menu (play, 4, "liveRun", "NO NOTES", { "OFF", "ALWAYS", "FOLLOW" }, liveMode);
-    under (Kind::underButton, play, 1, "delaySync", 60, {}, "SYNC", liveMode);
-    knob (play, 5, "root", "ROOT");
-    knob (play, 6, "gain", "OUTPUT");
     if (! instrument)
-        knob (play, 7, "mix", "MIX");
+    {
+        // Silt FX: always LIVE, so no MODE, and LIVE's controls from the first slot.
+        knob (play, 0, "liveDelay", "DELAY", off ("delaySync"));
+        knob (play, 0, "delayDiv", "DELAY", on ("delaySync"));
+        under (Kind::underButton, play, 0, "delaySync", 60, {}, "SYNC");
+        knob (play, 1, "feedback", "FEEDBACK");
+        button (play, 2, "freeze", "FREEZE", "FREEZE");
+        menu (play, 3, "liveRun", "NO NOTES", { "OFF", "ALWAYS", "FOLLOW" });
+        knob (play, 4, "root", "ROOT");
+        knob (play, 5, "gain", "OUTPUT");
+        knob (play, 6, "mix", "MIX");
+    }
+    else
+    {
+        menu (play, 0, "keyMode", "MODE", { "PITCH", "LIVE", "FEED", "SLICE" });
+        knob (play, 1, "start", "START", sampleMode);
+        knob (play, 2, "length", "LENGTH", sampleMode);
+        knob (play, 3, "scan", "SCAN", pitchMode);
+        knob (play, 3, "sliceCount", "SLICES", both (sliceMode, is ("sliceMode", 0)));
+        const Shown notEqual = [] (const Context& c) { return juce::roundToInt (c.v ("sliceMode")) != 0; };
+        knob (play, 3, "scan", "SCAN", both (sliceMode, notEqual));   // at hits or by hand, the count isn't a knob
+        under (Kind::underMenu, play, 3, "sliceMode", 92, { "EQUAL", "AT HITS", "MANUAL" }, {}, sliceMode);
+        menu (play, 4, "endMode", "AT THE END", { "LOOP", "HOLD", "STOP" }, sampleMode);
+        under (Kind::underMenu, play, 1, "snap", 104, { "SNAP OFF", "SNAP ZERO", "SNAP TRANS" }, {}, sampleMode);
+        knob (play, 1, "liveDelay", "DELAY", both (liveMode, off ("delaySync")));
+        knob (play, 1, "delayDiv", "DELAY", both (liveMode, on ("delaySync")));
+        knob (play, 2, "feedback", "FEEDBACK", liveMode);
+        button (play, 3, "freeze", "FREEZE", "FREEZE", liveMode);
+        menu (play, 4, "liveRun", "NO NOTES", { "OFF", "ALWAYS", "FOLLOW" }, liveMode);
+        under (Kind::underButton, play, 1, "delaySync", 60, {}, "SYNC", liveMode);
+        knob (play, 5, "root", "ROOT");
+        knob (play, 6, "gain", "OUTPUT");
+    }
 
     // RESONATOR: a bank of ringing bands on the grains. SCALE notes come from the
     // PITCH page's scale and key; FOLLOW tunes the bank to the note played.

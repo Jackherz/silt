@@ -76,6 +76,11 @@ public:
     juce::String slotParameter (int page, int slot) const;   // "" for an empty slot
     static double divisionQuarters (int index);              // a synced note value, in quarter notes
     silt::layout::Context layoutContext() const;             // the page table's view of the parameters
+    // The play mode: 0 PITCH, 1 LIVE, 2 FEED, 3 SLICE. Silt FX is always LIVE
+    // (it sits on an audio track, usually with no notes to play the others).
+    enum PlayMode { modePitch, modeLive, modeFeed, modeSlice };
+    static int playModeFrom (float keyMode) { return isInstrument ? juce::jlimit (0, 3, juce::roundToInt (keyMode)) : modeLive; }
+    int playMode() const { return isInstrument ? playModeFrom (params.getRawParameterValue ("keyMode")->load()) : modeLive; }
     void applyControllerMoves();                             // message thread (also the timer)
     void newPattern();
 

@@ -1044,12 +1044,13 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
                            },
                            layout::play, {}, {} });
     else
-        steps.push_back ({ "Your own sounds",
-                           "Silt FX turns the audio on its track into grains as it plays (MODE: LIVE on the PLAY page). "
-                           "To play a sample instead, LOAD one or drop a file on the screen, set MODE to PITCH and play notes.",
-                           [this, boundsOf] { return Spots (boundsOf ({ &armButton, &loadButton })); }, -1,
-                           "Click LOAD and pick a factory sample.",
-                           [this, generation] { return silt.getSampleGeneration() != generation; } });
+        steps.push_back ({ "Live input",
+                           "Silt FX turns the audio on its track into grains as it plays. The display shows the input's level; "
+                           "the PLAY page sets how far back the grains reach (DELAY), how much feeds back, FREEZE, and what "
+                           "plays when no notes arrive. For samples, slices and FEED, use Silt, the instrument.",
+                           [this] { Spots s (lcdArea); s.add (screen->getBounds()); return s; }, -1,
+                           "Play your track and watch the grains appear.",
+                           [this] { return silt.activeGrains.load() > 0; } });
     steps.push_back ({ "Pages",
                        "Each tab is a page of up to eight controls, the same eight your MIDI controller's knobs move. GRAIN and "
                        "SHAPE make the grains, PITCH and PLAY decide how notes play them, and the rest are effects and movement.",
@@ -1076,7 +1077,7 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
                        },
                        layout::play,
                        "Set MODE to SLICE, play C1 and up, then drag a slice line.",
-                       [this] { return juce::roundToInt (param ("keyMode")) == 3; } });
+                       [this] { return silt.playMode() == SiltProcessor::modeSlice; } });
     steps.push_back ({ "See what you hear",
                        "RESONATOR, FILTER, COLOR and SPACE shape the sound after the grains. On the first three, the strip on "
                        "the screen shows the sound going in (faint) and coming out (bright).",
@@ -1561,7 +1562,7 @@ juce::String SiltEditor::statusText() const
         return silt.lastLoadError;
 
     // LIVE with nothing coming in: there's nothing for the grains to read.
-    if (juce::roundToInt (param ("keyMode")) == 1 && inputSilent())
+    if (silt.playMode() == SiltProcessor::modeLive && inputSilent())
         return SiltProcessor::isInstrument ? "LIVE NEEDS INPUT: PICK A TRACK IN SILT'S SIDECHAIN" : "LIVE NEEDS INPUT: CHECK THE TRACK'S INPUT";
 
     juce::String source;
@@ -1621,7 +1622,7 @@ void SiltEditor::timerCallback()
     const bool live = silt.liveMode.load();
     const bool frozen = param ("freeze") > 0.5f;
     if (live)
-        screen->setLive (true, frozen, silt.liveWriteShare.load(), silt.getLivePeaks(), juce::roundToInt (param ("keyMode")) == 2);
+        screen->setLive (true, frozen, silt.liveWriteShare.load(), silt.getLivePeaks(), silt.playMode() == SiltProcessor::modeFeed);
     else
         screen->setLive (false, false, 0.0f, {});
     const bool moved = screen->setActivity (views, n, heads, hud);

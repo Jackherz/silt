@@ -192,11 +192,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
 
     // Mode: the sample (PITCH), the live input (LIVE: a granular delay), or
     // Silt's own output (FEED: the same ring with no input, seeded from the
-    // sample, so the grains keep re-granulating what they play).
-    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "keyMode", 1 }, "Mode",
-                                                              juce::StringArray { "Pitch", "Live", "Feed", "Slice" },
-                                                              SiltProcessor::isInstrument ? 0 : 1),
-                withUnit ("liveDelay", "Delay", skewed (10.0f, 4000.0f, 300.0f), 250.0f, formatMs),
+    // sample, so the grains keep re-granulating what they play). Silt FX is
+    // always LIVE and has no mode.
+    if constexpr (SiltProcessor::isInstrument)
+        layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "keyMode", 1 }, "Mode",
+                                                                  juce::StringArray { "Pitch", "Live", "Feed", "Slice" }, 0));
+    layout.add (withUnit ("liveDelay", "Delay", skewed (10.0f, 4000.0f, 300.0f), 250.0f, formatMs),
                 std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "delaySync", 1 }, "Delay sync", false),
                 std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "delayDiv", 1 }, "Delay (synced)",
                                                               divisionNames, eighth),
@@ -440,7 +441,7 @@ struct SiltProcessor::RawParams
         attack = p ("attack"); decay = p ("decay"); sustain = p ("sustain"); release = p ("release"); root = p ("root");
         captureBars = p ("captureBars"); gain = p ("gain");
         sliceMode = p ("sliceMode"); sliceCount = p ("sliceCount");
-        keyMode = p ("keyMode"); liveDelay = p ("liveDelay"); delaySync = p ("delaySync"); delayDiv = p ("delayDiv");
+        keyMode = isInstrument ? p ("keyMode") : nullptr; liveDelay = p ("liveDelay"); delaySync = p ("delaySync"); delayDiv = p ("delayDiv");
         feedback = p ("feedback"); freeze = p ("freeze"); liveRun = p ("liveRun");
         randPitch = p ("randPitch"); scale = p ("scale"); key = p ("key"); patternDepth = p ("patternDepth");
         patternSteps = p ("patternSteps"); patternSeed = p ("patternSeed"); heads = p ("heads"); headSpread = p ("headSpread");
@@ -702,7 +703,7 @@ silt::GrainParams SiltProcessor::readParams (const float* voiceValues) const noe
     p.heads = juce::jlimit (1, 8, (int) v (raw->heads));
     p.headSpread = v (raw->headSpread) * 0.01;
 
-    const int mode = (int) v (raw->keyMode);   // PITCH, LIVE, FEED, SLICE
+    const int mode = isInstrument ? playModeFrom ((float) v (raw->keyMode)) : modeLive;   // PITCH, LIVE, FEED, SLICE (Silt FX: LIVE)
     p.live = mode == 1 || mode == 2;
     p.selfFeed = mode == 2;
     p.slice = mode == 3;
@@ -2038,6 +2039,8 @@ silt::layout::Context SiltProcessor::layoutContext() const
     silt::layout::Context c;
     c.value = [this] (const juce::String& id)
     {
+        if (id == "keyMode")
+            return (float) playMode();   // Silt FX's pages always show LIVE's controls
         const auto* value = params.getRawParameterValue (id);
         jassert (value != nullptr);   // a typo in an id
         return value != nullptr ? value->load() : 0.0f;
@@ -2326,7 +2329,7 @@ void SiltProcessor::editSample (SampleEdit edit)
 juce::String SiltProcessor::audioName() const
 {
     if (liveMode.load())
-        return juce::String (juce::roundToInt (params.getRawParameterValue ("keyMode")->load()) == 2 ? "FEED " : "LIVE ")
+        return juce::String (playMode() == modeFeed ? "FEED " : "LIVE ")
              + juce::Time::getCurrentTime().formatted ("%H-%M-%S");
     const juce::ScopedLock sl (sampleLock);
     return sampleName.isEmpty() ? juce::String ("SILT") : sampleName;
@@ -2673,7 +2676,7 @@ std::pair<float, float> SiltProcessor::shownRegion() const
 // SLICE: where each slice starts, as the engine cuts them (GrainVoice::regionFor).
 std::vector<float> SiltProcessor::sliceMarks() const
 {
-    if (juce::roundToInt (raw->keyMode->load()) != 3)
+    if (playMode() != modeSlice)
         return {};
     if (juce::roundToInt (raw->sliceMode->load()) == 2 && sliceCountManual.load() > 0)
         return manualSlices();

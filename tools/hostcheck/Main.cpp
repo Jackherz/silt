@@ -130,10 +130,15 @@ int main (int argc, char* argv[])
 
     plugin->enableAllBuses();
 
-    // Silt FX starts in Live mode; the sample only plays in Pitch mode.
+    // The sample plays in Pitch mode. Silt FX has no Mode (it's always Live),
+    // so there it only round-trips the sample in its state.
+    bool playsSamples = false;
     for (auto* parameter : plugin->getParameters())
         if (parameter->getName (32) == "Mode")
+        {
             parameter->setValueNotifyingHost (0.0f);
+            playsSamples = true;
+        }
     plugin->setRateAndBufferSizeDetails (rate, blockSize);
     plugin->prepareToPlay (rate, blockSize);
 
@@ -161,8 +166,11 @@ int main (int argc, char* argv[])
     const auto hostState = wrapHostState (withSample);
     plugin->setStateInformation (hostState.getData(), (int) hostState.getSize());
 
-    const float peak = playNote (*plugin, 1.0);
-    check (peak > 0.1f, "plays the restored sample (peak " + juce::String (peak, 3) + ")");
+    if (playsSamples)
+    {
+        const float peak = playNote (*plugin, 1.0);
+        check (peak > 0.1f, "plays the restored sample (peak " + juce::String (peak, 3) + ")");
+    }
 
     juce::MemoryBlock saved;
     plugin->getStateInformation (saved);
