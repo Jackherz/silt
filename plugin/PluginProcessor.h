@@ -384,6 +384,8 @@ private:
     bool lastSelfFeed = false;   // audio thread: FEED was on last chunk   // a note began since SPACE last ran: restart the trace
     void writeScope (std::array<std::atomic<float>, scopeSize>&, const float* l, const float* r, int count) noexcept;
     float sampleGainNow = 1.0f;   // audio thread: the gain ramped to
+    float inputGainNow = 1.0f;    // audio thread: Silt FX's INPUT, ramped to
+    std::array<std::array<float, modulationInterval>, 2> inputScaled {};   // audio thread: the input through INPUT
 
     // Modulation state.
     struct Target

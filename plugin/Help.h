@@ -63,6 +63,7 @@ inline juce::String helpFor (const juce::String& id)
         { "root", "ROOT: the note the sample plays as recorded" },
         { "gain", "OUTPUT: Silt's overall level" },
         { "mix", "MIX: dry input against Silt" },
+        { "inputGain", "INPUT: how loud the track goes into the grains" },
         // RESONATOR
         { "resTune", "TUNE: the lowest band's note" },
         { "resNotes", "NOTES: which pitches the bands ring at" },

@@ -409,7 +409,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
     if constexpr (SiltProcessor::isInstrument)
         layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "monitor", 1 }, "Monitor input", false));
     else
-        layout.add (percent ("mix", "Mix", 100.0f));
+        // INPUT: how loud the track goes into the grains (the dry side of MIX stays as it is).
+        layout.add (percent ("mix", "Mix", 100.0f),
+                    withUnit ("inputGain", "Input", Range (-24.0f, 24.0f, 0.1f), 0.0f, formatDb));
 
     return layout;
 }
@@ -456,7 +458,7 @@ struct SiltProcessor::RawParams
         spaceTime = p ("spaceTime"); spaceSync = p ("spaceSync"); spaceDiv = p ("spaceDiv"); spaceFeedback = p ("spaceFeedback");
         spaceMode = p ("spaceMode"); spaceDelay = p ("spaceDelay"); spaceSize = p ("spaceSize"); spaceDecay = p ("spaceDecay");
         spaceTone = p ("spaceTone"); spaceShimmer = p ("spaceShimmer"); spaceReverb = p ("spaceReverb"); spaceFreeze = p ("spaceFreeze"); spaceDuck = p ("spaceDuck");
-        monitor = p ("monitor"); mix = p ("mix");   // one of these is null, per build
+        monitor = p ("monitor"); mix = p ("mix"); inputGain = p ("inputGain");   // monitor, or mix and inputGain: per build
         chainOrder = p ("chainOrder");
         for (int m = 0; m < SiltProcessor::numModules; ++m)
             moduleOn[(size_t) m] = p (SiltProcessor::moduleOnId (m).toRawUTF8());
@@ -466,7 +468,7 @@ struct SiltProcessor::RawParams
     std::atomic<float>* sizeSync, *sizeDiv, *rateMode, *rateDiv, *grains, *grainSize;
     std::atomic<float>* start, *length, *scan, *endMode, *snap;
     std::atomic<float>* attack, *decay, *sustain, *release, *root;
-    std::atomic<float>* captureBars, *gain, *monitor, *mix, *chainOrder;
+    std::atomic<float>* captureBars, *gain, *monitor, *mix, *inputGain, *chainOrder;
     std::atomic<float>* keyMode, *liveDelay, *delaySync, *delayDiv, *feedback, *freeze, *liveRun, *sliceMode, *sliceCount;
     std::atomic<float>* randPitch, *scale, *key, *patternDepth, *patternSteps, *patternSeed, *heads, *headSpread;
     std::atomic<float>* resTune, *resNotes, *resRange, *resDecay, *resBright, *resWidth, *resFollow, *resMix;
@@ -575,8 +577,10 @@ SiltProcessor::SiltProcessor()
     startTimerHz (30);
 
     // A new instance opens with the first factory sample, unless the host
-    // restores a state (or a sample arrives) before it's ready.
-    loadInBackground ([] { return openFactorySample (0); }, factorySampleName (0), 0, factorySamples()[0].root, true);
+    // restores a state (or a sample arrives) before it's ready. Silt FX has
+    // no sample: it only grains its track.
+    if constexpr (isInstrument)
+        loadInBackground ([] { return openFactorySample (0); }, factorySampleName (0), 0, factorySamples()[0].root, true);
 }
 
 SiltProcessor::~SiltProcessor()
@@ -1042,6 +1046,29 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         float peak = 0.0f;
         for (int ch = 0; ch < capture.getNumChannels(); ++ch)
             peak = juce::jmax (peak, capture.getMagnitude (ch, start, len));
+
+        // Silt FX's INPUT: the grains hear the track through it, ramped across the
+        // chunk so moving it doesn't click. The dry signal doesn't go through it.
+        const float* inLeft = capture.getNumChannels() > 0 ? capture.getReadPointer (0, start) : nullptr;
+        const float* inRight = capture.getNumChannels() > 1 ? capture.getReadPointer (1, start) : inLeft;
+        if constexpr (! isInstrument)
+        {
+            const float target = juce::Decibels::decibelsToGain (raw->inputGain->load (std::memory_order_relaxed));
+            if (inLeft != nullptr && ! (juce::exactlyEqual (target, inputGainNow) && juce::exactlyEqual (target, 1.0f)))
+            {
+                const float step = (target - inputGainNow) / (float) len;
+                for (int i = 0; i < len; ++i)
+                {
+                    const float g = inputGainNow + step * (float) i;
+                    inputScaled[0][(size_t) i] = inLeft[i] * g;
+                    inputScaled[1][(size_t) i] = inRight[i] * g;
+                }
+                inLeft = inputScaled[0].data();
+                inRight = inputScaled[1].data();
+            }
+            peak *= juce::jmax (target, inputGainNow);
+            inputGainNow = target;
+        }
         modContext.inputPeak = peak;
         modContext.numSamples = len;
         modContext.sampleRate = currentSampleRate;
@@ -1071,8 +1098,6 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         lastLive = grainParams.live;
 
         const int liveWriteBefore = engine.getLiveWritePosition();
-        const float* inLeft = capture.getNumChannels() > 0 ? capture.getReadPointer (0, start) : nullptr;
-        const float* inRight = capture.getNumChannels() > 1 ? capture.getReadPointer (1, start) : inLeft;
         engine.process (wet.getWritePointer (0), wet.getWritePointer (1), len, inLeft, inRight,
                         noteEvents.data() + (first - noteEvents.begin()), (int) (last - first), grainParams);
         if (grainParams.live && grainParams.selfFeed && ! lastSelfFeed)
@@ -1086,7 +1111,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
 
         // Sample gain, ramped across the chunk so moving it doesn't click.
         {
-            const float target = juce::Decibels::decibelsToGain (sampleGain->load (std::memory_order_relaxed));
+            const float target = isInstrument ? juce::Decibels::decibelsToGain (sampleGain->load (std::memory_order_relaxed)) : 1.0f;
             if (! juce::exactlyEqual (target, sampleGainNow) || ! juce::exactlyEqual (target, 1.0f))
                 for (int ch = 0; ch < 2; ++ch)
                     wet.applyGainRamp (ch, 0, len, sampleGainNow, target);
@@ -1574,8 +1599,8 @@ std::vector<const silt::layout::Entry*> SiltProcessor::randomisable (int page) c
     std::vector<const silt::layout::Entry*> out;
     for (const auto& e : silt::layout::entries (isInstrument))
         if (e.page == page && (e.kind == Kind::knob || e.kind == Kind::menu || e.kind == Kind::button)
-            && ! e.id.startsWith ("!") && e.isShown (context) && params.getParameter (e.id) != nullptr)
-            out.push_back (&e);
+            && ! e.id.startsWith ("!") && e.id != "inputGain" && e.isShown (context) && params.getParameter (e.id) != nullptr)
+            out.push_back (&e);   // not INPUT: the track's level, not part of a sound
     return out;
 }
 
@@ -1868,10 +1893,10 @@ bool SiltProcessor::isModulatorPerVoice (int m) const noexcept
 
 namespace
 {
-// Session and sample settings (ROOT is the sample's key), not part of a sound.
+// Session and sample settings (ROOT is the sample's key, INPUT the track's level), not part of a sound.
 bool inPresets (const juce::String& id)
 {
-    return id != "monitor" && id != "captureBars" && id != "captureFeed" && id != "sampleGain" && id != "root";
+    return id != "monitor" && id != "captureBars" && id != "captureFeed" && id != "sampleGain" && id != "inputGain" && id != "root";
 }
 } // namespace
 
@@ -3004,6 +3029,9 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
         layoutField.store (juce::jlimit (0.15f, 0.85f, layout[2].getFloatValue()));
         layoutInset.store (juce::jlimit (0.15f, 0.7f, layout[3].getFloatValue()));
     }
+
+    if constexpr (! isInstrument)
+        return;   // Silt FX has no sample (a state from before it went LIVE only may carry one)
 
     std::unique_ptr<juce::AudioFormatReader> reader;
     if (! flac.isEmpty())

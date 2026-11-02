@@ -11,13 +11,17 @@ Design and build plan: [`../granular-sampler-vst-research/09-implementation-plan
 
 **Status: M2, playable sampler (macOS).** Both plug-ins play the grain engine from MIDI:
 
-- **Get a sample in:** drag a file onto the panel, press **LOAD**, or **ARM** and
+- **Get a sample in (Silt):** drag a file onto the panel, press **LOAD**, or **ARM** and
   record. Capture waits for the next bar while the host is playing (or starts at once
-  when stopped), records 1/2/4/8 bars of the capture source (the sidechain on Silt, the
-  track's input on Silt FX), then swaps it in. Samples hold up to 30 s.
+  when stopped), records 1/2/4/8 bars of the sidechain, then swaps it in. Samples hold
+  up to 30 s.
+- **Silt FX has no sample:** it only grains its track's audio (always Live mode), so it
+  has no LOAD, ARM, RESAMPLE, DRAG, sample GAIN or sample tools. **INPUT** (PLAY page,
+  -24 to +24 dB) sets how loud the track goes into the grains; the dry side of MIX is
+  untouched, and presets and RANDOM leave it alone.
 - **Play it:** 16 voices with ADSR, keys transpose around the root note.
 - **Saved with the project:** parameters plus the sample as FLAC, checked end to end by
-  `silt_hostcheck`.
+  `silt_hostcheck` (on Silt FX it checks a restored sample is dropped and INPUT works).
 - **Panel:** a working native panel in the plan §5 palette: the sample with its region
   and a playhead per voice, capture and load, and a knob for every parameter. The
   finished UI waits on Spike B (WebView).

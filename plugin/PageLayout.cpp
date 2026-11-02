@@ -95,6 +95,7 @@ std::vector<Entry> build (bool instrument)
         knob (play, 4, "root", "ROOT");
         knob (play, 5, "gain", "OUTPUT");
         knob (play, 6, "mix", "MIX");
+        knob (play, 7, "inputGain", "INPUT");
     }
     else
     {

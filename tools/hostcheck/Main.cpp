@@ -6,6 +6,8 @@
 // 1. Builds a state holding a one-second 220 Hz sine as FLAC (plan D10 format).
 // 2. Restores it, plays a note, and checks the plug-in makes sound.
 // 3. Saves state again and checks the sample came back out, the same length.
+// Silt FX has no sample: it checks instead that a restored one is dropped,
+// then plays a sine into it and checks INPUT turns the grains down.
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -97,6 +99,29 @@ float playNote (juce::AudioPluginInstance& plugin, double seconds)
     }
     return peak;
 }
+
+// Silt FX: a held note over a 220 Hz sine on the track; the loudest output
+// over the last half.
+float playInput (juce::AudioPluginInstance& plugin, double seconds)
+{
+    const int channels = juce::jmax (plugin.getTotalNumInputChannels(), plugin.getTotalNumOutputChannels());
+    juce::AudioBuffer<float> buffer (channels, blockSize);
+    float peak = 0.0f;
+    const int total = (int) (seconds * rate);
+    for (int done = 0; done < total; done += blockSize)
+    {
+        for (int ch = 0; ch < channels; ++ch)
+            for (int i = 0; i < blockSize; ++i)
+                buffer.setSample (ch, i, 0.5f * std::sin (juce::MathConstants<float>::twoPi * 220.0f * (float) (done + i) / (float) rate));
+        juce::MidiBuffer midi;
+        if (done == 0)
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        plugin.processBlock (buffer, midi);
+        if (done >= total / 2)
+            peak = juce::jmax (peak, buffer.getMagnitude (0, blockSize));
+    }
+    return peak;
+}
 } // namespace
 
 int main (int argc, char* argv[])
@@ -130,8 +155,8 @@ int main (int argc, char* argv[])
 
     plugin->enableAllBuses();
 
-    // The sample plays in Pitch mode. Silt FX has no Mode (it's always Live),
-    // so there it only round-trips the sample in its state.
+    // The sample plays in Pitch mode. Silt FX has no Mode (it's always Live)
+    // and no sample: it should drop one a state brings.
     bool playsSamples = false;
     for (auto* parameter : plugin->getParameters())
         if (parameter->getName (32) == "Mode")
@@ -175,11 +200,31 @@ int main (int argc, char* argv[])
     juce::MemoryBlock saved;
     plugin->getStateInformation (saved);
     ParsedState again;
-    check (parse (saved, again) && ! again.flac.isEmpty(), "saved state carries the sample");
+    if (playsSamples)
+    {
+        check (parse (saved, again) && ! again.flac.isEmpty(), "saved state carries the sample");
+        std::unique_ptr<juce::AudioFormatReader> reader (
+            juce::FlacAudioFormat().createReaderFor (new juce::MemoryInputStream (again.flac, false), true));
+        check (reader != nullptr && reader->lengthInSamples == frames, "saved sample has the same length");
+    }
+    else
+    {
+        check (parse (saved, again) && again.flac.isEmpty(), "Silt FX drops a restored sample");
+    }
 
-    std::unique_ptr<juce::AudioFormatReader> reader (
-        juce::FlacAudioFormat().createReaderFor (new juce::MemoryInputStream (again.flac, false), true));
-    check (reader != nullptr && reader->lengthInSamples == frames, "saved sample has the same length");
+    juce::AudioProcessorParameter* input = nullptr;
+    for (auto* parameter : plugin->getParameters())
+        if (parameter->getName (32) == "Input")
+            input = parameter;
+    if (input != nullptr)
+    {
+        input->setValueNotifyingHost (0.5f);   // 0 dB on -24..+24
+        const float full = playInput (*plugin, 1.0);
+        input->setValueNotifyingHost (0.0f);   // -24 dB
+        const float quiet = playInput (*plugin, 1.0);
+        check (full > 0.05f, "grains the track's input (peak " + juce::String (full, 3) + ")");
+        check (quiet < full * 0.25f, "INPUT turns them down (peak " + juce::String (quiet, 3) + " at -24 dB)");
+    }
 
     plugin->releaseResources();
     std::cout << (failures == 0 ? "PASS\n" : "FAILED\n");

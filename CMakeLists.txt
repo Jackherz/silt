@@ -135,6 +135,16 @@ target_link_libraries(silt_snapshot
     PRIVATE silt_core silt_samples silt_fonts juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
+# The same for Silt FX.
+juce_add_console_app(silt_snapshot_fx PRODUCT_NAME "silt-snapshot-fx")
+target_sources(silt_snapshot_fx PRIVATE tools/snapshot/Main.cpp ${SILT_PLUGIN_SOURCES})
+target_compile_definitions(silt_snapshot_fx PRIVATE
+    JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1
+    JucePlugin_Name="Silt FX" JucePlugin_IsSynth=0 JucePlugin_VersionString="${PROJECT_VERSION}")
+target_link_libraries(silt_snapshot_fx
+    PRIVATE silt_core silt_samples silt_fonts juce::juce_audio_utils
+    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+
 # Plug-in level tests: the instrument's processor built into a Catch2 runner.
 if(SILT_BUILD_TESTS)
     juce_add_console_app(silt_plugin_tests PRODUCT_NAME "silt-plugin-tests")

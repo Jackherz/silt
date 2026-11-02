@@ -279,7 +279,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
             spaceScene->drawBehind (g, scene, wave, envelope, spaceSettings);
         return true;
     };
-    if (auto* gain = dynamic_cast<juce::RangedAudioParameter*> (silt.params.getParameter ("sampleGain")))
+    // Silt FX has no sample: no GAIN, DRAG, LOAD, ARM or RESAMPLE.
+    if (auto* gain = dynamic_cast<juce::RangedAudioParameter*> (silt.params.getParameter ("sampleGain")); gain != nullptr && SiltProcessor::isInstrument)
     {
         sampleGainBox = std::make_unique<SampleGainBox> (*gain, [this] { return silt.normalisingGainDb(); });
         screen->addAndMakeVisible (*sampleGainBox);
@@ -295,7 +296,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         if (silt.writeAudioFile (file))
             juce::DragAndDropContainer::performExternalDragDropOfFiles ({ file.getFullPathName() }, false, dragOut.get());
     };
-    screen->addAndMakeVisible (*dragOut);
+    if constexpr (SiltProcessor::isInstrument)
+        screen->addAndMakeVisible (*dragOut);
 
     // SLICE: move, add and remove slices on the waveform (MANUAL from then on).
     // Each drag, add or remove is one undo step.
@@ -322,11 +324,14 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         const bool hasSample = silt.getOverview().seconds > 0.0;
         const bool live = silt.liveMode.load();
         juce::PopupMenu menu;
-        menu.addSectionHeader ("SAMPLE");
-        menu.addItem (1, "Trim to the region", hasSample && ! live);
-        menu.addItem (2, "Reverse", hasSample && ! live);
-        menu.addItem (3, "Normalise to -1 dB", hasSample && ! live);
-        menu.addSeparator();
+        if constexpr (SiltProcessor::isInstrument)
+        {
+            menu.addSectionHeader ("SAMPLE");
+            menu.addItem (1, "Trim to the region", hasSample && ! live);
+            menu.addItem (2, "Reverse", hasSample && ! live);
+            menu.addItem (3, "Normalise to -1 dB", hasSample && ! live);
+            menu.addSeparator();
+        }
         menu.addItem (4, live ? "Save the last 8 seconds as WAV..." : "Save as WAV...", hasSample || live);
         menu.addItem (5, "Show the takes folder");
         menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition(), [this] (int chosen)
@@ -413,7 +418,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
 
     // Capture and loading.
     captureBars.addItemList ({ "1 BAR", "2 BARS", "4 BARS", "8 BARS" }, 1);
-    addAndMakeVisible (captureBars);
+    if constexpr (SiltProcessor::isInstrument)
+        addAndMakeVisible (captureBars);
     captureBarsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (silt.params, "captureBars", captureBars);
     resampleButton.setClickingTogglesState (true);
     for (auto* key : { &resampleButton, &learnButton })
@@ -422,7 +428,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         key->setColour (juce::TextButton::textColourOnId, ink);
     }
     resampleButton.setTooltip ("RESAMPLE: ARM records what Silt itself is playing (from the next bar) as the new sample");
-    addAndMakeVisible (resampleButton);
+    if constexpr (SiltProcessor::isInstrument)
+        addAndMakeVisible (resampleButton);
     resampleAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "captureFeed", resampleButton);
 
     armButton.getProperties().set ("red", true);
@@ -434,7 +441,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         else
             silt.cancelCapture();
     };
-    addAndMakeVisible (armButton);
+    if constexpr (SiltProcessor::isInstrument)
+        addAndMakeVisible (armButton);
 
     // LOAD: a file, or one of the built-in samples.
     loadButton.onClick = [this]
@@ -453,7 +461,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
                 chooseFile();
         });
     };
-    addAndMakeVisible (loadButton);
+    if constexpr (SiltProcessor::isInstrument)
+        addAndMakeVisible (loadButton);
 
     // LEARN: turn the controller's knobs 1–8, then press its previous- and
     // next-page buttons. Pressing LEARN again cancels.
@@ -1006,6 +1015,7 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
         return r;
     };
     const int generation = silt.getSampleGeneration();
+    const float input = SiltProcessor::isInstrument ? 0.0f : param ("inputGain");
     const float spray = param ("spray"), bits = param ("colorBits"), order = param ("chainOrder");
     const auto routes = silt.allRoutes().size();
     const auto preset = silt.presetName;
@@ -1017,10 +1027,14 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
                        "sample turns into pads, textures, rhythms or drones.\n\nThis tour takes a minute or two. The lit part "
                        "of each step is live, so try things as you go.", {}, -1, {}, {} });
     steps.push_back ({ "The screen",
-                       "This is your sample. While you play, each white line is a grain sounding right now, and the shaded "
-                       "band is the part of the sample grains are taken from.",
+                       SiltProcessor::isInstrument
+                           ? "This is your sample. While you play, each white line is a grain sounding right now, and the shaded "
+                             "band is the part of the sample grains are taken from."
+                           : "This is the last few seconds of your track's audio. While you play, each white line is a grain "
+                             "sounding right now, reaching back into it.",
                        [this] { return Spots (screen->getBounds()); }, -1,
-                       "Play a note or a chord on your keyboard (or a MIDI clip) and watch the grains appear.",
+                       SiltProcessor::isInstrument ? "Play a note or a chord on your keyboard (or a MIDI clip) and watch the grains appear."
+                                                   : "Play your track and watch the grains appear.",
                        [this] { return silt.activeGrains.load() > 0; } });
     if constexpr (SiltProcessor::isInstrument)
         steps.push_back ({ "Your own sounds",
@@ -1045,12 +1059,12 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
                            layout::play, {}, {} });
     else
         steps.push_back ({ "Live input",
-                           "Silt FX turns the audio on its track into grains as it plays. The display shows the input's level; "
-                           "the PLAY page sets how far back the grains reach (DELAY), how much feeds back, FREEZE, and what "
-                           "plays when no notes arrive. For samples, slices and FEED, use Silt, the instrument.",
-                           [this] { Spots s (lcdArea); s.add (screen->getBounds()); return s; }, -1,
-                           "Play your track and watch the grains appear.",
-                           [this] { return silt.activeGrains.load() > 0; } });
+                           "Silt FX turns the audio on its track into grains as it plays. The display shows the input's level. "
+                           "On the PLAY page, INPUT sets how loud the track goes into the grains, DELAY how far back they reach, "
+                           "and NO NOTES what plays when no notes arrive. For samples, slices and FEED, use Silt, the instrument.",
+                           [this] { Spots s (lcdArea); s.add (slotBounds (7)); return s; }, layout::play,
+                           "Turn INPUT up or down while your track plays.",
+                           [this, input] { return std::abs (param ("inputGain") - input) > 1.0f; } });
     steps.push_back ({ "Pages",
                        "Each tab is a page of up to eight controls, the same eight your MIDI controller's knobs move. GRAIN and "
                        "SHAPE make the grains, PITCH and PLAY decide how notes play them, and the rest are effects and movement.",
@@ -1063,21 +1077,22 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
                        [this] { Spots s (screen->getBounds()); s.add (slotBounds (3)); return s; }, layout::grain,
                        "Drag SPRAY up while you play, and watch the grains spread out across the waveform.",
                        [this, spray] { return std::abs (param ("spray") - spray) > 5.0f; } });
-    steps.push_back ({ "Slices",
-                       "MODE: SLICE cuts the sample into pieces, one per key: C1 plays the first, C#1 the next, and keys "
-                       "past the last stay quiet. Drag a slice line to move it, double-click to add or remove one. Scroll "
-                       "on the waveform to zoom in, or drag the ZOOM label up and down; double-click it to see it all.",
-                       [this]
-                       {
-                           Spots s (screen->getBounds());
-                           for (const auto& c : controls)
-                               if (c->entry->id == "keyMode" && c->component().isVisible())
-                                   s.add (c->component().getBounds());
-                           return s;
-                       },
-                       layout::play,
-                       "Set MODE to SLICE, play C1 and up, then drag a slice line.",
-                       [this] { return silt.playMode() == SiltProcessor::modeSlice; } });
+    if constexpr (SiltProcessor::isInstrument)
+        steps.push_back ({ "Slices",
+                           "MODE: SLICE cuts the sample into pieces, one per key: C1 plays the first, C#1 the next, and keys "
+                           "past the last stay quiet. Drag a slice line to move it, double-click to add or remove one. Scroll "
+                           "on the waveform to zoom in, or drag the ZOOM label up and down; double-click it to see it all.",
+                           [this]
+                           {
+                               Spots s (screen->getBounds());
+                               for (const auto& c : controls)
+                                   if (c->entry->id == "keyMode" && c->component().isVisible())
+                                       s.add (c->component().getBounds());
+                               return s;
+                           },
+                           layout::play,
+                           "Set MODE to SLICE, play C1 and up, then drag a slice line.",
+                           [this] { return silt.playMode() == SiltProcessor::modeSlice; } });
     steps.push_back ({ "See what you hear",
                        "RESONATOR, FILTER, COLOR and SPACE shape the sound after the grains. On the first three, the strip on "
                        "the screen shows the sound going in (faint) and coming out (bright).",
@@ -1482,7 +1497,7 @@ juce::Rectangle<int> SiltEditor::slotBounds (int slot) const
 
 bool SiltEditor::isInterestedInFileDrag (const juce::StringArray& files)
 {
-    return files.size() == 1 && silt.isAudioFile (juce::File (files[0]));
+    return SiltProcessor::isInstrument && files.size() == 1 && silt.isAudioFile (juce::File (files[0]));
 }
 
 void SiltEditor::filesDropped (const juce::StringArray& files, int, int)
@@ -1835,16 +1850,18 @@ void SiltEditor::resized()
         const auto key = [&] (juce::Component& c, int first, int span = 1) { c.setBounds (column (strip, first, span).reduced (4, 0).withTrimmedBottom (3)); };
         key (resampleButton, 0);
         key (loadButton, 1);
-        key (learnButton, 2);
-        auto random = column (strip, 3, 2).reduced (4, 0).withTrimmedBottom (3);
+        // Silt FX has no capture or loading: its keys start from the first column.
+        const int from = SiltProcessor::isInstrument ? 2 : 0;
+        key (learnButton, from);
+        auto random = column (strip, from + 1, 2).reduced (4, 0).withTrimmedBottom (3);
         randomAmountBox->setBounds (random.removeFromRight (56).withTrimmedBottom (-3));
         random.removeFromRight (6);
         randomButton.setBounds (random);
-        auto undoRedo = column (strip, 5).reduced (4, 0).withTrimmedBottom (3);
+        auto undoRedo = column (strip, from + 3).reduced (4, 0).withTrimmedBottom (3);
         undoButton.setBounds (undoRedo.removeFromLeft (undoRedo.getWidth() / 2 - 2));
         undoRedo.removeFromLeft (4);
         redoButton.setBounds (undoRedo);
-        key (routesButton, 6);
+        key (routesButton, from + 4);
         if constexpr (SiltProcessor::isInstrument)
             monitorButton.setBounds (column (strip, 7).reduced (6, 4));
     }
