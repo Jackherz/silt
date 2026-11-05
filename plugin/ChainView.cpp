@@ -5,16 +5,14 @@ using namespace silt::ui;
 
 namespace
 {
-constexpr float endWidth = 62.0f, gap = 20.0f;
+constexpr float gap = 12.0f;
 
 float value (const SiltProcessor& silt, const char* id) { return silt.params.getRawParameterValue (id)->load(); }
 
-void arrow (juce::Graphics& g, float x0, float x1, float y)
+const char* shortName (int module)
 {
-    g.drawLine (x0 + 3.0f, y, x1 - 4.0f, y, 1.2f);
-    juce::Path head;
-    head.addTriangle (x1 - 3.0f, y, x1 - 8.0f, y - 3.5f, x1 - 8.0f, y + 3.5f);
-    g.fillPath (head);
+    static const char* names[] { "RES", "FILTER", "COLOR", "SPACE" };
+    return names[juce::jlimit (0, 3, module)];
 }
 } // namespace
 
@@ -72,18 +70,15 @@ void ChainView::update()
 
 juce::Rectangle<float> ChainView::blockArea (int position) const
 {
-    auto row = getLocalBounds().toFloat().reduced (8.0f, 4.0f);
-    row.removeFromTop (16.0f);
-    row.removeFromLeft (endWidth + gap);
-    row.removeFromRight (endWidth + gap);
+    const auto row = getLocalBounds().toFloat();
     const float w = (row.getWidth() - gap * (SiltProcessor::numModules - 1)) / SiltProcessor::numModules;
-    return { row.getX() + (float) position * (w + gap), row.getY() + 4.0f, w, row.getHeight() - 8.0f };
+    return { row.getX() + (float) position * (w + gap), row.getY(), w, row.getHeight() };
 }
 
 juce::Rectangle<float> ChainView::switchArea (int position) const
 {
     const auto r = blockArea (position);
-    return r.withTrimmedTop (r.getHeight() * 0.55f).withSizeKeepingCentre (juce::jmin (r.getWidth() - 12.0f, 54.0f), 16.0f);
+    return r.withTrimmedTop (r.getHeight() * 0.52f).reduced (5.0f, 4.0f);
 }
 
 int ChainView::positionAt (float x) const
@@ -97,18 +92,6 @@ int ChainView::positionAt (float x) const
 
 void ChainView::paint (juce::Graphics& g)
 {
-    const auto bounds = getLocalBounds().toFloat();
-    g.setColour (screenBlue);
-    g.fillRect (bounds);
-    g.setColour (screenLight.withAlpha (0.6f));
-    g.drawRect (bounds, 1.0f);
-
-    g.setFont (monoFont (10.0f));
-    g.setColour (screenLime);
-    g.drawText ("CHAIN", bounds.reduced (8.0f, 4.0f).removeFromTop (12.0f), juce::Justification::centredLeft);
-    g.setColour (screenPale.withAlpha (0.8f));
-    g.drawText ("DRAG TO REORDER   CLICK TO OPEN   SWITCH: ON/OFF", bounds.reduced (8.0f, 4.0f).removeFromTop (12.0f), juce::Justification::centredRight);
-
     // The order as it would be with the dragged block dropped where it is now.
     auto order = shownOrder;
     if (dragging >= 0)
@@ -123,50 +106,40 @@ void ChainView::paint (juce::Graphics& g)
         std::copy (rest.begin(), rest.end(), order.begin());
     }
 
-    const auto first = blockArea (0), last = blockArea (SiltProcessor::numModules - 1);
-    const float y = first.getCentreY();
-    const auto ends = [&] (juce::Rectangle<float> r, const char* text)
-    {
-        g.setColour (screenPale.withAlpha (0.5f));
-        g.drawRoundedRectangle (r, 4.0f, 1.0f);
-        g.setColour (screenPale);
-        g.drawText (text, r, juce::Justification::centred);
-    };
-    g.setFont (monoFont (11.0f));
-    const auto grains = juce::Rectangle<float> (first.getX() - gap - endWidth, first.getY() + 8.0f, endWidth, first.getHeight() - 16.0f);
-    const auto out = juce::Rectangle<float> (last.getRight() + gap, last.getY() + 8.0f, endWidth, last.getHeight() - 16.0f);
-    ends (grains, "GRAINS");
-    ends (out, "OUT");
-
-    g.setColour (screenPale.withAlpha (0.8f));
-    arrow (g, grains.getRight(), first.getX(), y);
+    // The signal runs left to right between the blocks.
+    g.setColour (ink);
     for (int p = 0; p + 1 < SiltProcessor::numModules; ++p)
-        arrow (g, blockArea (p).getRight(), blockArea (p + 1).getX(), y);
-    arrow (g, last.getRight(), out.getX(), y);
+    {
+        const auto r = blockArea (p);
+        const float x = r.getRight() + 2.0f, y = r.getCentreY();
+        juce::Path head;
+        head.addTriangle (x + 8.0f, y, x + 1.0f, y - 4.0f, x + 1.0f, y + 4.0f);
+        g.fillPath (head);
+    }
 
     const auto block = [&] (juce::Rectangle<float> r, int module, bool lifted)
     {
-        const bool active = shownActive[(size_t) module];
-        g.setColour (lifted ? screenLight : screenLight.withAlpha (active ? 0.55f : 0.2f));
-        g.fillRoundedRectangle (r, 5.0f);
-        g.setColour (lifted ? juce::Colours::white : (active ? screenPale : screenPale.withAlpha (0.45f)));
-        g.drawRoundedRectangle (r, 5.0f, lifted ? 2.0f : 1.2f);
-        g.setFont (monoFont (juce::jlimit (9.0f, 13.0f, r.getWidth() / 8.0f)));
-        g.setColour (active || lifted ? juce::Colours::white : screenPale.withAlpha (0.6f));
-        g.drawText (SiltProcessor::moduleName (module), r.withTrimmedBottom (r.getHeight() * 0.3f), juce::Justification::centred);
-        // The ON switch: a pill with a light, lit while the module is on.
-        const bool on = shownOn[(size_t) module];
-        const auto pill = r.withTrimmedTop (r.getHeight() * 0.55f).withSizeKeepingCentre (juce::jmin (r.getWidth() - 12.0f, 54.0f), 16.0f);
-        g.setColour (juce::Colours::black.withAlpha (on ? 0.25f : 0.4f));
-        g.fillRoundedRectangle (pill, 8.0f);
-        g.setColour (on ? screenLime.withAlpha (0.8f) : screenPale.withAlpha (0.4f));
-        g.drawRoundedRectangle (pill, 8.0f, 1.0f);
-        const auto light = juce::Rectangle<float> (6.0f, 6.0f).withCentre ({ pill.getX() + 10.0f, pill.getCentreY() });
-        g.setColour (on ? screenLime : screenPale.withAlpha (0.3f));
-        g.fillEllipse (light);
-        g.setFont (monoFont (9.0f));
-        g.setColour (on ? screenLime : screenPale.withAlpha (0.6f));
-        g.drawText (on ? "ON" : "OFF", pill.withTrimmedLeft (14.0f), juce::Justification::centred);
+        const bool active = shownActive[(size_t) module], on = shownOn[(size_t) module];
+        g.setColour (stock().shadow);
+        g.fillRect (r.withTrimmedRight (2.0f).withTrimmedBottom (2.0f).translated (2.0f, 2.0f));
+        const auto face = r.withTrimmedRight (2.0f).withTrimmedBottom (2.0f);
+        g.setColour (lifted ? ink : stock().panel);
+        g.fillRect (face);
+        g.setColour (active || lifted ? ink : inkSoft);
+        g.drawRect (face, 1.2f);
+        g.setFont (kit::label (16.0f));
+        g.setColour (lifted ? stock().panel : active ? ink : inkSoft);
+        g.drawText (shortName (module), face.withBottom (face.getY() + face.getHeight() * 0.5f), juce::Justification::centred);
+        // The switch: solid while the module is on.
+        const auto box = face.withTrimmedTop (face.getHeight() * 0.52f).reduced (5.0f, 4.0f);
+        g.setColour (on ? stock().lit : (lifted ? stock().panel : inkSoft));
+        if (on)
+            g.fillRect (box);
+        else
+            g.drawRect (box, 1.0f);
+        g.setFont (kit::label (14.0f));
+        g.setColour (on ? stock().shadow : (lifted ? stock().panel : inkSoft));
+        g.drawText (on ? "ON" : "OFF", box, juce::Justification::centred);
     };
 
     const int draggedModule = dragging >= 0 ? shownOrder[(size_t) dragging] : -1;
@@ -175,11 +148,11 @@ void ChainView::paint (juce::Graphics& g)
             block (blockArea (p), order[(size_t) p], false);
         else
         {
-            g.setColour (screenPale.withAlpha (0.35f));   // where it will land
-            g.drawRoundedRectangle (blockArea (p), 5.0f, 1.0f);
+            g.setColour (inkSoft);   // where it will land
+            g.drawRect (blockArea (p).withTrimmedRight (2.0f).withTrimmedBottom (2.0f), 1.0f);
         }
     if (dragging >= 0)
-        block (blockArea (0).withX (dragX).translated (0.0f, -3.0f), draggedModule, true);
+        block (blockArea (0).withX (dragX), draggedModule, true);
 }
 
 void ChainView::mouseDown (const juce::MouseEvent& e)

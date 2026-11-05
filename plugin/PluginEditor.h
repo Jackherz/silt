@@ -1,5 +1,6 @@
 #pragma once
 
+#include "kit/Bench.h"
 #include "ModPanel.h"
 #include "PageLayout.h"
 #include "PluginProcessor.h"
@@ -16,9 +17,12 @@ class SampleGainBox;
 class DragOutHandle;
 class RandomAmountBox;
 class Grip;
+class Divider;
 }
-class PresetBar;
-class PresetBrowser;
+class PresetManager;
+namespace kit { class PresetBrowser; class PresetBar; namespace bench { class Strip; struct Moment; } }
+using PresetBrowser = kit::PresetBrowser;
+using PresetBar = kit::PresetBar;
 
 // The panel, drawn natively in the plan §5 palette. A screen on top shows the
 // sample and every sounding grain; below it, one page of controls at a time,
@@ -63,6 +67,12 @@ public:
     juce::String displayText() const { return statusText(); }     // for tests: what the LCD says
     void showHelpFor (const juce::String& id);                     // hover help for a part (empty: none)
     juce::Slider* findKnob (const juce::String& parameterId);     // for tests
+    void dragSideColumn (int pixels);                              // the divider's drag; also for tests
+    void dragScreenEdge (int pixels);                              // the same, between the screen and the knobs
+    void sendMoment();                                             // the Bench's SEND: bars of the output, or the sample
+    void updateBench();                                            // from the timer; also for tests
+    void setBenchSource (int barsOrZero);                          // what SEND sends; also for tests
+    void takeMoment();                                             // the Bench's TAKE: a sent moment becomes the sample
 
     // Which modulator Alt-drag sets on a knob: the armed one; else the knob's
     // only route; else the last one used.
@@ -146,7 +156,6 @@ private:
     juce::Rectangle<int> slotBounds (int slot) const;
     juce::String statusText() const;
     void paintPreview (juce::Graphics&);
-    void paintStripes (juce::Graphics&);
     float param (const char* id) const
     {
         const auto* value = silt.params.getRawParameterValue (id);
@@ -169,6 +178,7 @@ private:
     silt::ui::ModActions modActions;
     std::unique_ptr<silt::ui::ModRail> rail;
     std::unique_ptr<silt::ui::RouteList> routeList;
+    std::unique_ptr<PresetManager> presetLibrary;
     std::unique_ptr<PresetBar> presetBar;
     std::unique_ptr<PresetBrowser> presetBrowser;
 public:
@@ -176,6 +186,12 @@ public:
 private:
     std::unique_ptr<silt::ui::SampleGainBox> sampleGainBox;
     juce::String presetShown;
+    // The Bench: a moment an effect in the range sent, for this instrument to take.
+    std::unique_ptr<kit::bench::Strip> benchStrip;
+    juce::int64 momentTaken = 0, momentSent = 0;
+    std::optional<kit::bench::Moment> waiting;
+    double benchCheckedAt = 0.0;
+    juce::ComboBox benchSource;
     std::vector<float> insetSeen;
     juce::TooltipWindow tooltips { this, 600 };
 
@@ -276,17 +292,17 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> monitorAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
 
-    juce::Rectangle<int> header, stripesArea, lcdArea, strip, pagePanel, controlRow, railArea, tray, wellArea;
+    juce::Rectangle<int> header, lcdArea, strip, pagePanel, controlRow, railArea, tray, wellArea, sourcePanel, modPanel, chainPanel, benchArea;
     int flexibleHeight = 0, contentWidth = 0;          // what the tiled sections share
     juce::Image backdrop;                              // the panel's still parts, drawn once per size and theme
-    std::unique_ptr<silt::ui::Grip> screenGrip, railGrip, insetGrip;
+    std::unique_ptr<silt::ui::Grip> insetGrip;
+    std::unique_ptr<silt::ui::Divider> sideDivider, screenDivider;
     SiltProcessor::Layout layoutAtDragStart;
     struct SlotParts { juce::Rectangle<int> label, control, under; };
     SlotParts slotParts (int slot) const;
     void makeGrips();
-    void drawRecess (juce::Graphics&, juce::Rectangle<float> area, float corner);
     static void drawSunk (juce::Graphics&, juce::Rectangle<float> area, juce::Colour face);
-    void resetLayout (int grip);   // 0 the screen's, 1 the rail's, 2 the corner picture's
+    void resetLayout (int grip);   // 0 the screen's, 1 the side column's, 2 the corner picture's
     int seenGeneration = -1;
     bool dragHover = false, screenWasLive = false;
     int learnSeen = -1, armedSeen = -2, modShownSeen = -1, tabTintSeen = -2;
@@ -301,7 +317,6 @@ private:
         return silt.captureSource.load() == SiltProcessor::CaptureSource::none || juce::Time::getMillisecondCounter() - inputHeardAt > 2000;
     }
     std::array<float, 7> previewSeen {};               // the values the SHAPE preview was last drawn with
-    std::array<float, SiltProcessor::numModulators> stripesSeen {};
     int lastUsedMod = 0;
     juce::String depthReadout;                         // shown in the LCD during a depth drag
     juce::String hoverHint;                            // shown in the LCD while over a modulation ring

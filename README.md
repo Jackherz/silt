@@ -170,10 +170,10 @@ TIME is the spacing between the rings, FEEDBACK how many (each fainter), DELAY h
 ping-pong alternates them between two stars side by side. FREEZE stops the sky; DUCK dims it
 while a note sounds.
 
-**Type:** lettering is Jost (light, widely spaced capitals); numbers and readouts are IBM
-Plex Mono. Both are embedded, under the SIL Open Font License (`resources/fonts/*/OFL.txt`).
-Keys, menus and value boxes are capsules: keys in a hairline (the page shown filled), value
-boxes and the display dark.
+**The sheet:** Silt is the instrument line of a range drawn on one shared sheet (`kit/`, the
+same copy in each plug-in's repository until the range has a repository of its own):
+masthead with a catalogue number, numbered panels, a readout, hard frames and flat knobs,
+in VT323 with Press Start 2P for the wordmark (SIL Open Font License, `kit/fonts/`).
 
 **Presets** (header: ◀ name ▶, SAVE): a preset is the sound (every parameter, the
 modulation routes, the shown modulator), not the sample, the controller mapping or
@@ -217,8 +217,16 @@ along), drag the bar under it or the ZOOM label, double-click the label to see i
 RESET (right-click a page key, or RANDOM's menu) puts a page, or every page, back to its
 defaults, keeping the routes, the sample and ROOT. Both are one undo step.
 
-**CHAIN:** drag the four effects into any order; each has an ON switch (on its block and
-the page's last four slots) that cuts it at once, fading over 5 ms so it doesn't click.
+**CHAIN:** always on the panel, from any page: drag the four effects into any order, click
+one to open its page. Each has an ON switch that cuts it at once, fading over 5 ms so it
+doesn't click. A controller can still page to CHAIN for ORDER and the four switches.
+
+**The Bench** (along the bottom): SEND records the exact output for 4, 8 or 16 bars from the
+next bar line (at once if the host is stopped) and passes it on, or sends the sample if you
+choose that. TAKE makes what an effect sent the sample (Silt FX has nothing to take into).
+FOLDER opens it in the Finder, chooses another folder, or picks a category, which is a folder
+inside it; everything sent stays there, in `~/Music/Bench/` until you choose. Silt keeps the
+first 30 seconds of what it takes.
 
 **MIDI:** notes on any channel (omni). The sustain pedal (CC 64) holds notes until it's let
 up; all-notes-off / all-sound-off end everything, pedal included. Pitch bend, the mod wheel,

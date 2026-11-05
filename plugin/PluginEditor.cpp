@@ -16,8 +16,10 @@ namespace layout = silt::layout;
 
 namespace
 {
-constexpr int defaultWidth = 1040, defaultHeight = 600;
+constexpr int defaultWidth = 1200, defaultHeight = 820;
 constexpr int slotsPerRow = 8;
+constexpr int minSideWidth = 240;      // the right column, as narrow as its panels still read
+constexpr float maxSideShare = 0.5f;   // and as wide: half the panel
 constexpr float degreesPerUnit = 270.0f;   // a knob's travel, from about 7 o'clock to 5
 } // namespace
 
@@ -259,11 +261,10 @@ SiltEditor::SiltEditor (SiltProcessor& p)
 
     rail = std::make_unique<ModRail> (silt, modActions);
     addAndMakeVisible (*rail);
-    presetBar = std::make_unique<PresetBar> (silt);
-    presetBar->getProperties().set ("onFrame", true);   // its keys sit on the header band
-    tourButton.getProperties().set ("onFrame", true);
+    presetLibrary = std::make_unique<PresetManager> (silt);
+    presetBar = std::make_unique<PresetBar> (*presetLibrary);
     addAndMakeVisible (*presetBar);
-    presetBrowser = std::make_unique<PresetBrowser> (silt);
+    presetBrowser = std::make_unique<PresetBrowser> (*presetLibrary, stock());
     addChildComponent (*presetBrowser);
     presetBar->onBrowse = [this] { presetBrowser->isVisible() ? presetBrowser->close (true) : presetBrowser->open(); };
     presetBrowser->onClosed = [this] { presetBar->refresh(); refreshLayout(); };
@@ -361,7 +362,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         buildControl (entry);
     shownNow.assign (controls.size(), false);
 
-    // CHAIN: the module order, over the screen's lower part; a click opens a module's page.
+    // The chain, always on the panel; a click opens a module's page.
     chainView = std::make_unique<ChainView> (silt);
     chainView->onOpen = [this] (int module)
     {
@@ -371,7 +372,25 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         silt.currentPage.store (target);
         showPage (target);
     };
-    addChildComponent (*chainView);
+    addAndMakeVisible (*chainView);
+
+    // The Bench: SEND records what you hear and passes it on. An effect can send here,
+    // too, and the instrument can take that as its sample. Silt FX has no sample to take into.
+    benchStrip = std::make_unique<kit::bench::Strip> (stock(), SiltProcessor::isInstrument ? "I-01" : "I-01 FX", SiltProcessor::isInstrument ? "SILT" : "SILT FX");
+    benchStrip->reservedRight = 132;
+    benchStrip->onTake = [this] { takeMoment(); };
+    benchStrip->onSend = [this] { sendMoment(); };
+    benchStrip->setTakeShown (SiltProcessor::isInstrument);
+    addAndMakeVisible (*benchStrip);
+    benchSource.addItem ("4 BARS OUT", 4);
+    benchSource.addItem ("8 BARS OUT", 8);
+    benchSource.addItem ("16 BARS OUT", 16);
+    benchSource.addItem (SiltProcessor::isInstrument ? "THE SAMPLE" : "LAST 8 S IN", 1);
+    benchSource.setSelectedId (4, juce::dontSendNotification);
+    benchSource.setTitle ("What SEND sends");
+    benchSource.setTooltip ("What SEND sends: the exact output for that many bars, from the next bar line");
+    addAndMakeVisible (benchSource);
+    updateBench();
 
     routeList = std::make_unique<RouteList> (silt, modActions);
     routeList->onClose = [this] { routeList->setVisible (false); routesButton.setToggleState (false, juce::dontSendNotification); };
@@ -413,7 +432,11 @@ SiltEditor::SiltEditor (SiltProcessor& p)
             tab.setTooltip ("RESONATOR has two pages of controls: click the tab again for the other. Right-click: reset");
         else
             tab.setTooltip ("Right-click: reset this page or all of them");
-        addAndMakeVisible (tab);
+        tab.getProperties().set ("flat", true);
+        // The chain is always on the panel, so it needs no key; a controller can still
+        // page to it for its knob and switches.
+        if ((int) i != layout::chain)
+            addAndMakeVisible (tab);
     }
 
     // Capture and loading.
@@ -432,8 +455,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         addAndMakeVisible (resampleButton);
     resampleAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (silt.params, "captureFeed", resampleButton);
 
-    armButton.getProperties().set ("red", true);
-    armButton.setColour (juce::TextButton::textColourOffId, onFrame);
+    armButton.getProperties().set ("accent", true);
     armButton.onClick = [this]
     {
         if (silt.captureState.load() == SiltProcessor::CaptureState::idle)
@@ -524,7 +546,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
             { &learnButton, "!learn" }, { &randomButton, "!random" }, { randomAmountBox.get(), "!randomAmount" },
             { &undoButton, "!undo" }, { &redoButton, "!redo" }, { &routesButton, "!routes" }, { &monitorButton, "!monitor" },
             { &tourButton, "!tour" }, { screen.get(), "!screen" }, { dragOut.get(), "!drag" }, { rail.get(), "!chip" },
-            { presetBar.get(), "!preset" }, { screenGrip.get(), "!grip" }, { railGrip.get(), "!grip" }, { insetGrip.get(), "!grip" },
+            { presetBar.get(), "!preset" }, { chainView.get(), "!chain" }, { benchStrip.get(), "!bench" }, { screenDivider.get(), "!grip" }, { sideDivider.get(), "!grip" }, { insetGrip.get(), "!grip" },
         };
         for (const auto& [part, id] : parts)
             if (part != nullptr)
@@ -547,8 +569,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     setWantsKeyboardFocus (true);
     const int w = silt.editorWidth.load(), h = silt.editorHeight.load();   // before the limits resize us
     setResizable (true, true);
-    setResizeLimits (860, 520, 1600, 1000);
-    setSize (w > 0 ? juce::jlimit (860, 1600, w) : defaultWidth, h > 0 ? juce::jlimit (520, 1000, h) : defaultHeight);
+    setResizeLimits (1000, 720, 1800, 1200);
+    setSize (w > 0 ? juce::jlimit (1000, 1800, w) : defaultWidth, h > 0 ? juce::jlimit (720, 1200, h) : defaultHeight);
 
     const int startPage = juce::jlimit (0, (int) pageTabs.size() - 1, silt.currentPage.load());
     pageTabs[(size_t) startPage].setToggleState (true, juce::dontSendNotification);
@@ -714,7 +736,7 @@ void SiltEditor::wireModulation (FineSlider& s)
         depthReadout = dragging ? "MOD " + juce::String (m + 1) + " > " + silt.targetParameter (target).getName (16).toUpperCase()
                                       + "  " + silt.depthText (m, target)
                                 : juce::String();
-        repaint (header);
+        repaint (lcdArea);
     };
     s.setWantsKeyboardFocus (true);   // clicked, it hears Delete
     s.clearModulation = [this, target, &s]
@@ -729,7 +751,7 @@ void SiltEditor::wireModulation (FineSlider& s)
         flash = "MODULATION REMOVED: " + silt.targetParameter (target).getName (24).toUpperCase();
         flashUntil = juce::Time::getMillisecondCounter() + 1500;
         s.repaint();
-        repaint (header);
+        repaint (lcdArea);
         return true;
     };
     s.togglePolarity = [this, target, &s] (int m)
@@ -753,7 +775,7 @@ void SiltEditor::wireModulation (FineSlider& s)
         if (hint != hoverHint)
         {
             hoverHint = hint;
-            repaint (header);
+            repaint (lcdArea);
         }
     };
 }
@@ -892,7 +914,6 @@ void SiltEditor::restyle()
 {
     look->applyColours();
     look->clearKnobCache();
-    armButton.setColour (juce::TextButton::textColourOffId, onFrame);
     for (auto* key : { &resampleButton, &learnButton })
         key->setColour (juce::TextButton::textColourOnId, ink);
     for (auto& c : controls)
@@ -942,25 +963,19 @@ void SiltEditor::makeGrips()
     };
     const auto relayout = [this] { resized(); repaint(); };
 
-    screenGrip = std::make_unique<Grip> (Grip::Corner::bottomRight, juce::MouseCursor::UpDownResizeCursor, true);
-    screenGrip->setTooltip ("Drag to share the height between the screen and the knobs; double-click to reset");
-    screenGrip->onStart = start;
-    screenGrip->onDrag = [this, relayout] (juce::Point<int> d)
-    {
-        silt.layoutWell.store (juce::jlimit (0.1f, 0.9f, layoutAtDragStart.well - (float) d.y / (float) juce::jmax (1, flexibleHeight)));
-        relayout();
-    };
-    screenGrip->onReset = [this] { resetLayout (0); };
+    screenDivider = std::make_unique<Divider> (false);
+    screenDivider->setTooltip ("Drag to share the height between the screen and the knobs; double-click to reset");
+    screenDivider->onStart = start;
+    screenDivider->onDrag = [this] (int pixels) { dragScreenEdge (pixels); };
+    screenDivider->onReset = [this] { resetLayout (0); };
+    addAndMakeVisible (*screenDivider);
 
-    railGrip = std::make_unique<Grip> (Grip::Corner::bottomRight, juce::MouseCursor::LeftRightResizeCursor, false);
-    railGrip->setTooltip ("Drag to share the width between the modulators and the knobs; double-click to reset");
-    railGrip->onStart = start;
-    railGrip->onDrag = [this, relayout] (juce::Point<int> d)
-    {
-        silt.layoutRail.store (juce::jlimit (0.1f, 0.4f, layoutAtDragStart.rail + (float) d.x / (float) juce::jmax (1, contentWidth)));
-        relayout();
-    };
-    railGrip->onReset = [this] { resetLayout (1); };
+    sideDivider = std::make_unique<Divider> (true);
+    sideDivider->setTooltip ("Drag to make the right column wider or narrower; double-click to reset");
+    sideDivider->onStart = start;
+    sideDivider->onDrag = [this] (int pixels) { dragSideColumn (pixels); };
+    sideDivider->onReset = [this] { resetLayout (1); };
+    addAndMakeVisible (*sideDivider);
 
     insetGrip = std::make_unique<Grip> (Grip::Corner::topLeft, juce::MouseCursor::TopLeftCornerResizeCursor, true);
     insetGrip->setTooltip ("Drag to size the corner picture and the grain field; double-click to reset");
@@ -974,8 +989,24 @@ void SiltEditor::makeGrips()
     };
     insetGrip->onReset = [this] { resetLayout (2); };
 
-    for (auto* grip : { screenGrip.get(), railGrip.get(), insetGrip.get() })
-        addAndMakeVisible (grip);
+    addAndMakeVisible (*insetGrip);
+}
+
+void SiltEditor::dragScreenEdge (int pixels)
+{
+    silt.layoutWell.store (juce::jlimit (0.1f, 0.9f, layoutAtDragStart.well - (float) pixels / (float) juce::jmax (1, flexibleHeight)));
+    resized();
+    repaint();
+}
+
+void SiltEditor::dragSideColumn (int pixels)
+{
+    // Dragging left widens the column. The limits are the ones resized() enforces, so
+    // the share never runs on past what the panel will show.
+    const float width = (float) juce::jmax (1, contentWidth);
+    silt.layoutRail.store (juce::jlimit (minSideWidth / width, maxSideShare, layoutAtDragStart.rail - (float) pixels / width));
+    resized();
+    repaint();
 }
 
 void SiltEditor::resetLayout (int grip)
@@ -1262,7 +1293,7 @@ void SiltEditor::selectModulator (int m, bool arm)
     if (arm)
         silt.armedMod.store (silt.armedMod.load() == m ? -1 : m);   // arming the armed one disarms
     refreshLayout();
-    repaint (header);
+    repaint (lcdArea);
 }
 
 bool SiltEditor::routesShown() const
@@ -1423,7 +1454,6 @@ void SiltEditor::showPage (int p)
     page = juce::jlimit (0, layout::numPages - 1, p);
     if (routeList->isVisible())
         routeList->onClose();   // choosing a page (tab or controller) goes to it
-    chainView->setVisible (page == layout::chain);
     if (insetGrip != nullptr)
         insetGrip->setVisible (pageHasInset (page));   // only where there's a corner picture to size
     updateVisibility();
@@ -1531,7 +1561,7 @@ bool SiltEditor::keyPressed (const juce::KeyPress& key)
         silt.armedMod.store (-1);
         if (routeList->isVisible())
             routeList->onClose();
-        repaint (header);
+        repaint (lcdArea);
         return true;
     }
     return false;
@@ -1663,8 +1693,8 @@ void SiltEditor::timerCallback()
             screen->repaintWave();
         spaceSceneShown = shown;
     }
-    if (chainView->isVisible())
-        chainView->update();
+    chainView->update();
+    updateBench();
 
     // RESONATOR's tab says which half is showing.
     if (const int half = silt.resonatorHalf.load(); half != resonatorHalfSeen)
@@ -1685,7 +1715,7 @@ void SiltEditor::timerCallback()
     {
         learnSeen = step;
         learnButton.setToggleState (step >= 0, juce::dontSendNotification);
-        repaint (header);
+        repaint (lcdArea);
         repaint (pagePanel);
     }
 
@@ -1727,7 +1757,7 @@ void SiltEditor::timerCallback()
             else if (c->entry->id == "!assign")
                 c->button->setToggleState (armed >= 0 && armed == shown, juce::dontSendNotification);
         }
-        repaint (header);
+        repaint (lcdArea);
         repaint (pagePanel.withHeight (32));   // the MOD tab's underline
     }
     // A chip's drop preview on a knob: gone once no drag is under way, even if
@@ -1754,15 +1784,6 @@ void SiltEditor::timerCallback()
         screen->repaintInset();
     }
 
-    std::array<float, SiltProcessor::numModulators> stripes {};
-    for (int m = 0; m < SiltProcessor::numModulators; ++m)
-        stripes[(size_t) m] = silt.modOutputs[(size_t) m].load();
-    if (stripes != stripesSeen)
-    {
-        stripesSeen = stripes;
-        repaint (stripesArea.expanded (3));   // the bars can reach a pixel past it: redraw round them, so none is left behind
-    }
-
     if (silt.presetName != presetShown)
     {
         presetShown = silt.presetName;
@@ -1776,7 +1797,7 @@ void SiltEditor::timerCallback()
     armButton.setButtonText (capturing ? "CANCEL" : juce::String (juce::CharPointer_UTF8 ("\xe2\x97\x8f ARM")));
 
     if (statusText() != oldStatus)
-        repaint (header);
+        repaint (lcdArea);
 
     // Redraw the SHAPE preview only when its values change.
     if (page == layout::shape)
@@ -1801,20 +1822,68 @@ void SiltEditor::resized()
     silt.editorWidth.store (getWidth());
     silt.editorHeight.store (getHeight());
     backdrop = {};
-    constexpr int gap = 8, stripHeight = 32, trayHeight = 36, minWell = 150, minScreen = 170, minRail = 150;
+    constexpr int gap = 10, stripHeight = 34, trayHeight = 34, minWell = 170, minScreen = 170;
 
-    auto r = getLocalBounds().reduced (14);
+    auto r = getLocalBounds().reduced (24);
     contentWidth = r.getWidth();
-    const int railWidth = juce::jlimit (minRail, juce::jmax (minRail, contentWidth * 2 / 5), juce::roundToInt ((float) contentWidth * silt.layoutRail.load()));
-    const int columnsX = r.getX() + railWidth + gap;
-    const int columnWidth = (r.getRight() - columnsX) / slotsPerRow;
-    const auto column = [&] (juce::Rectangle<int> row, int first, int span = 1)
-    {
-        return row.withX (columnsX + first * columnWidth).withWidth (span * columnWidth);
-    };
 
-    header = r.removeFromTop (44);
-    r.removeFromTop (gap);
+    // The sheet every plug-in in the range shares: masthead, main sheet with the
+    // readout column to its right, and the Bench along the bottom.
+    header = r.removeFromTop (72);
+    r.removeFromTop (12);
+    {
+        auto bar = header.withHeight (36).withY (header.getY() + 6);
+        tourButton.setBounds (bar.removeFromRight (36));
+        bar.removeFromRight (8);
+        presetBar->setBounds (bar.removeFromRight (juce::jmin (400, bar.getWidth() / 2)));
+    }
+    if (benchStrip != nullptr)
+    {
+        benchArea = r.removeFromBottom (50);
+        r.removeFromBottom (12);
+        benchStrip->setBounds (benchArea);
+        benchSource.setBounds (benchStrip->reservedArea().translated (benchArea.getX(), benchArea.getY()));
+    }
+
+    const int sideWidth = juce::jlimit (minSideWidth, juce::jmax (minSideWidth, juce::roundToInt ((float) contentWidth * maxSideShare)), juce::roundToInt ((float) contentWidth * silt.layoutRail.load()));
+    auto side = r.removeFromRight (sideWidth);
+    sideDivider->setBounds (r.removeFromRight (12).withX (side.getX() - 12 + 1).withWidth (10).withY (side.getY()).withHeight (side.getHeight()));
+
+    // The side column: the readout, then what feeds the sound, what moves it and the
+    // order it runs in, on every page.
+    lcdArea = side.removeFromTop (84);
+    side.removeFromTop (gap);
+    if constexpr (SiltProcessor::isInstrument)
+    {
+        sourcePanel = side.removeFromTop (kit::panelHeadHeight + 90);
+        side.removeFromTop (gap);
+        auto inner = sourcePanel.withTrimmedTop (kit::panelHeadHeight).reduced (10, 8);
+        auto row = inner.removeFromTop (34);
+        armButton.setBounds (row.removeFromLeft (96));
+        row.removeFromLeft (8);
+        captureBars.setBounds (row);
+        inner.removeFromTop (6);
+        const int third = (inner.getWidth() - 12) / 3;
+        resampleButton.setBounds (inner.removeFromLeft (third + 16));
+        inner.removeFromLeft (6);
+        loadButton.setBounds (inner.removeFromLeft (third - 16));
+        inner.removeFromLeft (6);
+        monitorButton.setBounds (inner);
+    }
+    chainPanel = side.removeFromBottom (kit::panelHeadHeight + 76);
+    chainView->setBounds (chainPanel.withTrimmedTop (kit::panelHeadHeight).reduced (10, 7));
+    side.removeFromBottom (gap);
+    modPanel = side;
+    {
+        auto inner = modPanel.withTrimmedTop (kit::panelHeadHeight).reduced (8, 8);
+        routesButton.setBounds (inner.removeFromBottom (30));
+        inner.removeFromBottom (6);
+        railArea = inner;
+        rail->setBounds (railArea);
+    }
+
+    // The main column: the screen, the keys, the pages, and that page's knobs.
+    const int columnsX = r.getX();
     flexibleHeight = r.getHeight() - stripHeight - trayHeight - 3 * gap;
     const int wellHeight = juce::jlimit (minWell, juce::jmax (minWell, flexibleHeight - minScreen),
                                          juce::roundToInt ((float) flexibleHeight * silt.layoutWell.load()));
@@ -1826,80 +1895,48 @@ void SiltEditor::resized()
     r.removeFromBottom (gap);
     screen->setSplit (silt.layoutField.load(), silt.layoutInset.load());
     screen->setBounds (r);
-    chainView->setBounds (screen->rollArea().translated (r.getX(), r.getY()));
     if (presetBrowser != nullptr)
-        presetBrowser->setBounds (r.reduced (6));
+        presetBrowser->setBounds (r.getUnion (wellArea).withTrimmedRight (-3).withTrimmedBottom (-3));
     pagePanel = tray.getUnion (wellArea);
 
-    // Header: the name and stripes over the left column, presets over
-    // columns 1–4, ? and the LCD over 5–8.
-    stripesArea = header.withX (header.getX() + 118).withWidth (juce::jmax (30, railWidth - 128)).withSizeKeepingCentre (juce::jmax (30, railWidth - 128), 19);
-    presetBar->setBounds (column (header, 0, 4).reduced (4, 0).withSizeKeepingCentre (column (header, 0, 4).getWidth() - 8, 26));
-    lcdArea = column (header, 4, 4).reduced (4, 7);
-    tourButton.setBounds (lcdArea.removeFromLeft (30).withSizeKeepingCentre (28, 28));
-    lcdArea.removeFromLeft (8);
-    lcdArea.removeFromRight (4);
-
-    // The strip, on the grid: getting sound in over the left column, then a
-    // column (or two) per control. Keys sit 4 px in from their column's edges.
+    // The keys: everyday things on the left, the step back on the right.
     {
-        auto left = strip.withWidth (railWidth);
-        armButton.setBounds (left.removeFromLeft (juce::jmin (96, left.getWidth() * 45 / 100)).withTrimmedBottom (3));
-        left.removeFromLeft (6);
-        captureBars.setBounds (left.reduced (0, 3));
-        const auto key = [&] (juce::Component& c, int first, int span = 1) { c.setBounds (column (strip, first, span).reduced (4, 0).withTrimmedBottom (3)); };
-        key (resampleButton, 0);
-        key (loadButton, 1);
-        // Silt FX has no capture or loading: its keys start from the first column.
-        const int from = SiltProcessor::isInstrument ? 2 : 0;
-        key (learnButton, from);
-        auto random = column (strip, from + 1, 2).reduced (4, 0).withTrimmedBottom (3);
-        randomAmountBox->setBounds (random.removeFromRight (56).withTrimmedBottom (-3));
-        random.removeFromRight (6);
-        randomButton.setBounds (random);
-        auto undoRedo = column (strip, from + 3).reduced (4, 0).withTrimmedBottom (3);
-        undoButton.setBounds (undoRedo.removeFromLeft (undoRedo.getWidth() / 2 - 2));
-        undoRedo.removeFromLeft (4);
-        redoButton.setBounds (undoRedo);
-        key (routesButton, from + 4);
-        if constexpr (SiltProcessor::isInstrument)
-            monitorButton.setBounds (column (strip, 7).reduced (6, 4));
+        auto keys = strip;
+        learnButton.setBounds (keys.removeFromLeft (92));
+        keys.removeFromLeft (6);
+        randomButton.setBounds (keys.removeFromLeft (100));
+        keys.removeFromLeft (6);
+        randomAmountBox->setBounds (keys.removeFromLeft (58).withTrimmedBottom (2));
+        redoButton.setBounds (keys.removeFromRight (72));
+        keys.removeFromRight (6);
+        undoButton.setBounds (keys.removeFromRight (72));
     }
 
-    // The page keys, in their own tray across the full width, in three groups
-    // (sound, effects, movement): not on the knob columns, so a key never looks
-    // like a label for the knob under it.
+    // The page keys: one row in a frame of its own. A controller can still page to
+    // CHAIN, which has no key because the chain is always on the panel.
     {
-        auto keys = tray.reduced (8, 5).withTrimmedBottom (3);
-        constexpr int groupGap = 14, keyGap = 6;
-        const int sizes[] { 4, 4, 2 };
-        const int keyWidth = (keys.getWidth() - 2 * groupGap - ((int) pageTabs.size() - 3) * keyGap) / (int) pageTabs.size();
-        size_t t = 0;
-        for (int g = 0; g < 3; ++g)
+        const auto keys = tray.reduced (1);
+        const int count = (int) pageTabs.size() - 1;
+        int shown = 0;
+        for (size_t t = 0; t < pageTabs.size(); ++t)
         {
-            for (int k = 0; k < sizes[g]; ++k, ++t)
-            {
-                pageTabs[t].setBounds (keys.removeFromLeft (keyWidth));
-                if (k + 1 < sizes[g])
-                    keys.removeFromLeft (keyGap);
-            }
-            keys.removeFromLeft (groupGap);
+            if ((int) t == layout::chain)
+                continue;
+            const int left = keys.getX() + keys.getWidth() * shown / count, right = keys.getX() + keys.getWidth() * (shown + 1) / count;
+            pageTabs[t].setBounds (keys.withLeft (left).withRight (right));
+            ++shown;
         }
     }
 
-    // The well: the rail in the left column, the knobs one per column.
-    railArea = wellArea.withWidth (railWidth).reduced (8, 8);
-    rail->setBounds (railArea);
-    controlRow = wellArea.withX (columnsX).withWidth (columnWidth * slotsPerRow).withTrimmedTop (4).withTrimmedBottom (2);
-    routeList->setBounds (wellArea.withX (columnsX).withRight (wellArea.getRight()).reduced (2, 2));
+    // The well: the knobs, one per column.
+    controlRow = wellArea.withX (columnsX).withTrimmedTop (2).withTrimmedBottom (2);
+    routeList->setBounds (wellArea.reduced (2, 2));
     if (tour != nullptr && tour->isRunning())   // the first layout comes before the tour exists
         tour->setBounds (getLocalBounds());
 
-    // Grips: the screen's bottom-right corner (screen ↔ well), the rail's
-    // bottom-right corner (rail ↔ knob columns), the corner picture's top-left
-    // corner (picture and grain field ↔ the rest of the screen).
-    screenGrip->setBounds (juce::Rectangle<int> (16, 16).withPosition (screen->getRight() - 22, screen->getBottom() - 22));
-    railGrip->setBounds (juce::Rectangle<int> (16, 16).withPosition (wellArea.getX() + railWidth - 14, wellArea.getBottom() - 16));
+    // The corner picture's top-left corner sizes the picture and grain field against the
+    // rest of the screen; the screen and the side column have the whole gutter beside them.
+    screenDivider->setBounds (screen->getBounds().withY (screen->getBottom() + 3).withHeight (7));
     insetGrip->setBounds (juce::Rectangle<int> (16, 16).withPosition (screen->getInsetTopLeft() + screen->getPosition()).translated (-2, -2));
 
     for (auto& c : controls)
@@ -1913,7 +1950,7 @@ void SiltEditor::resized()
         }
         const auto cell = slot.control;
         if (c->menu != nullptr)
-            c->menu->setBounds (cell.withSizeKeepingCentre (cell.getWidth(), 24));
+            c->menu->setBounds (cell.withSizeKeepingCentre (cell.getWidth(), 26));
         else if (c->button != nullptr)
             c->button->setBounds (cell.withSizeKeepingCentre (cell.getWidth() - 12, 34));
         else if (c->banner != nullptr)
@@ -1923,16 +1960,95 @@ void SiltEditor::resized()
     }
 }
 
-// A recess: darker at the top where the rim shades it, a light lip below.
-void SiltEditor::drawRecess (juce::Graphics& g, juce::Rectangle<float> area, float corner)
+static const juce::String& benchChip()
 {
-    g.setGradientFill (juce::ColourGradient (chassis.darker (0.16f), 0.0f, area.getY(), chassis.darker (0.02f), 0.0f, area.getY() + area.getHeight() * 0.35f, false));
-    g.fillRoundedRectangle (area, corner);
-    juce::ColourGradient shade (juce::Colours::black.withAlpha (0.28f), 0.0f, area.getY(), juce::Colours::transparentBlack, 0.0f, area.getY() + 7.0f, false);
-    g.setGradientFill (shade);
-    g.fillRoundedRectangle (area.withHeight (8.0f), corner);
-    g.setColour (juce::Colours::white.withAlpha (0.45f));
-    g.drawHorizontalLine ((int) area.getBottom(), area.getX() + corner, area.getRight() - corner);
+    static const juce::String chip (SiltProcessor::isInstrument ? "I-01" : "I-01 FX");
+    return chip;
+}
+
+static const juce::String& benchName()
+{
+    static const juce::String name (SiltProcessor::isInstrument ? "SILT" : "SILT FX");
+    return name;
+}
+
+// The Bench: the bars when they're in, and what's waiting, looked for once a second.
+void SiltEditor::updateBench()
+{
+    using Recorder = kit::bench::OutputRecorder;
+    if (silt.outputRecorder.state() == Recorder::State::done)
+    {
+        juce::AudioBuffer<float> moment;
+        double rate = 0.0;
+        if (silt.outputRecorder.take (moment, rate) && kit::bench::send (moment, rate, benchChip(), benchName()))
+        {
+            momentSent = juce::Time::currentTimeMillis();
+            flash = "BARS SENT";
+            flashUntil = juce::Time::getMillisecondCounter() + 2000;
+        }
+        benchCheckedAt = 0.0;
+    }
+    const auto recording = silt.outputRecorder.state();
+    const auto now = juce::Time::getMillisecondCounterHiRes();
+    const bool busy = recording == Recorder::State::waiting || recording == Recorder::State::recording;
+    if (! busy && now - benchCheckedAt < 1000.0)
+        return;
+    if (now - benchCheckedAt >= 1000.0)
+    {
+        benchCheckedAt = now;
+        waiting = kit::bench::latest (benchChip());
+    }
+    const bool fresh = SiltProcessor::isInstrument && waiting.has_value() && waiting->stamp != momentTaken;
+    const auto state = silt.audioName().toUpperCase();
+    const bool bars = benchSource.getSelectedId() > 1;
+    const juce::String text = recording == Recorder::State::waiting ? juce::String ("WAITING FOR THE NEXT BAR")
+                            : recording == Recorder::State::recording ? "RECORDING " + juce::String (juce::roundToInt (silt.outputRecorder.progress() * 100.0f)) + "%"
+                            : fresh ? "FROM " + waiting->fromChip + " " + waiting->fromName + " / " + juce::String (waiting->seconds, 2) + " S"
+                            : momentSent != 0 ? juce::String ("SENT: IT'S IN THE FOLDER") : juce::String ("NOTHING WAITING");
+    benchStrip->set (state, text, busy ? "STOP" : "SEND >", busy || bars || silt.getOverview().seconds > 0.0 || silt.liveMode.load(), fresh);
+}
+
+// A moment becomes the sample. Its file stays where it was sent, for the Finder.
+void SiltEditor::takeMoment()
+{
+    const auto moment = kit::bench::latest (benchChip());
+    if (! moment.has_value())
+        return;
+    silt.loadFile (moment->audio);
+    momentTaken = moment->stamp;
+    benchCheckedAt = 0.0;
+    updateBench();
+}
+
+// SEND: records bars of what you hear and sends them when they're in, or sends what's
+// on the screen now. Again while recording stops it.
+void SiltEditor::sendMoment()
+{
+    using Recorder = kit::bench::OutputRecorder;
+    const auto state = silt.outputRecorder.state();
+    if (state == Recorder::State::waiting || state == Recorder::State::recording)
+    {
+        silt.outputRecorder.cancel();
+        return;
+    }
+    if (const int bars = benchSource.getSelectedId(); bars > 1)
+    {
+        const double quarters = (double) silt.timeSigNumerator.load() * 4.0 / (double) juce::jmax (1, silt.timeSigDenominator.load());
+        silt.outputRecorder.arm (bars, quarters, silt.hostBpm.load(), silt.preparedSampleRate());
+    }
+    else
+    {
+        const auto file = kit::bench::newAudioFile (silt.audioName());
+        if (silt.writeAudioFile (file) && kit::bench::publish (file, silt.getOverview().seconds, benchChip(), benchName()))
+            momentSent = juce::Time::currentTimeMillis();
+    }
+    benchCheckedAt = 0.0;
+    updateBench();
+}
+
+void SiltEditor::setBenchSource (int barsOrZero)
+{
+    benchSource.setSelectedId (barsOrZero > 1 ? barsOrZero : 1, juce::sendNotificationSync);
 }
 
 // A sunk display (the LCD, value boxes): shaded along its top edge.
@@ -2007,107 +2123,54 @@ void SiltEditor::paintPreview (juce::Graphics& g)
     drawCurve (noteBox, noteCurve, "NOTE");
 }
 
-// The header's four stripes are the four modulators, as meters: a dim track,
-// filled from the left (or the centre, for bipolar sources) with each one's
-// live value. Muted ones stay dim.
-void SiltEditor::paintStripes (juce::Graphics& g)
-{
-    juce::Graphics::ScopedSaveState state (g);
-    g.reduceClipRegion (stripesArea.expanded (1));   // nothing drawn outside what a repaint covers
-    auto stripes = stripesArea;
-    for (int m = 0; m < SiltProcessor::numModulators; ++m)
-    {
-        auto bar = stripes.removeFromTop (4).toFloat();
-        stripes.removeFromTop (1);
-        const auto& colour = modColour (m);
-        g.setColour (colour.dim.withAlpha (0.55f));
-        g.fillRect (bar);
-        if (! silt.isModulatorEnabled (m))
-            continue;
-        const float v = juce::jlimit (-1.0f, 1.0f, silt.modOutputs[(size_t) m].load());
-        g.setColour (colour.base);
-        if (silt::Modulator::isBipolar (silt.readModulatorParams (m)))
-        {
-            const float mid = bar.getCentreX(), x = mid + v * bar.getWidth() * 0.5f;
-            g.fillRect (juce::Rectangle<float>::leftTopRightBottom (juce::jmin (mid, x), bar.getY(), juce::jmax (mid, x) + 1.0f, bar.getBottom()));
-        }
-        else
-            g.fillRect (bar.withWidth (juce::jmax (1.0f, bar.getWidth() * juce::jmax (0.0f, v))));
-    }
-}
-
 void SiltEditor::paint (juce::Graphics& g)
 {
-    // What doesn't move (the lit chassis, the header band, the LCD's well, the
-    // tray and the knob well) is drawn once per size and theme.
+    // What doesn't move is drawn once per size and theme.
     if (backdrop.getWidth() != getWidth() || backdrop.getHeight() != getHeight())
     {
         backdrop = juce::Image (juce::Image::RGB, juce::jmax (1, getWidth()), juce::jmax (1, getHeight()), false);
         juce::Graphics b (backdrop);
-        b.setGradientFill (juce::ColourGradient (chassis.brighter (0.06f), 0.0f, 0.0f, chassis.darker (0.08f), 0.0f, (float) getHeight(), false));
-        b.fillAll();
-        const auto band = header.toFloat();
-        b.setGradientFill (juce::ColourGradient (frame.brighter (0.2f), 0.0f, band.getY(), frame.darker (0.25f), 0.0f, band.getBottom(), false));
-        b.fillRoundedRectangle (band, 5.0f);
-        b.setColour (juce::Colours::white.withAlpha (0.1f));
-        b.drawHorizontalLine ((int) band.getY() + 1, band.getX() + 4.0f, band.getRight() - 4.0f);
-        PanelLook::drawSunkBox (b, lcdArea.toFloat(), lcdGreen, {});   // the display: a dark capsule
-        // The page keys' tray: a hairline capsule.
-        b.setColour (PanelLook::hairline());
-        b.drawRoundedRectangle (tray.toFloat().reduced (0.5f), (float) tray.getHeight() * 0.5f, 1.0f);
-        drawRecess (b, wellArea.toFloat(), 8.0f);
+        const auto& s = stock();
+        b.fillAll (s.page);
+        const bool instrument = SiltProcessor::isInstrument;
+        kit::drawMasthead (b, header, s, instrument ? "I-01" : "I-01 FX", s.accent, s.onAccent, juce::String (JucePlugin_Name).toUpperCase() + ".",
+                           instrument ? "INSTRUMENT LINE" : "EFFECTS SIDE", instrument ? "GRANULAR SAMPLER" : "GRANULAR, LIVE");
+        b.setColour (s.shadow);
+        b.fillRect (screen->getBounds().translated (3, 3));
+        if constexpr (SiltProcessor::isInstrument)
+            kit::drawPanel (b, sourcePanel, s, "01", "SOURCE", "SAMPLE");
+        kit::drawPanel (b, modPanel, s, instrument ? "02" : "01", "MODULATION", "4 GEN");
+        kit::drawPanel (b, chainPanel, s, instrument ? "03" : "02", "CHAIN", "DRAG TO REORDER");
+        // The page keys' frame, and the well.
+        kit::drawSheet (b, tray, s, 2);
+        kit::drawSheet (b, wellArea, s);
     }
     g.drawImageAt (backdrop, 0, 0);
-    // The wordmark: light, widely spaced, in an orbit with a sparkle.
-    {
-        const auto word = juce::String (JucePlugin_Name).toUpperCase();
-        const auto font = panelFont (19.0f, Weight::regular, 0.48f);
-        const auto area = header.withTrimmedLeft (18).toFloat();
-        const float width = juce::GlyphArrangement::getStringWidth (font, word);
-        const float cx = area.getX() + width * 0.46f, cy = area.getCentreY();
-        juce::Path orbit;
-        orbit.addEllipse (-width * 0.62f, -9.0f, width * 1.24f, 18.0f);
-        g.setColour (screenLime.withAlpha (0.85f));
-        g.strokePath (orbit, juce::PathStrokeType (1.0f), juce::AffineTransform::rotation (-0.14f).translated (cx, cy));
-        g.setColour (onFrame);
-        g.setFont (font);
-        g.drawText (word, area, juce::Justification::centredLeft);
-        drawSparkle (g, { area.getX() + width + 2.0f, cy - 9.0f }, 10.0f, screenLime);
-    }
-    paintStripes (g);
 
-    const auto lcd = lcdArea;
-    g.setColour (lcdText);
-    g.setFont (monoFont (14.0f));
-    g.drawFittedText (statusText(), lcd.reduced (12, 0), juce::Justification::centredLeft, 1, 0.8f);
+    const auto status = statusText();
+    kit::drawReadout (g, lcdArea, stock(), juce::String (JucePlugin_Name).toUpperCase(), "LIVE", status, {}, status.length() > 26);
 
-    g.setColour (ink.withAlpha (0.18f));
-    g.drawVerticalLine (controlRow.getX() - 1, (float) wellArea.getY() + 10.0f, (float) wellArea.getBottom() - 10.0f);
-    g.setColour (ink.withAlpha (0.1f));
+    g.setColour (ink.withAlpha (0.2f));
     for (int s = 1; s < slotsPerRow; ++s)
         g.drawVerticalLine (slotBounds (s).getX(), (float) controlRow.getY() + 8.0f, (float) controlRow.getBottom() - 8.0f);
 
     g.setColour (ink);
-    const auto labelFont = panelFont (10.5f, Weight::regular, 0.3f);
-    const auto sparkle = chassis.getPerceivedBrightness() < 0.5f ? screenLime : rust;   // amber on a dark panel, the accent on a light one
+    const auto labelFont = kit::label (17.0f);
     g.setFont (labelFont);
     for (auto& c : controls)
         if (c->entry->inSlot() && c->component().isVisible())
         {
             const auto labelArea = slotParts (c->entry->slot).label;
             g.drawText (c->entry->label, labelArea, juce::Justification::centred);
-            // A small sparkle before each label.
             const float labelWidth = juce::GlyphArrangement::getStringWidth (labelFont, c->entry->label);
-            drawSparkle (g, { (float) labelArea.getCentreX() - labelWidth * 0.5f - 8.0f, (float) labelArea.getCentreY() }, 6.0f, sparkle);
             g.setColour (ink);
             if (silt.isRandomExcluded (c->entry->id))
             {
                 // Left out of RANDOM: a small crossed-out die after the label.
-                const float w = labelWidth;
-                const auto die = juce::Rectangle<float> (8.0f, 8.0f).withCentre ({ (float) labelArea.getCentreX() + w * 0.5f + 9.0f, (float) labelArea.getCentreY() });
+                const auto die = juce::Rectangle<float> (8.0f, 8.0f).withCentre ({ (float) labelArea.getCentreX() + labelWidth * 0.5f + 9.0f, (float) labelArea.getCentreY() });
                 g.setColour (inkSoft);
-                g.drawRoundedRectangle (die, 1.5f, 1.0f);
-                g.fillEllipse (juce::Rectangle<float> (2.0f, 2.0f).withCentre (die.getCentre()));
+                g.drawRect (die, 1.0f);
+                g.fillRect (juce::Rectangle<float> (2.0f, 2.0f).withCentre (die.getCentre()));
                 g.setColour (rust);
                 g.drawLine (die.getX() - 1.5f, die.getBottom() + 1.5f, die.getRight() + 1.5f, die.getY() - 1.5f, 1.3f);
                 g.setColour (ink);
@@ -2161,11 +2224,13 @@ void SiltEditor::paintOverChildren (juce::Graphics& g)
         const float wash = 0.06f + 0.4f * modLevel01 (armed);
         for (int p = 0; p < layout::numPages; ++p)
         {
+            if (! pageTabs[(size_t) p].isVisible())
+                continue;
             const auto tab = pageTabs[(size_t) p].getBounds();
             if (p != page && p != layout::mod && (routed & (1 << p)) != 0)
             {
                 g.setColour (colour.withAlpha (wash));
-                g.fillRoundedRectangle (tab.toFloat().reduced (1.0f), 3.0f);
+                g.fillRect (tab.toFloat().reduced (1.0f));
             }
             if (p == layout::mod || (p != page && (routed & (1 << p)) != 0))
             {

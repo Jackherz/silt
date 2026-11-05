@@ -167,6 +167,8 @@ inline juce::String helpFor (const juce::String& id)
         { "!chip", "MOD: click to arm, drag onto a knob" },
         { "!grip", "GRIP: drag to share space; double-click resets" },
         { "!preset", "PRESETS: click the name to browse; SAVE yours" },
+        { "!chain", "CHAIN: drag to reorder; click to open; ON cuts it" },
+        { "!bench", "THE BENCH: SEND records what you hear; TAKE what an effect sent; FOLDER shows it all" },
     };
 
     if (const auto it = help.find (id); it != help.end())

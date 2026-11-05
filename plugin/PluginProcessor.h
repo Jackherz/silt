@@ -3,6 +3,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PageLayout.h"
+#include "kit/Bench.h"
 
 #include <silt/Engine.h>
 #include <silt/Color.h>
@@ -282,9 +283,9 @@ public:
     // takes, how much of the width the mod rail takes, and within the screen
     // how much of its height the grain field (and the corner picture) takes
     // and how much of its width the corner picture takes.
-    struct Layout { float well = 0.4f, rail = 0.16f, field = 0.36f, inset = 0.33f; };
+    struct Layout { float well = 0.36f, rail = 0.27f, field = 0.36f, inset = 0.33f; };
     static Layout defaultLayout() { return {}; }
-    std::atomic<float> layoutWell { 0.4f }, layoutRail { 0.16f }, layoutField { 0.36f }, layoutInset { 0.33f };   // as Layout's
+    std::atomic<float> layoutWell { 0.36f }, layoutRail { 0.27f }, layoutField { 0.36f }, layoutInset { 0.33f };   // as Layout's
 
     // Read by the editor on the message thread.
     silt::LevelMeter captureMeter;
@@ -292,6 +293,8 @@ public:
     std::atomic<CaptureState> captureState { CaptureState::idle };
     std::atomic<float> captureProgress { 0.0f };
     std::atomic<double> hostBpm { 120.0 };
+    kit::bench::OutputRecorder outputRecorder;   // the Bench's bars of the exact output
+    double preparedSampleRate() const { return currentSampleRate; }
     std::atomic<bool> hostPlaying { false };
     std::atomic<int> timeSigNumerator { 4 }, timeSigDenominator { 4 };
     std::atomic<int> activeGrains { 0 };

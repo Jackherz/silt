@@ -20,7 +20,7 @@ public:
     }
 
     std::function<void()> onStart;
-    std::function<void (juce::Point<int> fromStart)> onDrag;
+    std::function<void (juce::Point<int> fromStart)> onDrag;   // in screen pixels: a grip moves with its own drag
     std::function<void()> onReset;
 
     void paint (juce::Graphics& g) override
@@ -41,15 +41,16 @@ public:
         }
     }
 
-    void mouseDown (const juce::MouseEvent&) override
+    void mouseDown (const juce::MouseEvent& e) override
     {
+        startAt = e.getScreenPosition();
         if (onStart)
             onStart();
     }
     void mouseDrag (const juce::MouseEvent& e) override
     {
         if (onDrag)
-            onDrag (e.getOffsetFromDragStart());
+            onDrag (e.getScreenPosition() - startAt);
     }
     void mouseDoubleClick (const juce::MouseEvent&) override
     {
@@ -58,7 +59,65 @@ public:
     }
 
 private:
+    juce::Point<int> startAt;
     Corner corner;
     bool dark;
+};
+
+// The gutter between two sections, its whole length: drag to move the split,
+// double-click to put it back. Three ticks say it's there; it inks in under the mouse.
+class Divider final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    explicit Divider (bool betweenColumns) : vertical (betweenColumns)
+    {
+        setMouseCursor (vertical ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::UpDownResizeCursor);
+        setRepaintsOnMouseActivity (true);
+    }
+
+    std::function<void()> onStart;
+    std::function<void (int pixelsMoved)> onDrag;
+    std::function<void()> onReset;
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto mid = getLocalBounds().getCentre();
+        if (isMouseOverOrDragging())
+        {
+            g.setColour (ink);
+            if (vertical)
+                g.fillRect (mid.x - 1, 0, 2, getHeight());
+            else
+                g.fillRect (0, mid.y - 1, getWidth(), 2);
+            return;
+        }
+        g.setColour (inkSoft);
+        for (int i = -1; i <= 1; ++i)
+            if (vertical)
+                g.fillRect (mid.x - 1, mid.y + i * 10 - 3, 2, 6);
+            else
+                g.fillRect (mid.x + i * 10 - 3, mid.y - 1, 6, 2);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        start = vertical ? e.getScreenX() : e.getScreenY();   // the screen's, because this moves with the drag
+        if (onStart)
+            onStart();
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (onDrag)
+            onDrag ((vertical ? e.getScreenX() : e.getScreenY()) - start);
+    }
+    void mouseDoubleClick (const juce::MouseEvent&) override
+    {
+        if (onReset)
+            onReset();
+    }
+
+private:
+    const bool vertical;
+    int start = 0;
 };
 } // namespace silt::ui

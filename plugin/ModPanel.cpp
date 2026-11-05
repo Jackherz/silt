@@ -56,21 +56,20 @@ void ModChip::paint (juce::Graphics& g)
     auto r = getLocalBounds().toFloat().reduced (1.5f);
 
     // A rounded card in a hairline; armed: its colour; shown on MOD: ink.
-    constexpr float corner = 10.0f;
     if (muted)
     {
         g.setColour (ink.withAlpha (0.04f));
-        g.fillRoundedRectangle (r, corner);
+        g.fillRect (r);
     }
     if (armed)
     {
         g.setColour (colour.base);
-        g.drawRoundedRectangle (r, corner, 2.0f);
+        g.drawRect (r, 2.0f);
     }
     else
     {
         g.setColour (selected ? ink.withAlpha (0.8f) : ink.withAlpha (0.32f));
-        g.drawRoundedRectangle (r, corner, selected ? 1.4f : 1.0f);
+        g.drawRect (r, selected ? 1.4f : 1.0f);
     }
 
     auto area = getLocalBounds().reduced (5, 3);
@@ -99,7 +98,7 @@ void ModChip::paint (juce::Graphics& g)
     {
         auto badge = top.removeFromRight (16).withSizeKeepingCentre (16, 12).toFloat();
         g.setColour (muted ? colour.dim : colour.base);
-        g.fillRoundedRectangle (badge, 2.0f);
+        g.fillRect (badge);
         g.setColour (colour.ink);
         g.setFont (monoFont (9.5f));
         g.drawText (juce::String (routes), badge, juce::Justification::centred);
@@ -109,7 +108,7 @@ void ModChip::paint (juce::Graphics& g)
         top.removeFromRight (3);
         auto badge = top.removeFromRight (13).withSizeKeepingCentre (12, 11).toFloat();
         g.setColour (text);
-        g.drawRoundedRectangle (badge, 2.0f, 1.0f);
+        g.drawRect (badge, 1.0f);
         g.setFont (monoFont (8.5f));
         g.drawText ("V", badge, juce::Justification::centred);
     }
@@ -329,7 +328,7 @@ void ModBanner::paint (juce::Graphics& g)
     const bool muted = ! silt.isModulatorEnabled (m);
     auto r = getLocalBounds().toFloat().reduced (2.0f);
     g.setColour (muted ? colour.dim : colour.base);
-    g.fillRoundedRectangle (r, 3.0f);
+    g.fillRect (r);
     g.setColour (colour.ink);
     auto text = r.reduced (6.0f, 4.0f);
     g.setFont (monoFont (18.0f));
@@ -430,7 +429,7 @@ public:
         g.drawHorizontalLine (r.getBottom() - 1, 0.0f, (float) r.getWidth());
         auto dot = r.removeFromLeft (34).reduced (4, 4).toFloat();
         g.setColour (silt.isModulatorEnabled (route.modulator) ? colour.base : colour.dim);
-        g.fillRoundedRectangle (dot, 2.0f);
+        g.fillRect (dot);
         g.setColour (colour.ink);
         g.setFont (monoFont (10.0f));
         g.drawText ("M" + juce::String (route.modulator + 1), dot, juce::Justification::centred);

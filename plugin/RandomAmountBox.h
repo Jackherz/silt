@@ -21,7 +21,7 @@ public:
         // A dark capsule, like the knobs' value boxes.
         const auto r = getLocalBounds().toFloat().reduced (0.5f, 2.5f);
         g.setColour (lcdGreen);
-        g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+        g.fillRect (r);
         g.setColour (lcdText);
         g.setFont (monoFont (12.0f));
         g.drawText (juce::String (juce::roundToInt (silt.randomAmount.load() * 100.0f)) + "%", r, juce::Justification::centred);

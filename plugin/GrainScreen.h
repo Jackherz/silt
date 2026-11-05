@@ -532,12 +532,12 @@ private:
             juce::Graphics b (bezel);
             auto ring = r;
             b.setGradientFill (juce::ColourGradient (frame.brighter (0.25f), 0.0f, (float) ring.getY(), frame.darker (0.35f), 0.0f, (float) ring.getBottom(), false));
-            b.fillRoundedRectangle (ring.toFloat(), 9.0f);
+            b.fillRect (ring.toFloat());
             b.setColour (juce::Colours::white.withAlpha (0.12f));
-            b.drawRoundedRectangle (ring.toFloat().reduced (0.5f), 9.0f, 1.0f);
+            b.drawRect (ring.toFloat().reduced (0.5f), 1.0f);
             ring.reduce (8, 8);
             b.setGradientFill (juce::ColourGradient (screenLight.brighter (0.15f), 0.0f, (float) ring.getY(), screenLight.darker (0.15f), 0.0f, (float) ring.getBottom(), false));
-            b.fillRoundedRectangle (ring.toFloat(), 8.0f);
+            b.fillRect (ring.toFloat());
             ring.reduce (12, 8);
             b.setColour (screenBlue);
             b.fillRect (ring);
@@ -597,9 +597,9 @@ private:
             // it (or click along it) to move through the sample.
             const auto track = waveArea.toFloat().removeFromBottom (scrollBarHeight);
             g.setColour (juce::Colours::black.withAlpha (0.45f));
-            g.fillRoundedRectangle (track, scrollBarHeight * 0.5f);
+            g.fillRect (track);
             g.setColour (screenLime.withAlpha (draggingBar ? 1.0f : 0.8f));
-            g.fillRoundedRectangle (thumbIn (track), scrollBarHeight * 0.5f);
+            g.fillRect (thumbIn (track));
         }
         if (transientsShown)
         {

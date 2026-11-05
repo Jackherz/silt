@@ -1,7 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
-#include "SiltFonts.h"
+#include "kit/Look.h"
 
 #include <array>
 
@@ -74,6 +74,8 @@ inline const std::array<Theme, 5>& themes()
 constexpr int defaultTheme = 4;   // Graphite
 inline int& currentThemeIndex() { static int index = 0; return index; }
 
+inline kit::Stock& stock() { static kit::Stock s = kit::graphite(); return s; }
+
 inline void applyTheme (int index)
 {
     index = juce::jlimit (0, (int) themes().size() - 1, index);
@@ -85,47 +87,29 @@ inline void applyTheme (int index)
     screenBlue = juce::Colour (t.screenBlue); screenLight = juce::Colour (t.screenLight); screenPale = juce::Colour (t.screenPale);
     screenLime = juce::Colour (t.screenLime); playheadCyan = juce::Colour (t.playhead); insetBack = juce::Colour (t.insetBack);
     knobFace = juce::Colour (t.knobFace); knobCollar = juce::Colour (t.knobCollar); knobTick = juce::Colour (t.knobTick); knobDot = juce::Colour (t.knobDot);
+
+    // The kit's sheet, on this theme's paper.
+    auto& k = stock();
+    k.page = chassis;
+    k.panel = chassis.darker (0.14f);
+    k.head = chassis.darker (0.3f);
+    k.ink = ink;
+    k.soft = inkSoft;
+    k.rule = ink.withAlpha (0.28f);
+    k.sunk = frame;
+    k.onSunk = onFrame;
+    k.shadow = chassis.getPerceivedBrightness() < 0.5f ? chassis.darker (0.75f) : ink;
+    k.accent = rust;
+    k.onAccent = chassis.getPerceivedBrightness() < 0.5f ? frame : onFrame;
+    k.lit = rust;
 }
 
-// The type: Jost for lettering (light, widely spaced capitals), IBM Plex Mono
-// for every number and readout. Both are embedded (SIL Open Font License).
+// The type comes from the kit: one face at the sizes the panel used to ask of two,
+// scaled because VT323 reads small for its height.
 enum class Weight { light, regular, medium };
 
-// Loaded once, and let go when JUCE shuts down (not after, when freeing a
-// typeface would find its locks already gone).
-struct SiltTypefaces final : juce::DeletedAtShutdown
-{
-    juce::Typeface::Ptr faces[2][3];
-    ~SiltTypefaces() override { clearSingletonInstance(); }
-    JUCE_DECLARE_SINGLETON_INLINE (SiltTypefaces, false)
-};
-
-inline juce::Typeface::Ptr siltTypeface (bool mono, Weight weight)
-{
-    auto& face = SiltTypefaces::getInstance()->faces[mono ? 1 : 0][(int) weight];
-    if (face == nullptr)
-    {
-        const struct { const char* data; int size; } files[2][3] {
-            { { SiltFonts::Jost300Light_ttf, SiltFonts::Jost300Light_ttfSize }, { SiltFonts::Jost400Book_ttf, SiltFonts::Jost400Book_ttfSize },
-              { SiltFonts::Jost500Medium_ttf, SiltFonts::Jost500Medium_ttfSize } },
-            { { SiltFonts::IBMPlexMonoLight_ttf, SiltFonts::IBMPlexMonoLight_ttfSize }, { SiltFonts::IBMPlexMonoRegular_ttf, SiltFonts::IBMPlexMonoRegular_ttfSize },
-              { SiltFonts::IBMPlexMonoMedium_ttf, SiltFonts::IBMPlexMonoMedium_ttfSize } },
-        };
-        const auto& file = files[mono ? 1 : 0][(int) weight];
-        face = juce::Typeface::createSystemTypefaceFor (file.data, (size_t) file.size);
-    }
-    return face;
-}
-
-// Lettering: tracking is extra space between letters, as a share of the size.
-inline juce::Font panelFont (float size, Weight weight = Weight::regular, float tracking = 0.12f)
-{
-    return juce::Font (juce::FontOptions (siltTypeface (false, weight)).withHeight (size).withKerningFactor (tracking));
-}
-inline juce::Font monoFont (float size, Weight weight = Weight::regular)
-{
-    return juce::Font (juce::FontOptions (siltTypeface (true, weight)).withHeight (size).withKerningFactor (0.04f));
-}
+inline juce::Font panelFont (float size, Weight = Weight::regular, float = 0.12f) { return kit::label (size * 1.4f); }
+inline juce::Font monoFont (float size, Weight = Weight::regular) { return kit::label (size * 1.4f); }
 
 // The four-point sparkle glyph (labels, the wordmark, the display).
 inline void drawSparkle (juce::Graphics& g, juce::Point<float> centre, float size, juce::Colour colour)

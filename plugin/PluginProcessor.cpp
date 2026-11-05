@@ -1237,6 +1237,14 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     if (resampling)
         runCapture (output, position ? &*position : nullptr);
 
+    // The Bench's bars: the same, kept apart from the sample and sent on.
+    if (output.getNumChannels() > 0)
+    {
+        const float quarters = (float) timeSigNumerator.load (std::memory_order_relaxed) * 4.0f / (float) juce::jmax (1, timeSigDenominator.load (std::memory_order_relaxed));
+        outputRecorder.process (output.getReadPointer (0), output.getReadPointer (output.getNumChannels() > 1 ? 1 : 0), numSamples, playing, blockPpq,
+                                position ? position->getPpqPositionOfLastBarStart().orFallback (0.0) : 0.0, quarters, bpm);
+    }
+
     activeGrains.store (engine.getActiveGrainCount(), std::memory_order_relaxed);
     liveMode.store (lastLive, std::memory_order_relaxed);
     if (const auto* ring = engine.getLiveBuffer())

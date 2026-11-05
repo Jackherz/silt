@@ -170,15 +170,15 @@ void Tour::paint (juce::Graphics& g)
     g.fillPath (shade);
     g.setColour (screenLime);
     for (const auto& r : spots)
-        g.drawRoundedRectangle (r.toFloat(), 8.0f, 2.5f);
+        g.drawRect (r.toFloat(), 2.5f);
 
     const auto card = cardArea().toFloat();
     g.setColour (juce::Colours::black.withAlpha (0.25f));
-    g.fillRoundedRectangle (card.translated (3.0f, 4.0f), 6.0f);
+    g.fillRect (card.translated (3.0f, 4.0f));
     g.setColour (bone);
-    g.fillRoundedRectangle (card, 6.0f);
+    g.fillRect (card);
     g.setColour (ink);
-    g.drawRoundedRectangle (card, 6.0f, 2.0f);
+    g.drawRect (card, 2.0f);
 
     auto inner = card.reduced ((float) pad);
     auto titleRow = inner.removeFromTop (24.0f);

@@ -1,3 +1,5 @@
+#include "kit/Bench.h"
+#include "../plugin/ChainView.h"
 // Editor-level tests: the panel the controller drives, and the modulation
 // gestures. The editor is built headlessly, as the snapshot tool does.
 
@@ -170,7 +172,7 @@ TEST_CASE ("The editor's size is kept with the set")
     juce::MemoryBlock state;
     {
         EditorRig rig;
-        rig.editor->setSize (1200, 700);
+        rig.editor->setSize (1200, 760);
         rig.silt.getStateInformation (state);
     }
     juce::ScopedJuceInitialiser_GUI juce;
@@ -178,7 +180,7 @@ TEST_CASE ("The editor's size is kept with the set")
     restored.setStateInformation (state.getData(), (int) state.getSize());
     std::unique_ptr<juce::AudioProcessorEditor> editor (restored.createEditor());
     CHECK (editor->getWidth() == 1200);
-    CHECK (editor->getHeight() == 700);
+    CHECK (editor->getHeight() == 760);
 }
 
 // --- Presets ------------------------------------------------------------------------------
@@ -393,20 +395,21 @@ TEST_CASE ("The strip's controls fit without overlapping at the smallest size")
 TEST_CASE ("The screen's grip trades height with the knobs, is kept with the session, and double-click resets it")
 {
     EditorRig rig;
-    rig.editor->setSize (1040, 520);   // short: the well's height, not the column's width, limits the knobs
+    rig.editor->setSize (1800, 720);   // wide and short: the well's height, not the column's width, limits the knobs
     auto* knob = rig.editor->findKnob ("pitch");
     REQUIRE (knob != nullptr);
     const int knobBefore = knob->getHeight();
 
-    // The grip at the screen's bottom-right corner: drag it up 80 px.
-    silt::ui::Grip* grip = nullptr;
+    // The bar under the screen, its whole width: drag it up 80 px.
+    silt::ui::Divider* grip = nullptr;
     for (auto* child : rig.editor->getChildren())
-        if (auto* g = dynamic_cast<silt::ui::Grip*> (child); g != nullptr && g->getMouseCursor() == juce::MouseCursor::UpDownResizeCursor)
+        if (auto* g = dynamic_cast<silt::ui::Divider*> (child); g != nullptr && g->getMouseCursor() == juce::MouseCursor::UpDownResizeCursor)
             grip = g;
     REQUIRE (grip != nullptr);
+    CHECK (grip->getWidth() > 500);
     const float before = rig.silt.layoutWell.load();
     grip->onStart();
-    grip->onDrag ({ 0, -80 });
+    rig.editor->dragScreenEdge (-80);
     CHECK (rig.silt.layoutWell.load() > before);
     CHECK (knob->getHeight() > knobBefore);   // the knobs grow with their well
 
@@ -790,7 +793,7 @@ TEST_CASE ("A value box being typed into stays the capsule: see-through, unoutli
     CHECK (ed->findColour (juce::TextEditor::outlineColourId).getAlpha() == 0);
     CHECK (ed->findColour (juce::TextEditor::focusedOutlineColourId).getAlpha() == 0);
     CHECK (ed->getJustificationType() == juce::Justification::centred);
-    CHECK (ed->getFont().getTypefacePtr() == silt::ui::siltTypeface (true, silt::ui::Weight::regular));
+    CHECK (ed->getFont().getTypefacePtr() == kit::label (12.0f).getTypefacePtr());
     box->hideEditor (true);
 }
 
@@ -850,4 +853,124 @@ TEST_CASE ("Dragging a mod chip while another is armed makes the dragged one the
     chip.mouseUp (event (60.0f));
     CHECK (rig.silt.armedMod.load() == 1);
     CHECK (rig.silt.modShown.load() == 1);
+}
+
+TEST_CASE ("The chain is on the panel on every page, and CHAIN has no page key")
+{
+    EditorRig rig;
+    silt::ui::ChainView* chain = nullptr;
+    for (auto* child : rig.editor->getChildren())
+        if (auto* c = dynamic_cast<silt::ui::ChainView*> (child))
+            chain = c;
+    REQUIRE (chain != nullptr);
+    for (int page = 0; page < silt::layout::numPages; ++page)
+    {
+        rig.editor->showPage (page);
+        CHECK (chain->isVisible());
+        CHECK (chain->getWidth() > 100);
+    }
+}
+
+TEST_CASE ("The Bench: a moment an effect sent becomes the sample, and the sample goes out")
+{
+    juce::TemporaryFile folderFile;
+    kit::bench::folderForTests = folderFile.getFile();
+    folderFile.getFile().createDirectory();
+    EditorRig rig;
+    juce::AudioBuffer<float> moment (2, 12000);
+    for (int i = 0; i < moment.getNumSamples(); ++i)
+        for (int c = 0; c < 2; ++c)
+            moment.setSample (c, i, 0.5f * std::sin ((float) i * 0.05f));
+    REQUIRE (kit::bench::send (moment, 24000.0, "E-01", "BROOD"));
+    const auto sent = kit::bench::latest ("I-01");
+    REQUIRE (sent.has_value());
+    CHECK (sent->fromChip == "E-01");
+    CHECK (! kit::bench::latest ("E-01").has_value());   // not offered back to who sent it
+
+    rig.editor->takeMoment();
+    for (int i = 0; i < 200 && ! juce::approximatelyEqual (rig.silt.getOverview().seconds, 0.5); ++i)
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+    CHECK_THAT (rig.silt.getOverview().seconds, WithinAbs (0.5, 0.01));
+
+    rig.editor->setBenchSource (0);
+    rig.editor->sendMoment();
+    const auto back = kit::bench::latest ("E-01");
+    REQUIRE (back.has_value());
+    CHECK (back->fromName == "SILT");
+    CHECK (back->audio.existsAsFile());
+    CHECK (sent->audio.existsAsFile());   // what came in stays, for the Finder
+    kit::bench::folderForTests = juce::File();
+    folderFile.getFile().deleteRecursively();
+}
+
+TEST_CASE ("The right column resizes from the gutter: dragging left widens it, and it stops at its limits")
+{
+    EditorRig rig;
+    silt::ui::ChainView* chain = nullptr;
+    silt::ui::Divider* divider = nullptr;
+    for (auto* child : rig.editor->getChildren())
+    {
+        if (auto* c = dynamic_cast<silt::ui::ChainView*> (child))
+            chain = c;
+        if (auto* d = dynamic_cast<silt::ui::Divider*> (child))
+            divider = d;
+    }
+    REQUIRE (chain != nullptr);
+    REQUIRE (divider != nullptr);
+    const int before = chain->getWidth();
+
+    divider->onStart();
+    rig.editor->dragSideColumn (-120);
+    CHECK (chain->getWidth() == before + 120);
+    CHECK (divider->getRight() < chain->getX());
+
+    divider->onStart();
+    rig.editor->dragSideColumn (5000);
+    const int narrowest = chain->getWidth();
+    CHECK (narrowest > 180);
+    divider->onStart();
+    rig.editor->dragSideColumn (-5000);
+    CHECK (chain->getWidth() > before);
+    CHECK (rig.editor->getWidth() / 2 >= chain->getWidth());
+
+    // Back to where it opens; a saved width comes back with the set.
+    divider->onReset();
+    CHECK (chain->getWidth() == before);
+}
+
+TEST_CASE ("The Bench: SEND records bars of the exact output and sends them when they're in")
+{
+    juce::TemporaryFile folderFile;
+    kit::bench::folderForTests = folderFile.getFile();
+    folderFile.getFile().createDirectory();
+    EditorRig rig;
+    rig.silt.hostBpm.store (240.0);                 // 4 bars of 4/4 at 240 is 4 s
+    rig.editor->setBenchSource (4);
+    rig.editor->sendMoment();
+    CHECK (rig.silt.outputRecorder.state() != kit::bench::OutputRecorder::State::idle);
+    CHECK (! kit::bench::latest ("E-01").has_value());   // nothing out until it's done
+
+    // Stop cancels.
+    juce::AudioBuffer<float> block (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 512);
+    juce::MidiBuffer midi;
+    rig.editor->sendMoment();
+    rig.silt.processBlock (block, midi);
+    CHECK (rig.silt.outputRecorder.state() == kit::bench::OutputRecorder::State::idle);
+
+    rig.silt.hostBpm.store (240.0);
+    rig.editor->sendMoment();
+    const double bpm = rig.silt.hostBpm.load();
+    for (int i = 0; i < 2000 && rig.silt.outputRecorder.state() != kit::bench::OutputRecorder::State::done; ++i)
+    {
+        block.clear();
+        rig.silt.processBlock (block, midi);
+    }
+    REQUIRE (rig.silt.outputRecorder.state() == kit::bench::OutputRecorder::State::done);
+    rig.editor->updateBench();
+    const auto sent = kit::bench::latest ("E-01");
+    REQUIRE (sent.has_value());
+    CHECK (sent->fromName == "SILT");
+    CHECK_THAT (sent->seconds, WithinAbs (4.0 * 4.0 * 60.0 / bpm, 0.05));
+    kit::bench::folderForTests = juce::File();
+    folderFile.getFile().deleteRecursively();
 }

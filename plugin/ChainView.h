@@ -2,10 +2,10 @@
 
 #include "PluginProcessor.h"
 
-// The CHAIN page's picture, over the screen's grain roll: the grains, the four
-// modules in the order they run, then the output. Drag a module to move it
-// (one undo step); click one to open its page, or its switch to turn it on or
-// off. Modules that aren't doing anything (off, no mix, filter off…) are drawn faint.
+// The chain, always on the panel: the four modules in the order they run, from any
+// page. Drag a module to move it (one undo step); click one to open its page, or its
+// switch to turn it on or off. Modules that aren't doing anything (off, no mix, filter
+// off…) are drawn faint.
 namespace silt::ui
 {
 class ChainView final : public juce::Component
