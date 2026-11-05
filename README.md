@@ -16,9 +16,12 @@ Design and build plan: [`../granular-sampler-vst-research/09-implementation-plan
   when stopped), records 1/2/4/8 bars of the sidechain, then swaps it in. Samples hold
   up to 30 s.
 - **Silt FX has no sample:** it only grains its track's audio (always Live mode), so it
-  has no LOAD, ARM, RESAMPLE, DRAG, sample GAIN or sample tools. **INPUT** (PLAY page,
-  -24 to +24 dB) sets how loud the track goes into the grains; the dry side of MIX is
-  untouched, and presets and RANDOM leave it alone.
+  has no LOAD, ARM, RESAMPLE, DRAG, sample GAIN or sample tools. **LEVELS**, always on
+  screen, holds **INPUT** (-24 to +24 dB, how loud the track goes into the grains; presets
+  and RANDOM leave it alone), **MIX** and **OUTPUT**.
+- **MIX** (Silt FX, and LIVE and FEED on Silt): the dry input against the grains. Both go on
+  through the chain together, so a filter or reverb works on the dry signal too, and MIX at
+  0 makes Silt FX a plain effects chain. RANDOM leaves it alone.
 - **Play it:** 16 voices with ADSR, keys transpose around the root note.
 - **Saved with the project:** parameters plus the sample as FLAC, checked end to end by
   `silt_hostcheck` (on Silt FX it checks a restored sample is dropped and INPUT works).
@@ -52,9 +55,10 @@ MIX (0 is an exact bypass). The rings are held to the input's level, so a tone
 right on a band can't run away; anything left over saturates softly rather than clips.
 
 **FILTER page** (after the resonator): MODE (OFF, an exact bypass; 12 or 24 dB/oct),
-CUTOFF, RESO (up to a strong ringing peak; the passband dips as it rises, as on many
-analogue filters), MORPH (low pass → band pass → high pass, blended), DRIVE (up to
-+24 dB into a soft saturation), ENV (± the input's level moves the cutoff up to 4
+A transistor-ladder model, each of its four stages saturating, run at twice the sample rate.
+CUTOFF, RESO (up to just under self-oscillation; the bass dips a little as it rises, and
+loud signals press the peak down rather than spiking through), MORPH (low pass → band pass → high pass, blended), DRIVE (up to
++24 dB into the stages, with a little second harmonic), ENV (± the input's level moves the cutoff up to 4
 octaves), KEY (the cutoff follows the last note played), MIX. Everything glides, so
 sweeps and slope changes don't zipper or click.
 
@@ -87,12 +91,12 @@ synced), ENVELOPE (ADSR from the notes played; REPEAT loops it while held), FOLL
 MACRO (a knob, automatable and controller-mappable, that moves everything it's
 routed to). Design: `docs/mod-section-design.md`.
 
-- **The mod rail**, left of every page: a chip per modulator with its colour and
+- **The mod rail**, beside the knobs on every page (drag the bar between them to resize): a chip per modulator with its colour and
   number, type, a two-second trace of what it's doing (its shape, round a centre
   line for bipolar sources) and, when it has routes, a badge with how many. Click
   arms it (outlined in its colour; click again to disarm), Shift-click only selects it, drag it onto a knob
   to make a +25% route, hover × (twice) clears its routes, right-click to edit,
-  mute, show or clear. Keys 1–4 arm, Esc disarms. The header's four stripes are the
+  mute, show or clear. Double-click a chip (or Shift+1–4) to open that modulator's MOD page; again goes back to where you were. Keys 1–4 arm, Esc disarms. The header's four stripes are the
   same four modulators as meters.
 - **Depth on any knob:** the coloured rings are handles: press one and drag up or
   down (Shift for fine; it snaps to zero). With a modulator armed, every knob shows

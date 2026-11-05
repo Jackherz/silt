@@ -169,8 +169,9 @@ TEST_CASE ("Modulation targets the continuous and stepped parameters")
     CHECK (rig.silt.modulationTarget ("m1Rate") >= 0);    // cross-modulation
     CHECK (rig.silt.modulationTarget ("m1Macro") < 0);   // a plain knob
     CHECK (rig.silt.modulationTarget ("m1Type") < 0);
-    // Switch-like parameters (choices, bools) aren't targets; stepped ones are.
-    for (const auto* id : { "scale", "key", "endMode", "resNotes", "liveRun", "spaceMode", "snap", "freeze", "resFollow", "spaceFreeze", "sizeDiv" })
+    // Switch-like parameters (choices, bools) aren't targets; stepped ones are, and so are
+    // the note divisions, which are choices drawn as knobs.
+    for (const auto* id : { "scale", "key", "endMode", "resNotes", "liveRun", "spaceMode", "snap", "freeze", "resFollow", "spaceFreeze" })
     {
         INFO (id);
         CHECK (rig.silt.modulationTarget (id) < 0);
@@ -1652,4 +1653,143 @@ TEST_CASE ("Undo: loading a preset is one step back to the sound before, and kee
     CHECK (rig.silt.canUndoRoutes());   // the spray change is still there to undo
     REQUIRE (rig.silt.redoRoutes());
     CHECK (rig.silt.presetName == "Glass Cloud");
+}
+
+TEST_CASE ("A synced RATE or SIZE can be modulated: the divisions are targets, moving in whole steps")
+{
+    Rig rig;
+    for (const auto* id : { "rateDiv", "sizeDiv", "delayDiv", "spaceDiv" })
+    {
+        const int target = rig.silt.modulationTarget (id);
+        REQUIRE (target >= 0);
+        CHECK (rig.silt.isSteppedTarget (target));
+    }
+    // A full-depth route with a square wave: the division itself moves, in whole steps.
+    const int target = rig.silt.modulationTarget ("rateDiv");
+    auto& parameter = rig.silt.targetParameter (target);
+    rig.silt.setRouteAmount (0, target, 0.4f);
+    float lowest = 2.0f, highest = -1.0f;
+    for (int i = 0; i < 400; ++i)
+    {
+        runBlocks (rig, 1);
+        const float now = rig.silt.modulatedValue01 (target);
+        lowest = juce::jmin (lowest, now);
+        highest = juce::jmax (highest, now);
+        const float plain = parameter.convertFrom0to1 (now);
+        CHECK_THAT (plain, WithinAbs (std::round (plain), 1.0e-4));
+    }
+    CHECK (highest > lowest);
+}
+
+TEST_CASE ("A low-pass all the way down at full MIX leaves nothing of the sound above it")
+{
+    // White noise as the sample, so there's something at every frequency. An effect's ON
+    // switch once kept fading by mistake, which let about 15% of the sound round it.
+    auto temp = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("silt-noise-test.wav");
+    {
+        juce::AudioBuffer<float> noise (2, 48000 * 4);
+        juce::Random random (5);
+        for (int c = 0; c < 2; ++c)
+            for (int i = 0; i < noise.getNumSamples(); ++i)
+                noise.setSample (c, i, 0.5f * (random.nextFloat() * 2.0f - 1.0f));
+        temp.deleteFile();
+        std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (temp);
+        auto writer = juce::WavAudioFormat().createWriterFor (stream, juce::AudioFormatWriterOptions{}.withSampleRate (48000.0).withNumChannels (2).withBitsPerSample (24));
+        writer->writeFromAudioSampleBuffer (noise, 0, noise.getNumSamples());
+    }
+    const auto levelAt = [&] (bool filtered, double hz)
+    {
+        Rig rig;
+        rig.silt.loadFile (temp);
+        for (int i = 0; i < 300 && rig.silt.getOverview().name != temp.getFileNameWithoutExtension(); ++i)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        if (filtered)
+            for (auto [id, v] : std::vector<std::pair<const char*, float>> { { "filterMode", 2.0f }, { "filterCutoff", 20.0f }, { "filterMix", 100.0f } })
+            {
+                auto* p = rig.silt.params.getParameter (id);
+                p->setValueNotifyingHost (p->convertTo0to1 (v));
+            }
+        rig.silt.prepareToPlay (48000.0, 512);
+        juce::MidiBuffer on;
+        on.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 512);
+        std::vector<float> out;
+        for (int b = 0; b < 200; ++b)
+        {
+            buffer.clear();
+            rig.silt.processBlock (buffer, on);
+            on.clear();
+            if (b >= 40)
+                for (int i = 0; i < 512; ++i)
+                    out.push_back (buffer.getSample (0, i));
+        }
+        double power = 0.0;
+        const int size = 4096;
+        int blocks = 0;
+        for (size_t at = 0; at + (size_t) size < out.size(); at += (size_t) size, ++blocks)
+        {
+            double c = 0.0, s = 0.0;
+            for (int i = 0; i < size; ++i)
+            {
+                const double w = 0.5 - 0.5 * std::cos (6.283185307 * i / size), ph = 6.283185307 * hz * i / 48000.0;
+                c += out[at + (size_t) i] * w * std::cos (ph);
+                s += out[at + (size_t) i] * w * std::sin (ph);
+            }
+            power += c * c + s * s;
+        }
+        return 10.0 * std::log10 (power / blocks + 1.0e-20);
+    };
+    for (const double hz : { 1000.0, 3000.0, 10000.0 })
+    {
+        const double open = levelAt (false, hz), shut = levelAt (true, hz);
+        INFO (hz << " Hz: open " << open << " dB, filtered " << shut << " dB");
+        CHECK (shut < open - 60.0);
+    }
+    temp.deleteFile();
+}
+
+TEST_CASE ("MIX sends the dry input through the chain with the grains, in LIVE and FEED")
+{
+    const auto levelOut = [] (float keyMode, float mix, bool filtered)
+    {
+        Rig rig;
+        for (auto [id, v] : std::vector<std::pair<const char*, float>> { { "keyMode", keyMode }, { "mix", mix } })
+        {
+            auto* p = rig.silt.params.getParameter (id);
+            p->setValueNotifyingHost (p->convertTo0to1 (v));
+        }
+        if (filtered)
+            for (auto [id, v] : std::vector<std::pair<const char*, float>> { { "filterMode", 2.0f }, { "filterCutoff", 20.0f } })
+            {
+                auto* p = rig.silt.params.getParameter (id);
+                p->setValueNotifyingHost (p->convertTo0to1 (v));
+            }
+        const int inputs = rig.silt.getTotalNumInputChannels(), channels = juce::jmax (inputs, rig.silt.getTotalNumOutputChannels());
+        juce::AudioBuffer<float> buffer (channels, 512);
+        double power = 0.0;
+        int done = 0;
+        for (int b = 0; b < 300; ++b)
+        {
+            buffer.clear();
+            for (int ch = 0; ch < inputs; ++ch)
+                for (int i = 0; i < 512; ++i)
+                    buffer.setSample (ch, i, 0.25f * std::sin (6.283185307f * 330.0f * (float) (b * 512 + i) / 48000.0f));
+            juce::MidiBuffer midi;
+            rig.silt.processBlock (buffer, midi);
+            if (b >= 150)
+            {
+                power += buffer.getRMSLevel (0, 0, 512) * buffer.getRMSLevel (0, 0, 512);
+                ++done;
+            }
+        }
+        return std::sqrt (power / done);
+    };
+
+    for (const float mode : { 1.0f, 2.0f })   // LIVE, FEED
+    {
+        INFO ("mode " << mode);
+        CHECK (levelOut (mode, 0.0f, false) > 0.1);     // all dry: heard
+        CHECK (levelOut (mode, 0.0f, true) < 1.0e-4);   // and the filter takes it
+        CHECK (levelOut (mode, 50.0f, true) < 1.0e-4);
+    }
 }

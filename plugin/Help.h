@@ -62,7 +62,7 @@ inline juce::String helpFor (const juce::String& id)
         { "liveRun", "NO NOTES: what plays with no keys held" },
         { "root", "ROOT: the note the sample plays as recorded" },
         { "gain", "OUTPUT: Silt's overall level" },
-        { "mix", "MIX: dry input against Silt" },
+        { "mix", "MIX: dry against grains, both through the chain" },
         { "inputGain", "INPUT: how loud the track goes into the grains" },
         // RESONATOR
         { "resTune", "TUNE: the lowest band's note" },
@@ -164,7 +164,7 @@ inline juce::String helpFor (const juce::String& id)
         { "!drag", "DRAG: into your DAW as an audio clip" },
         { "!gain", "GAIN: the sample's level (right-click: tools)" },
         { "!tab", "PAGES: 8 controls each; right-click to reset" },
-        { "!chip", "MOD: click to arm, drag onto a knob" },
+        { "!chip", "MOD: click to arm, drag onto a knob, double-click for its page" },
         { "!grip", "GRIP: drag to share space; double-click resets" },
         { "!preset", "PRESETS: click the name to browse; SAVE yours" },
         { "!chain", "CHAIN: drag to reorder; click to open; ON cuts it" },

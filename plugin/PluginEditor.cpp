@@ -259,6 +259,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         showPage (layout::mod);
     };
     modActions.showRoutes = [this] (int m) { showRoutes (m); };
+    modActions.openPage = [this] (int m, bool wasShown) { openModPage (m, wasShown); };
     modActions.pageOf = [this] (int target)
     {
         const auto id = silt.targetParameter (target).getParameterID();
@@ -578,8 +579,8 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     setWantsKeyboardFocus (true);
     const int w = silt.editorWidth.load(), h = silt.editorHeight.load();   // before the limits resize us
     setResizable (true, true);
-    setResizeLimits (1000, 720, 1800, 1200);
-    setSize (w > 0 ? juce::jlimit (1000, 1800, w) : defaultWidth, h > 0 ? juce::jlimit (720, 1200, h) : defaultHeight);
+    setResizeLimits (1000, 780, 1800, 1200);
+    setSize (w > 0 ? juce::jlimit (1000, 1800, w) : defaultWidth, h > 0 ? juce::jlimit (780, 1200, h) : defaultHeight);
 
     const int startPage = juce::jlimit (0, (int) pageTabs.size() - 1, silt.currentPage.load());
     pageTabs[(size_t) startPage].setToggleState (true, juce::dontSendNotification);
@@ -968,7 +969,7 @@ void SiltEditor::makeGrips()
 {
     const auto start = [this]
     {
-        layoutAtDragStart = { silt.layoutWell.load(), silt.layoutRail.load(), silt.layoutField.load(), silt.layoutInset.load() };
+        layoutAtDragStart = { silt.layoutWell.load(), silt.layoutRail.load(), silt.layoutField.load(), silt.layoutInset.load(), silt.layoutSide.load() };
     };
     const auto relayout = [this] { resized(); repaint(); };
 
@@ -983,8 +984,20 @@ void SiltEditor::makeGrips()
     sideDivider->setTooltip ("Drag to make the right column wider or narrower; double-click to reset");
     sideDivider->onStart = start;
     sideDivider->onDrag = [this] (int pixels) { dragSideColumn (pixels); };
-    sideDivider->onReset = [this] { resetLayout (1); };
+    sideDivider->onReset = [this] { resetLayout (3); };
     addAndMakeVisible (*sideDivider);
+
+    railDivider = std::make_unique<Divider> (true);
+    railDivider->setTooltip ("Drag to share the width between the modulators and the knobs; double-click to reset");
+    railDivider->onStart = start;
+    railDivider->onDrag = [this] (int pixels)
+    {
+        silt.layoutRail.store (juce::jlimit (0.1f, 0.4f, layoutAtDragStart.rail + (float) pixels / (float) juce::jmax (1, contentWidth)));
+        resized();
+        repaint();
+    };
+    railDivider->onReset = [this] { resetLayout (1); };
+    addAndMakeVisible (*railDivider);
 
     insetGrip = std::make_unique<Grip> (Grip::Corner::topLeft, juce::MouseCursor::TopLeftCornerResizeCursor, true);
     insetGrip->setTooltip ("Drag to size the corner picture and the grain field; double-click to reset");
@@ -1013,7 +1026,7 @@ void SiltEditor::dragSideColumn (int pixels)
     // Dragging left widens the column. The limits are the ones resized() enforces, so
     // the share never runs on past what the panel will show.
     const float width = (float) juce::jmax (1, contentWidth);
-    silt.layoutRail.store (juce::jlimit (minSideWidth / width, maxSideShare, layoutAtDragStart.rail - (float) pixels / width));
+    silt.layoutSide.store (juce::jlimit (minSideWidth / width, maxSideShare, layoutAtDragStart.side - (float) pixels / width));
     resized();
     repaint();
 }
@@ -1025,6 +1038,8 @@ void SiltEditor::resetLayout (int grip)
         silt.layoutWell.store (d.well);
     else if (grip == 1)
         silt.layoutRail.store (d.rail);
+    else if (grip == 3)
+        silt.layoutSide.store (d.side);
     else
     {
         silt.layoutField.store (d.field);
@@ -1100,9 +1115,10 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
     else
         steps.push_back ({ "Live input",
                            "Silt FX turns the audio on its track into grains as it plays. The display shows the input's level. "
-                           "On the PLAY page, INPUT sets how loud the track goes into the grains, DELAY how far back they reach, "
-                           "and NO NOTES what plays when no notes arrive. For samples, slices and FEED, use Silt, the instrument.",
-                           [this] { Spots s (lcdArea); s.add (slotBounds (7)); return s; }, layout::play,
+                           "LEVELS is always on screen: INPUT sets how loud the track goes into the grains, and MIX the dry track "
+                           "against them, both going on through the chain. On the PLAY page, DELAY sets how far back the grains "
+                           "reach and NO NOTES what plays when no notes arrive. For samples, slices and FEED, use Silt, the instrument.",
+                           [this] { Spots s (lcdArea); s.add (levelsPanel); return s; }, layout::play,
                            "Turn INPUT up or down while your track plays.",
                            [this, input] { return std::abs (param ("inputGain") - input) > 1.0f; } });
     steps.push_back ({ "Pages",
@@ -1296,6 +1312,19 @@ void SiltEditor::stepUndo (bool redo)
     }
 }
 
+// A modulator's page from anywhere, and from there, back to where you were.
+void SiltEditor::openModPage (int m, bool wasShown)
+{
+    const bool leaving = page == layout::mod && wasShown;
+    if (page != layout::mod)
+        pageBeforeMod = page;
+    selectModulator (m, false);
+    const int target = leaving ? pageBeforeMod : layout::mod;
+    pageTabs[(size_t) target].setToggleState (true, juce::dontSendNotification);
+    silt.currentPage.store (target);
+    showPage (target);
+}
+
 void SiltEditor::selectModulator (int m, bool arm)
 {
     silt.modShown.store (m);
@@ -1482,7 +1511,7 @@ void SiltEditor::updateVisibility()
     for (size_t i = 0; i < controls.size(); ++i)
     {
         const auto& c = *controls[i];
-        const bool show = c.entry->page == page && c.entry->isShown (context);
+        const bool show = (c.entry->alwaysShown || c.entry->page == page) && c.entry->isShown (context);
         if (show && c.entry->dimmed != nullptr)
             c.component().setAlpha (c.entry->dimmed (context) ? 0.35f : 1.0f);
         if (show != shownNow[i] || c.component().isVisible() != show)
@@ -1515,6 +1544,21 @@ juce::Slider* SiltEditor::findKnob (const juce::String& id)
 // A slot's label, knob (with its value box) and the small control under it,
 // kept together and centred in the column: the knob as big as the column's
 // width or the well's height allows, the text and value box their own size.
+SiltEditor::SlotParts SiltEditor::partsOf (const layout::Entry& entry) const
+{
+    if (! entry.alwaysShown)
+        return slotParts (entry.slot);
+    // The levels panel: INPUT, MIX, OUTPUT, the way the signal goes. No row under a knob here.
+    constexpr int labelHeight = 18;
+    const auto inner = levelsPanel.withTrimmedTop (kit::panelHeadHeight).reduced (6, 3);
+    const int place = SiltProcessor::slotsPerPage - 1 - entry.slot, w = inner.getWidth() / 3;
+    auto block = juce::Rectangle<int> (inner.getX() + place * w, inner.getY(), w, inner.getHeight());
+    SlotParts parts;
+    parts.label = block.removeFromTop (labelHeight);
+    parts.control = block;
+    return parts;
+}
+
 SiltEditor::SlotParts SiltEditor::slotParts (int slot) const
 {
     constexpr int labelHeight = 18, valueBox = 20, underRow = 24;
@@ -1557,6 +1601,13 @@ bool SiltEditor::keyPressed (const juce::KeyPress& key)
     if (c >= '1' && c <= '4' && ! key.getModifiers().isAnyModifierKeyDown())
     {
         selectModulator ((int) (c - '1'), true);
+        return true;
+    }
+    // Shift+1 to 4: that modulator's page, the same as double-clicking its chip.
+    if (const int code = key.getKeyCode(); code >= '1' && code <= '4' && key.getModifiers().isShiftDown() && ! key.getModifiers().isCommandDown())
+    {
+        const int m = code - '1';
+        openModPage (m, silt.modShown.load() == m);
         return true;
     }
     // Cmd/Ctrl+Z undoes, with Shift redoes.
@@ -1831,7 +1882,7 @@ void SiltEditor::resized()
     silt.editorWidth.store (getWidth());
     silt.editorHeight.store (getHeight());
     backdrop = {};
-    constexpr int gap = 10, stripHeight = 34, trayHeight = 34, minWell = 170, minScreen = 170;
+    constexpr int gap = 10, stripHeight = 34, trayHeight = 34, minWell = 170;
 
     auto r = getLocalBounds().reduced (24);
     contentWidth = r.getWidth();
@@ -1854,12 +1905,24 @@ void SiltEditor::resized()
         benchSource.setBounds (benchStrip->reservedArea().translated (benchArea.getX(), benchArea.getY()));
     }
 
-    const int sideWidth = juce::jlimit (minSideWidth, juce::jmax (minSideWidth, juce::roundToInt ((float) contentWidth * maxSideShare)), juce::roundToInt ((float) contentWidth * silt.layoutRail.load()));
-    auto side = r.removeFromRight (sideWidth);
-    sideDivider->setBounds (r.removeFromRight (12).withX (side.getX() - 12 + 1).withWidth (10).withY (side.getY()).withHeight (side.getHeight()));
+    // The well runs the full width: the modulators, then the knobs they get dragged onto.
+    constexpr int minScreen = 310;
+    flexibleHeight = r.getHeight() - stripHeight - trayHeight - 3 * gap;
+    const int wellHeight = juce::jlimit (minWell, juce::jmax (minWell, flexibleHeight - minScreen),
+                                         juce::roundToInt ((float) flexibleHeight * silt.layoutWell.load()));
+    wellArea = r.removeFromBottom (wellHeight);
+    r.removeFromBottom (gap);
+    tray = r.removeFromBottom (trayHeight);
+    r.removeFromBottom (gap);
+    strip = r.removeFromBottom (stripHeight);
+    r.removeFromBottom (gap);
 
-    // The side column: the readout, then what feeds the sound, what moves it and the
-    // order it runs in, on every page.
+    // Beside the screen: the readout, then what feeds the sound and the order it runs in.
+    const int sideWidth = juce::jlimit (minSideWidth, juce::jmax (minSideWidth, juce::roundToInt ((float) contentWidth * maxSideShare)), juce::roundToInt ((float) contentWidth * silt.layoutSide.load()));
+    auto side = r.removeFromRight (sideWidth);
+    r.removeFromRight (12);
+    sideDivider->setBounds (side.getX() - 11, side.getY(), 10, side.getHeight());
+
     lcdArea = side.removeFromTop (84);
     side.removeFromTop (gap);
     if constexpr (SiltProcessor::isInstrument)
@@ -1879,33 +1942,18 @@ void SiltEditor::resized()
         inner.removeFromLeft (6);
         monitorButton.setBounds (inner);
     }
-    chainPanel = side.removeFromBottom (kit::panelHeadHeight + 76);
-    chainView->setBounds (chainPanel.withTrimmedTop (kit::panelHeadHeight).reduced (10, 7));
-    side.removeFromBottom (gap);
-    modPanel = side;
+    else
     {
-        auto inner = modPanel.withTrimmedTop (kit::panelHeadHeight).reduced (8, 8);
-        routesButton.setBounds (inner.removeFromBottom (30));
-        inner.removeFromBottom (6);
-        railArea = inner;
-        rail->setBounds (railArea);
+        levelsPanel = side.removeFromTop (kit::panelHeadHeight + 100);
+        side.removeFromTop (gap);
     }
+    chainPanel = side;
+    chainView->setBounds (chainPanel.withTrimmedTop (kit::panelHeadHeight).reduced (10, 7));
 
-    // The main column: the screen, the keys, the pages, and that page's knobs.
-    const int columnsX = r.getX();
-    flexibleHeight = r.getHeight() - stripHeight - trayHeight - 3 * gap;
-    const int wellHeight = juce::jlimit (minWell, juce::jmax (minWell, flexibleHeight - minScreen),
-                                         juce::roundToInt ((float) flexibleHeight * silt.layoutWell.load()));
-    wellArea = r.removeFromBottom (wellHeight);
-    r.removeFromBottom (gap);
-    tray = r.removeFromBottom (trayHeight);
-    r.removeFromBottom (gap);
-    strip = r.removeFromBottom (stripHeight);
-    r.removeFromBottom (gap);
     screen->setSplit (silt.layoutField.load(), silt.layoutInset.load());
     screen->setBounds (r);
     if (presetBrowser != nullptr)
-        presetBrowser->setBounds (r.getUnion (wellArea).withTrimmedRight (-3).withTrimmedBottom (-3));
+        presetBrowser->setBounds (r.withBottom (wellArea.getBottom()).withTrimmedRight (-3).withTrimmedBottom (-3));
     pagePanel = tray.getUnion (wellArea);
 
     // The keys: everyday things on the left, the step back on the right.
@@ -1916,6 +1964,8 @@ void SiltEditor::resized()
         randomButton.setBounds (keys.removeFromLeft (100));
         keys.removeFromLeft (6);
         randomAmountBox->setBounds (keys.removeFromLeft (58).withTrimmedBottom (2));
+        keys.removeFromLeft (6);
+        routesButton.setBounds (keys.removeFromLeft (110));
         redoButton.setBounds (keys.removeFromRight (72));
         keys.removeFromRight (6);
         undoButton.setBounds (keys.removeFromRight (72));
@@ -1937,21 +1987,25 @@ void SiltEditor::resized()
         }
     }
 
-    // The well: the knobs, one per column.
-    controlRow = wellArea.withX (columnsX).withTrimmedTop (2).withTrimmedBottom (2);
-    routeList->setBounds (wellArea.reduced (2, 2));
+    // The well: the modulators, then the knobs, one per column.
+    const int railWidth = juce::jlimit (150, juce::jmax (150, contentWidth * 2 / 5), juce::roundToInt ((float) contentWidth * silt.layoutRail.load()));
+    railArea = wellArea.withWidth (railWidth).reduced (8, 8);
+    rail->setBounds (railArea);
+    railDivider->setBounds (wellArea.getX() + railWidth - 3, wellArea.getY() + 4, 10, wellArea.getHeight() - 8);
+    controlRow = wellArea.withTrimmedLeft (railWidth + 8).withTrimmedTop (2).withTrimmedBottom (2);
+    routeList->setBounds (controlRow.reduced (0, 2));
     if (tour != nullptr && tour->isRunning())   // the first layout comes before the tour exists
         tour->setBounds (getLocalBounds());
 
     // The corner picture's top-left corner sizes the picture and grain field against the
     // rest of the screen; the screen and the side column have the whole gutter beside them.
-    screenDivider->setBounds (screen->getBounds().withY (screen->getBottom() + 3).withHeight (7));
+    screenDivider->setBounds (wellArea.withY (screen->getBottom() + 3).withHeight (7));
     insetGrip->setBounds (juce::Rectangle<int> (16, 16).withPosition (screen->getInsetTopLeft() + screen->getPosition()).translated (-2, -2));
 
     for (auto& c : controls)
     {
         const auto& e = *c->entry;
-        const auto slot = slotParts (e.slot);
+        const auto slot = partsOf (e);
         if (! e.inSlot())
         {
             c->component().setBounds (slot.under.withSizeKeepingCentre (e.width, 18).translated (e.dx, 0));
@@ -2148,8 +2202,9 @@ void SiltEditor::paint (juce::Graphics& g)
         b.fillRect (screen->getBounds().translated (3, 3));
         if constexpr (SiltProcessor::isInstrument)
             kit::drawPanel (b, sourcePanel, s, "01", "SOURCE", "SAMPLE");
-        kit::drawPanel (b, modPanel, s, instrument ? "02" : "01", "MODULATION", "4 GEN");
-        kit::drawPanel (b, chainPanel, s, instrument ? "03" : "02", "CHAIN", "DRAG TO REORDER");
+        if (! instrument)
+            kit::drawPanel (b, levelsPanel, s, "01", "LEVELS", "IN TO OUT");
+        kit::drawPanel (b, chainPanel, s, "02", "CHAIN", "DRAG TO REORDER");
         // The page keys' frame, and the well.
         kit::drawSheet (b, tray, s, 2);
         kit::drawSheet (b, wellArea, s);
@@ -2160,7 +2215,7 @@ void SiltEditor::paint (juce::Graphics& g)
     kit::drawReadout (g, lcdArea, stock(), juce::String (JucePlugin_Name).toUpperCase(), "LIVE", status, {}, status.length() > 26);
 
     g.setColour (ink.withAlpha (0.2f));
-    for (int s = 1; s < slotsPerRow; ++s)
+    for (int s = 0; s < slotsPerRow; ++s)
         g.drawVerticalLine (slotBounds (s).getX(), (float) controlRow.getY() + 8.0f, (float) controlRow.getBottom() - 8.0f);
 
     g.setColour (ink);
@@ -2169,7 +2224,7 @@ void SiltEditor::paint (juce::Graphics& g)
     for (auto& c : controls)
         if (c->entry->inSlot() && c->component().isVisible())
         {
-            const auto labelArea = slotParts (c->entry->slot).label;
+            const auto labelArea = partsOf (*c->entry).label;
             g.drawText (c->entry->label, labelArea, juce::Justification::centred);
             const float labelWidth = juce::GlyphArrangement::getStringWidth (labelFont, c->entry->label);
             g.setColour (ink);

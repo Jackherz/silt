@@ -9,6 +9,7 @@ namespace silt
 namespace
 {
 constexpr double gainSmoothingSeconds = 0.03;
+constexpr double velocitySmoothingSeconds = 0.005;
 constexpr double autoGainSeconds = 0.05;
 constexpr double maxSpraySeconds = 1.0;
 constexpr int minGrainSamples = 64;     // shorter grains are click trains (02 §8)
@@ -33,6 +34,7 @@ void GrainVoice::prepare (double rate) noexcept
 {
     sampleRate = rate;
     gainSmoothing = (float) (1.0 - std::exp (-1.0 / (gainSmoothingSeconds * sampleRate)));
+    velocitySmoothing = (float) (1.0 - std::exp (-1.0 / (velocitySmoothingSeconds * sampleRate)));
     autoGainSmoothing = (float) (1.0 - std::exp (-1.0 / (autoGainSeconds * sampleRate)));
     reset();
 }
@@ -42,6 +44,7 @@ void GrainVoice::reset() noexcept
     for (auto& g : grains)
         g = {};
     activeGrains = 0;
+    grainsInUse = 0;
     envStage = EnvStage::idle;
     envLevel = 0.0f;
     spawning = false;
@@ -133,8 +136,14 @@ void GrainVoice::noteOn (int note, float vel, const SampleBuffer& buffer, const 
     firstGrainPending = true;
     spawning = true;
     envStage = EnvStage::attack;   // from the current level: retriggers don't click
-    autoGain = outputGain = gainEstimate (p, &buffer).estimate;
-    sourcePower = envelopeWeight = sumPower = 0.0f;
+    // Grains still playing keep the gain they sum at, and the velocity glides: either
+    // jumping would step everything they're playing.
+    if (activeGrains == 0)
+    {
+        heardVelocity = vel;
+        autoGain = outputGain = gainEstimate (p, &buffer).estimate;
+        sourcePower = envelopeWeight = sumPower = 0.0f;
+    }
 }
 
 double GrainVoice::pitchRatio (const GrainParams& p, const SampleBuffer& buffer) const noexcept
@@ -401,6 +410,7 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     const float amp = 1.0f - random.next01() * (float) std::clamp (p.randomAmp, 0.0, 1.0);
 
     Grain& g = *free;
+    grainsInUse = std::max (grainsInUse, (int) (free - grains.begin()) + 1);
     g.source = &buffer;
     g.loops = false;
     g.backwardWraps = 0;
@@ -554,8 +564,9 @@ void GrainVoice::render (float* left, float* right, int numSamples,
 
         if (activeGrains > 0)
         {
-            for (auto& g : grains)
+            for (int n = 0; n < grainsInUse; ++n)
             {
+                auto& g = grains[(size_t) n];
                 if (g.remaining <= 0)
                     continue;
 
@@ -582,6 +593,8 @@ void GrainVoice::render (float* left, float* right, int numSamples,
                 if (--g.remaining == 0)
                     --activeGrains;
             }
+            while (grainsInUse > 0 && grains[(size_t) grainsInUse - 1].remaining <= 0)
+                --grainsInUse;
         }
 
         sourcePower += autoGainSmoothing * (grainPower - sourcePower);
@@ -591,7 +604,8 @@ void GrainVoice::render (float* left, float* right, int numSamples,
             autoGain = std::clamp (std::sqrt (sourcePower / envelopeWeight / std::max (sumPower, 1.0e-12f)), lowest, highest);
 
         outputGain += gainSmoothing * (autoGain - outputGain);
-        const float amp = nextEnvelope (p) * velocity * outputGain;
+        heardVelocity += velocitySmoothing * (velocity - heardVelocity);
+        const float amp = nextEnvelope (p) * heardVelocity * outputGain;
         left[i] += accL * amp;
         right[i] += accR * amp;
 
@@ -601,6 +615,7 @@ void GrainVoice::render (float* left, float* right, int numSamples,
             for (auto& g : grains)
                 g.remaining = 0;
             activeGrains = 0;
+            grainsInUse = 0;
         }
     }
 

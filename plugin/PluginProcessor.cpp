@@ -406,12 +406,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                     return (v > 0.04f ? "+" : "") + juce::String (v, 1) + " dB";
                 }));
 
+    // MIX: the dry input against the grains, the two going on through the chain together.
+    layout.add (percent ("mix", "Mix", 100.0f));
     if constexpr (SiltProcessor::isInstrument)
         layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "monitor", 1 }, "Monitor input", false));
     else
         // INPUT: how loud the track goes into the grains (the dry side of MIX stays as it is).
-        layout.add (percent ("mix", "Mix", 100.0f),
-                    withUnit ("inputGain", "Input", Range (-24.0f, 24.0f, 0.1f), 0.0f, formatDb));
+        layout.add (withUnit ("inputGain", "Input", Range (-24.0f, 24.0f, 0.1f), 0.0f, formatDb));
 
     return layout;
 }
@@ -458,7 +459,7 @@ struct SiltProcessor::RawParams
         spaceTime = p ("spaceTime"); spaceSync = p ("spaceSync"); spaceDiv = p ("spaceDiv"); spaceFeedback = p ("spaceFeedback");
         spaceMode = p ("spaceMode"); spaceDelay = p ("spaceDelay"); spaceSize = p ("spaceSize"); spaceDecay = p ("spaceDecay");
         spaceTone = p ("spaceTone"); spaceShimmer = p ("spaceShimmer"); spaceReverb = p ("spaceReverb"); spaceFreeze = p ("spaceFreeze"); spaceDuck = p ("spaceDuck");
-        monitor = p ("monitor"); mix = p ("mix"); inputGain = p ("inputGain");   // monitor, or mix and inputGain: per build
+        monitor = p ("monitor"); mix = p ("mix"); inputGain = p ("inputGain");   // monitor, or inputGain: per build
         chainOrder = p ("chainOrder");
         for (int m = 0; m < SiltProcessor::numModules; ++m)
             moduleOn[(size_t) m] = p (SiltProcessor::moduleOnId (m).toRawUTF8());
@@ -520,7 +521,9 @@ SiltProcessor::SiltProcessor()
             const bool macro = id.length() > 1 && id[0] == 'm' && juce::CharacterFunctions::isDigit (id[1]) && id.endsWith ("Macro");
             const bool switchLike = dynamic_cast<juce::AudioParameterChoice*> (ranged) != nullptr
                                  || dynamic_cast<juce::AudioParameterBool*> (ranged) != nullptr;
-            if (switchLike || macro || id == "patternSeed" || id == "sampleGain")
+            // A division is a stepped choice, drawn as a knob: it can be modulated like one.
+            const bool division = id == "sizeDiv" || id == "rateDiv" || id == "delayDiv" || id == "spaceDiv";
+            if ((switchLike && ! division) || macro || id == "patternSeed" || id == "sampleGain")
                 continue;
             if (targets.size() >= (size_t) maxTargets)
             {
@@ -1080,7 +1083,6 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
 
         const float gain = juce::Decibels::decibelsToGain (raw->gain->load (std::memory_order_relaxed), -48.0f);
         const bool monitoring = isInstrument && raw->monitor->load (std::memory_order_relaxed) > 0.5f;
-        const float mix = isInstrument ? 1.0f : raw->mix->load (std::memory_order_relaxed) * 0.01f;
         auto grainParams = readParams();
         const auto resonatorParams = readResonatorParams (grainParams);
         const auto filterParams = readFilterParams();
@@ -1118,6 +1120,28 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
             sampleGainNow = target;
         }
 
+        // MIX: the dry input joins the grains here, so every module works on both. The
+        // instrument only has a dry side in LIVE and FEED.
+        {
+            const float target = grainParams.live ? raw->mix->load (std::memory_order_relaxed) * 0.01f : 1.0f;
+            if (! juce::exactlyEqual (target, mixNow) || ! juce::exactlyEqual (target, 1.0f))
+            {
+                const int channels = capture.getNumChannels();
+                const float step = (target - mixNow) / (float) len;
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    const float* in = channels > 0 ? capture.getReadPointer (juce::jmin (ch, channels - 1), start) : nullptr;
+                    float* out = wet.getWritePointer (ch);
+                    for (int i = 0; i < len; ++i)
+                    {
+                        const float g = mixNow + step * (float) (i + 1);
+                        out[i] = out[i] * g + (in != nullptr ? in[i] * (1.0f - g) : 0.0f);
+                    }
+                }
+            }
+            mixNow = target;
+        }
+
         // The modules, in the CHAIN order. A new order fades the sound down,
         // switches and fades back up (about 5 ms each way), so it doesn't click.
         const int wantedChain = juce::jlimit (0, numChainOrders - 1, (int) raw->chainOrder->load (std::memory_order_relaxed));
@@ -1140,7 +1164,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
             auto& level = moduleLevel[(size_t) module];
             const float wantLevel = raw->moduleOn[(size_t) module]->load (std::memory_order_relaxed) > 0.5f ? 1.0f : 0.0f;
             const float levelFrom = level;
-            level = wantLevel > level ? juce::jmin (1.0f, level + fadeStep) : juce::jmax (0.0f, level - fadeStep);
+            level = wantLevel > level ? juce::jmin (wantLevel, level + fadeStep) : juce::jmax (wantLevel, level - fadeStep);
             const bool off = levelFrom <= 0.0f && level <= 0.0f;
             const bool fading = ! off && (levelFrom < 1.0f || level < 1.0f);
             std::array<float, modulationInterval> dryL {}, dryR {};
@@ -1223,12 +1247,11 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         {
             const float inL = inCh > 0 ? capture.getSample (0, start + i) : 0.0f;
             const float inR = inCh > 1 ? capture.getSample (1, start + i) : inL;
-            const float dryL = isInstrument ? (monitoring ? inL : 0.0f) : inL * (1.0f - mix);
-            const float dryR = isInstrument ? (monitoring ? inR : 0.0f) : inR * (1.0f - mix);
+            const float monitorL = monitoring ? inL : 0.0f, monitorR = monitoring ? inR : 0.0f;
 
-            output.setSample (0, start + i, safetyClip ((dryL + wet.getSample (0, i) * mix) * gain));
+            output.setSample (0, start + i, safetyClip ((monitorL + wet.getSample (0, i)) * gain));
             if (output.getNumChannels() > 1)
-                output.setSample (1, start + i, safetyClip ((dryR + wet.getSample (1, i) * mix) * gain));
+                output.setSample (1, start + i, safetyClip ((monitorR + wet.getSample (1, i)) * gain));
         }
     }
 
@@ -1458,7 +1481,8 @@ std::vector<SiltProcessor::Route> SiltProcessor::allRoutes() const
 
 bool SiltProcessor::isSteppedTarget (int target) const
 {
-    return dynamic_cast<juce::AudioParameterInt*> (targets[(size_t) target].parameter) != nullptr;
+    return dynamic_cast<juce::AudioParameterInt*> (targets[(size_t) target].parameter) != nullptr
+        || dynamic_cast<juce::AudioParameterChoice*> (targets[(size_t) target].parameter) != nullptr;   // the divisions
 }
 
 bool SiltProcessor::isModulatorEnabled (int modulator) const noexcept
@@ -1607,8 +1631,8 @@ std::vector<const silt::layout::Entry*> SiltProcessor::randomisable (int page) c
     std::vector<const silt::layout::Entry*> out;
     for (const auto& e : silt::layout::entries (isInstrument))
         if (e.page == page && (e.kind == Kind::knob || e.kind == Kind::menu || e.kind == Kind::button)
-            && ! e.id.startsWith ("!") && e.id != "inputGain" && e.isShown (context) && params.getParameter (e.id) != nullptr)
-            out.push_back (&e);   // not INPUT: the track's level, not part of a sound
+            && ! e.id.startsWith ("!") && e.id != "inputGain" && e.id != "mix" && ! e.alwaysShown && e.isShown (context) && params.getParameter (e.id) != nullptr)
+            out.push_back (&e);   // not INPUT or MIX: how the track comes in, not part of a grain's sound
     return out;
 }
 
@@ -2928,7 +2952,7 @@ void SiltProcessor::getStateInformation (juce::MemoryBlock& destData)
         state.setProperty ("editorWidth", editorWidth.load(), nullptr);
         state.setProperty ("editorHeight", editorHeight.load(), nullptr);
         state.setProperty ("layout", juce::String (layoutWell.load()) + "," + juce::String (layoutRail.load()) + ","
-                                         + juce::String (layoutField.load()) + "," + juce::String (layoutInset.load()), nullptr);
+                                         + juce::String (layoutField.load()) + "," + juce::String (layoutInset.load()) + "," + juce::String (layoutSide.load()), nullptr);
     }
 
     juce::MemoryBlock flac;
@@ -3030,10 +3054,12 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
         randomExcluded = juce::StringArray::fromTokens (tree.getProperty ("randomExcluded").toString(), ",", "");
     editorWidth.store ((int) tree.getProperty ("editorWidth", 0));
     editorHeight.store ((int) tree.getProperty ("editorHeight", 0));
-    if (const auto layout = juce::StringArray::fromTokens (tree.getProperty ("layout").toString(), ",", ""); layout.size() == 4)
+    if (const auto layout = juce::StringArray::fromTokens (tree.getProperty ("layout").toString(), ",", ""); layout.size() >= 4)
     {
         layoutWell.store (juce::jlimit (0.1f, 0.9f, layout[0].getFloatValue()));
-        layoutRail.store (juce::jlimit (0.1f, 0.5f, layout[1].getFloatValue()));
+        layoutRail.store (juce::jlimit (0.1f, 0.4f, layout[1].getFloatValue()));
+        if (layout.size() > 4)
+            layoutSide.store (juce::jlimit (0.1f, 0.5f, layout[4].getFloatValue()));
         layoutField.store (juce::jlimit (0.15f, 0.85f, layout[2].getFloatValue()));
         layoutInset.store (juce::jlimit (0.15f, 0.7f, layout[3].getFloatValue()));
     }

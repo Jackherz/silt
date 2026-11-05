@@ -71,6 +71,7 @@ public:
     void dragScreenEdge (int pixels);                              // the same, between the screen and the knobs
     void sendMoment();                                             // the Bench's SEND: bars of the output, or the sample
     void updateBench();                                            // from the timer; also for tests
+    void openModPage (int modulator, bool wasShown);               // a chip's double-click, and Shift+1 to 4
     void setBenchSource (int barsOrZero);                          // what SEND sends; also for tests
     void takeMoment();                                             // the Bench's TAKE: a sent moment becomes the sample
 
@@ -247,6 +248,7 @@ private:
     std::unique_ptr<silt::ui::Tour> tour;
     juce::TextButton tourButton { "?" };
     int pageBeforeTour = 0;
+    int pageBeforeMod = 0;       // where a chip's double-click goes back to
     void restyle();
     void applyGrainLook();
 
@@ -292,14 +294,15 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> monitorAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
 
-    juce::Rectangle<int> header, lcdArea, strip, pagePanel, controlRow, railArea, tray, wellArea, sourcePanel, modPanel, chainPanel, benchArea;
+    juce::Rectangle<int> header, lcdArea, strip, pagePanel, controlRow, railArea, tray, wellArea, sourcePanel, levelsPanel, chainPanel, benchArea;
     int flexibleHeight = 0, contentWidth = 0;          // what the tiled sections share
     juce::Image backdrop;                              // the panel's still parts, drawn once per size and theme
     std::unique_ptr<silt::ui::Grip> insetGrip;
-    std::unique_ptr<silt::ui::Divider> sideDivider, screenDivider;
+    std::unique_ptr<silt::ui::Divider> sideDivider, screenDivider, railDivider;
     SiltProcessor::Layout layoutAtDragStart;
     struct SlotParts { juce::Rectangle<int> label, control, under; };
     SlotParts slotParts (int slot) const;
+    SlotParts partsOf (const silt::layout::Entry&) const;
     void makeGrips();
     static void drawSunk (juce::Graphics&, juce::Rectangle<float> area, juce::Colour face);
     void resetLayout (int grip);   // 0 the screen's, 1 the side column's, 2 the corner picture's

@@ -222,7 +222,21 @@ void ModChip::mouseUp (const juce::MouseEvent& e)
 {
     if (dragging || e.mods.isPopupMenu())
         return;
+    armedBeforeClick = silt.armedMod.load();
+    shownBeforeClick = silt.modShown.load();
     actions.select (m, ! e.mods.isShiftDown());
+}
+
+// A double-click opens this modulator's MOD page, and from there goes back. It only looks:
+// the arming its first click did is undone, and the press's release does nothing more.
+void ModChip::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu() || (clearBox().contains (e.getPosition()) && silt.routeCount (m) > 0))
+        return;
+    silt.armedMod.store (armedBeforeClick);
+    dragging = true;
+    if (actions.openPage)
+        actions.openPage (m, shownBeforeClick == m);
 }
 
 void ModChip::setModulatorOn (bool on)

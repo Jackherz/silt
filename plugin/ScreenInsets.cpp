@@ -195,30 +195,18 @@ juce::Rectangle<float> frame (juce::Graphics& g, juce::Rectangle<float> area, co
 
 // --- FILTER ------------------------------------------------------------------------------
 
-// The SVF's analogue response (what the TPT design follows) with the same
-// morph, resonance trims and 12/24 dB structure as silt::Filter, mixed with the
-// dry signal by MIX.
+// The ladder's response at low level (loud signals press the peak down), from the same
+// feedback and tap mix as silt::Filter, mixed with the dry signal by MIX.
 double filterMagnitude (double hz, double cutoff, double resonance, double morph, bool steep, double mix)
 {
-    const Complex s (0.0, hz / cutoff);
-    const double lowMix = std::max (0.0, 1.0 - morph), highMix = std::max (0.0, morph - 1.0), bandMix = 1.0 - lowMix - highMix;
-    const auto stage = [&] (double q, bool normaliseBand)
+    const double slope = steep ? 1.0 : 0.0;
+    const Complex pole = 1.0 / (1.0 + Complex (0.0, hz / cutoff));
+    const Complex fourPoles = pole * pole * pole * pole;
+    Complex tap = 1.0 / (1.0 + silt::Filter::feedbackFor (resonance, slope) * fourPoles), h = 0.0;
+    for (const double amount : silt::Filter::tapMixFor (morph, slope, resonance, cutoff))
     {
-        const double k = 1.0 / q;
-        const Complex d = s * s + k * s + 1.0;
-        return (lowMix + bandMix * s * (normaliseBand ? k : 1.0) + highMix * s * s) / d;
-    };
-    const double butterworth = 0.7071067811865476, second = 1.3065629648763766, first = 0.5411961001461970;
-    Complex h;
-    if (steep)
-    {
-        const double q = second * std::pow (30.0 / second, resonance);
-        h = stage (first, true) * stage (q, false) / std::sqrt (q / second);
-    }
-    else
-    {
-        const double q = butterworth * std::pow (30.0 / butterworth, resonance);
-        h = stage (q, false) / std::sqrt (q / butterworth);
+        h += amount * tap;
+        tap *= pole;
     }
     return std::abs ((1.0 - mix) + mix * h);
 }

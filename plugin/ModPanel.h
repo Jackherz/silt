@@ -17,6 +17,7 @@ struct ModActions
     std::function<void (int modulator)> edit;               // select and open the MOD page
     std::function<void (int modulator)> showRoutes;         // −1: all
     std::function<juce::String (int target)> pageOf;        // "FILTER" for filterCutoff
+    std::function<void (int modulator, bool wasShown)> openPage;   // a double-click: its MOD page, or back from it
 };
 
 // One modulator: its colour and number, type, a live meter, how many routes it
@@ -35,6 +36,7 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
     void update();   // from the editor's timer: records the trace, repaints if anything shown changed
     const std::array<float, 64>& getHistory() const noexcept { return history; }
@@ -50,6 +52,7 @@ private:
     ModActions& actions;
     const int m;
     bool dragging = false, pendingClear = false;
+    int armedBeforeClick = -1, shownBeforeClick = -1;   // what a double-click's first click changed
     std::array<float, 64> history {};   // the last ~2 s at the editor's 30 Hz
     int written = 0;
     float shownValue = 0.0f;

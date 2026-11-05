@@ -283,9 +283,9 @@ public:
     // takes, how much of the width the mod rail takes, and within the screen
     // how much of its height the grain field (and the corner picture) takes
     // and how much of its width the corner picture takes.
-    struct Layout { float well = 0.36f, rail = 0.27f, field = 0.36f, inset = 0.33f; };
+    struct Layout { float well = 0.36f, rail = 0.16f, field = 0.36f, inset = 0.33f, side = 0.27f; };
     static Layout defaultLayout() { return {}; }
-    std::atomic<float> layoutWell { 0.36f }, layoutRail { 0.27f }, layoutField { 0.36f }, layoutInset { 0.33f };   // as Layout's
+    std::atomic<float> layoutWell { 0.36f }, layoutRail { 0.16f }, layoutField { 0.36f }, layoutInset { 0.33f }, layoutSide { 0.27f };   // as Layout's
 
     // Read by the editor on the message thread.
     silt::LevelMeter captureMeter;
@@ -387,6 +387,7 @@ private:
     bool lastSelfFeed = false;   // audio thread: FEED was on last chunk   // a note began since SPACE last ran: restart the trace
     void writeScope (std::array<std::atomic<float>, scopeSize>&, const float* l, const float* r, int count) noexcept;
     float sampleGainNow = 1.0f;   // audio thread: the gain ramped to
+    float mixNow = 1.0f;          // audio thread: MIX, ramped across a chunk
     float inputGainNow = 1.0f;    // audio thread: Silt FX's INPUT, ramped to
     std::array<std::array<float, modulationInterval>, 2> inputScaled {};   // audio thread: the input through INPUT
 

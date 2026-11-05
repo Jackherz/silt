@@ -172,7 +172,7 @@ TEST_CASE ("The editor's size is kept with the set")
     juce::MemoryBlock state;
     {
         EditorRig rig;
-        rig.editor->setSize (1200, 760);
+        rig.editor->setSize (1200, 800);
         rig.silt.getStateInformation (state);
     }
     juce::ScopedJuceInitialiser_GUI juce;
@@ -180,7 +180,7 @@ TEST_CASE ("The editor's size is kept with the set")
     restored.setStateInformation (state.getData(), (int) state.getSize());
     std::unique_ptr<juce::AudioProcessorEditor> editor (restored.createEditor());
     CHECK (editor->getWidth() == 1200);
-    CHECK (editor->getHeight() == 760);
+    CHECK (editor->getHeight() == 800);
 }
 
 // --- Presets ------------------------------------------------------------------------------
@@ -395,7 +395,7 @@ TEST_CASE ("The strip's controls fit without overlapping at the smallest size")
 TEST_CASE ("The screen's grip trades height with the knobs, is kept with the session, and double-click resets it")
 {
     EditorRig rig;
-    rig.editor->setSize (1800, 720);   // wide and short: the well's height, not the column's width, limits the knobs
+    rig.editor->setSize (1800, 900);   // wide and short: the well's height, not the column's width, limits the knobs
     auto* knob = rig.editor->findKnob ("pitch");
     REQUIRE (knob != nullptr);
     const int knobBefore = knob->getHeight();
@@ -912,8 +912,9 @@ TEST_CASE ("The right column resizes from the gutter: dragging left widens it, a
     {
         if (auto* c = dynamic_cast<silt::ui::ChainView*> (child))
             chain = c;
-        if (auto* d = dynamic_cast<silt::ui::Divider*> (child))
-            divider = d;
+        if (auto* d = dynamic_cast<silt::ui::Divider*> (child); d != nullptr && d->getMouseCursor() == juce::MouseCursor::LeftRightResizeCursor)
+            if (divider == nullptr || d->getX() > divider->getX())
+                divider = d;   // the right column's, not the modulators'
     }
     REQUIRE (chain != nullptr);
     REQUIRE (divider != nullptr);
@@ -995,4 +996,47 @@ TEST_CASE ("Double-clicking a modulation ring takes that modulator off the knob"
     knob->mouseDoubleClick (juce::MouseEvent (source, onSecondRing, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, knob, knob, now, onSecondRing, now, 2, false));
     CHECK (knob->amountOf (1) == 0.0f);
     CHECK (knob->amountOf (0) == 0.5f);
+}
+
+TEST_CASE ("Synced RATE and SIZE knobs take modulation like any other knob")
+{
+    EditorRig rig;
+    for (const auto* id : { "rateDiv", "sizeDiv" })
+    {
+        auto* knob = dynamic_cast<SiltEditor::FineSlider*> (rig.editor->findKnob (id));
+        REQUIRE (knob != nullptr);
+        CHECK (knob->target == rig.silt.modulationTarget (id));
+        CHECK (knob->target >= 0);
+    }
+}
+
+TEST_CASE ("Double-clicking a modulator's chip opens its page without arming it, and again goes back")
+{
+    EditorRig rig;
+    rig.editor->showPage (silt::layout::filter);
+    rig.editor->openModPage (2, false);
+    CHECK (rig.silt.currentPage.load() == silt::layout::mod);
+    CHECK (rig.silt.modShown.load() == 2);
+    CHECK (rig.silt.armedMod.load() < 0);
+    rig.editor->openModPage (2, true);
+    CHECK (rig.silt.currentPage.load() == silt::layout::filter);
+    // A different modulator from its page stays on the page, showing that one.
+    rig.editor->openModPage (1, false);
+    rig.editor->openModPage (3, false);
+    CHECK (rig.silt.currentPage.load() == silt::layout::mod);
+    CHECK (rig.silt.modShown.load() == 3);
+}
+
+TEST_CASE ("The modulators sit beside the knobs, and the knobs clear them")
+{
+    EditorRig rig;
+    auto* knob = rig.editor->findKnob ("pitch");
+    REQUIRE (knob != nullptr);
+    juce::Component* chips = nullptr;
+    for (auto* child : rig.editor->getChildren())
+        if (dynamic_cast<silt::ui::ModRail*> (child) != nullptr)
+            chips = child;
+    REQUIRE (chips != nullptr);
+    CHECK (chips->getRight() < knob->getX());
+    CHECK (std::abs (chips->getBounds().getCentreY() - knob->getBounds().getCentreY()) < 40);
 }

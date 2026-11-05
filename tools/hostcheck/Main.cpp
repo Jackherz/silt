@@ -122,6 +122,33 @@ float playInput (juce::AudioPluginInstance& plugin, double seconds)
     }
     return peak;
 }
+
+// Loud noise on the track: the output's level in dB against the input's, over the last half.
+double noiseThrough (juce::AudioPluginInstance& plugin, double seconds)
+{
+    const int channels = juce::jmax (plugin.getTotalNumInputChannels(), plugin.getTotalNumOutputChannels());
+    juce::AudioBuffer<float> buffer (channels, blockSize);
+    juce::Random random (7);
+    double in = 0.0, out = 0.0;
+    const int total = (int) (seconds * rate);
+    for (int done = 0; done < total; done += blockSize)
+    {
+        for (int i = 0; i < blockSize; ++i)
+        {
+            const float x = 0.7f * (random.nextFloat() * 2.0f - 1.0f);
+            for (int ch = 0; ch < channels; ++ch)
+                buffer.setSample (ch, i, x);
+            if (done >= total / 2)
+                in += (double) x * x;
+        }
+        juce::MidiBuffer midi;
+        plugin.processBlock (buffer, midi);
+        if (done >= total / 2)
+            for (int i = 0; i < blockSize; ++i)
+                out += (double) buffer.getSample (0, i) * buffer.getSample (0, i);
+    }
+    return 10.0 * std::log10 ((out + 1.0e-20) / in);
+}
 } // namespace
 
 int main (int argc, char* argv[])
@@ -224,6 +251,40 @@ int main (int argc, char* argv[])
         const float quiet = playInput (*plugin, 1.0);
         check (full > 0.05f, "grains the track's input (peak " + juce::String (full, 3) + ")");
         check (quiet < full * 0.25f, "INPUT turns them down (peak " + juce::String (quiet, 3) + " at -24 dB)");
+    }
+
+    if (input != nullptr)
+    {
+        input->setValueNotifyingHost (0.5f);
+        const auto set = [&plugin] (const char* name, float value)
+        {
+            for (auto* parameter : plugin->getParameters())
+                if (parameter->getName (32) == name)
+                    parameter->setValueNotifyingHost (value);
+        };
+        const double open = noiseThrough (*plugin, 3.0);
+        set ("Filter", 1.0f);          // 24 dB
+        set ("Filter cutoff", 0.0f);   // 20 Hz
+        const double closed = noiseThrough (*plugin, 3.0);
+        check (open > -6.0, "noise comes through with the filter off (" + juce::String (open, 1) + " dB)");
+        check (closed < -80.0, "a low-pass all the way down silences the track (" + juce::String (closed, 1) + " dB)");
+        for (auto* parameter : plugin->getParameters())
+        {
+            if (parameter->getName (32) == "Size") parameter->setValueNotifyingHost (parameter->getValueForText ("1400"));
+            if (parameter->getName (32) == "Rate") parameter->setValueNotifyingHost (parameter->getValueForText ("100"));
+        }
+        const double dense = noiseThrough (*plugin, 6.0);
+        check (dense < -80.0, "and with 140 grains playing (" + juce::String (dense, 1) + " dB)");
+
+        // MIX: the dry track goes through the chain with the grains, so the filter takes both.
+        set ("Mix", 0.35f);
+        const double dryToo = noiseThrough (*plugin, 3.0);
+        check (dryToo < -80.0, "the filter takes the dry side of MIX too (" + juce::String (dryToo, 1) + " dB)");
+        set ("Filter", 0.0f);
+        set ("Mix", 0.0f);
+        const double dryOnly = noiseThrough (*plugin, 1.0);
+        check (std::abs (dryOnly) < 0.1, "MIX at 0 with nothing in the chain is the track itself (" + juce::String (dryOnly, 2) + " dB)");
+        set ("Mix", 1.0f);
     }
 
     plugin->releaseResources();

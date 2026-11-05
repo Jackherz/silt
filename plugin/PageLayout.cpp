@@ -1,5 +1,7 @@
 #include "PageLayout.h"
 
+#include <tuple>
+
 namespace silt::layout
 {
 
@@ -93,9 +95,13 @@ std::vector<Entry> build (bool instrument)
         button (play, 2, "freeze", "FREEZE", "FREEZE");
         menu (play, 3, "liveRun", "NO NOTES", { "OFF", "ALWAYS", "FOLLOW" });
         knob (play, 4, "root", "ROOT");
-        knob (play, 5, "gain", "OUTPUT");
-        knob (play, 6, "mix", "MIX");
-        knob (play, 7, "inputGain", "INPUT");
+        // How the track comes in and goes out: on screen whatever the page, as a MIX left
+        // down somewhere out of sight sounds like every effect has stopped working.
+        for (const auto& [slot, id, label] : { std::tuple { 5, "gain", "OUTPUT" }, std::tuple { 6, "mix", "MIX" }, std::tuple { 7, "inputGain", "INPUT" } })
+        {
+            knob (play, slot, id, label);
+            e.back().alwaysShown = true;
+        }
     }
     else
     {
@@ -117,6 +123,7 @@ std::vector<Entry> build (bool instrument)
         under (Kind::underButton, play, 1, "delaySync", 60, {}, "SYNC", liveMode);
         knob (play, 5, "root", "ROOT");
         knob (play, 6, "gain", "OUTPUT");
+        knob (play, 7, "mix", "MIX", liveMode);
     }
 
     // RESONATOR: a bank of ringing bands on the grains. SCALE notes come from the

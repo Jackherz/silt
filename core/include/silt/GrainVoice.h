@@ -127,7 +127,7 @@ struct GrainView
 class GrainVoice
 {
 public:
-    static constexpr int maxGrains = 64;
+    static constexpr int maxGrains = 256;   // more than the longest SIZE at the fastest RATE asks for
 
     void prepare (double sampleRate) noexcept;
     void setSeed (std::uint64_t seed) noexcept { random.setSeed (seed); }
@@ -219,10 +219,11 @@ private:
     Random random;
     std::array<Grain, maxGrains> grains {};
     int activeGrains = 0;
+    int grainsInUse = 0;   // one past the last playing grain: new ones take the lowest free place
 
     int currentNote = -1;
     double noteRatio = 1.0;
-    float velocity = 1.0f;
+    float velocity = 1.0f, heardVelocity = 1.0f, velocitySmoothing = 0.0f;
     double playhead = 0.0;          // buffer frames
     float playheadPosition = 0.0f;
     double samplesToNextGrain = 0.0;

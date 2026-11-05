@@ -398,13 +398,27 @@ void run (Filter& f, Stereo& s, const FilterParams& p, int block = 512)
 }
 
 // Gain in dB of a sine through the filter, measured after it settles.
-double gainAt (double hz, const FilterParams& p)
+double gainAt (double hz, const FilterParams& p, float level = 0.1f)
 {
     Filter f;
     f.prepare (rate);
-    auto s = sine ((int) rate / 2, hz, 0.1f);
+    auto s = sine ((int) rate / 2, hz, level);
     run (f, s, p);
-    return db (rms (s.left, (int) rate / 4, (int) rate / 2)) - db (0.1 / std::sqrt (2.0));
+    return db (rms (s.left, (int) rate / 4, (int) rate / 2)) - db (level / std::sqrt (2.0));
+}
+
+// The level of one frequency in a settled stretch, in dB.
+double toneLevel (const std::vector<float>& x, double hz, int from, int to)
+{
+    double re = 0.0, im = 0.0;
+    for (int i = from; i < to; ++i)
+    {
+        const double hann = 0.5 - 0.5 * std::cos (2.0 * 3.14159265358979 * (i - from) / (to - from));
+        const double phase = 2.0 * 3.14159265358979 * hz * i / rate;
+        re += hann * x[(size_t) i] * std::cos (phase);
+        im += hann * x[(size_t) i] * std::sin (phase);
+    }
+    return db (4.0 * std::sqrt (re * re + im * im) / (to - from));
 }
 
 FilterParams lowPass (FilterSlope slope)
@@ -443,8 +457,8 @@ TEST_CASE ("Filter: morph moves from low pass through band pass to high pass")
 {
     auto p = lowPass (FilterSlope::db12);
     p.morph = 1.0f;   // band pass
-    CHECK (gainAt (1000.0, p) - gainAt (100.0, p) > 15.0);
-    CHECK (gainAt (1000.0, p) - gainAt (10000.0, p) > 15.0);
+    CHECK (gainAt (1000.0, p) - gainAt (100.0, p) > 12.0);
+    CHECK (gainAt (1000.0, p) - gainAt (10000.0, p) > 12.0);
     p.morph = 2.0f;   // high pass
     CHECK (gainAt (100.0, p) < -30.0);
     CHECK (std::abs (gainAt (10000.0, p)) < 0.5);
@@ -455,12 +469,87 @@ TEST_CASE ("Filter: resonance raises a peak at the cutoff")
     for (const auto slope : { FilterSlope::db12, FilterSlope::db24 })
     {
         auto p = lowPass (slope);
-        const double flat = gainAt (1000.0, p) - gainAt (100.0, p);
+        constexpr float quiet = 0.003f;
+        const double flat = gainAt (1000.0, p, quiet) - gainAt (100.0, p, quiet);
         p.resonance = 1.0f;
-        const double peaked = gainAt (1000.0, p) - gainAt (100.0, p);
+        const double peaked = gainAt (1000.0, p, quiet) - gainAt (100.0, p, quiet);
         INFO ("peak over the passband: " << flat << " dB flat, " << peaked << " dB resonant");
         CHECK (peaked > flat + 20.0);
     }
+}
+
+TEST_CASE ("Filter: a loud signal presses the resonance down instead of spiking through it")
+{
+    for (const auto slope : { FilterSlope::db12, FilterSlope::db24 })
+    {
+        auto p = lowPass (slope);
+        p.resonance = 1.0f;
+        const double quiet = gainAt (1000.0, p, 0.003f), loud = gainAt (1000.0, p, 0.5f);
+        INFO ("gain at the peak: " << quiet << " dB quiet, " << loud << " dB loud");
+        CHECK (loud < quiet - 10.0);
+        CHECK (loud < 8.0);
+    }
+}
+
+TEST_CASE ("Filter: DRIVE warms with low harmonics and doesn't fold back")
+{
+    auto p = lowPass (FilterSlope::db24);
+    p.cutoffHz = 20000.0f;
+    p.drive = 1.0f;
+    const auto through = [&p] (double hz)
+    {
+        Filter f;
+        f.prepare (rate);
+        auto s = sine ((int) rate, hz, 0.5f);
+        run (f, s, p);
+        return s;
+    };
+    const int from = (int) rate / 2, to = (int) rate;
+
+    const auto low = through (220.0);
+    const double fundamental = toneLevel (low.left, 220.0, from, to);
+    CHECK (toneLevel (low.left, 440.0, from, to) > fundamental - 50.0);   // the even harmonic is there
+    CHECK (toneLevel (low.left, 660.0, from, to) > fundamental - 40.0);
+
+    // A loud 7 kHz at full DRIVE is nearly square. 35 kHz would land on 13 kHz at the plain
+    // sample rate; what's left there is the very high harmonics, the floor of running at 2x.
+    const auto high = through (7000.0);
+    const double foldedOver = toneLevel (high.left, rate - 35000.0, from, to) - toneLevel (high.left, 7000.0, from, to);
+    INFO ("folded harmonic " << foldedOver << " dB under the tone");
+    CHECK (foldedOver < -50.0);
+}
+
+TEST_CASE ("Filter: a low pass all the way down is closed, and it opens smoothly")
+{
+    for (const auto slope : { FilterSlope::db12, FilterSlope::db24 })
+    {
+        auto p = lowPass (slope);
+        p.cutoffHz = 20.0f;
+        CHECK (gainAt (15.0, p) < -80.0);    // under the cutoff too
+        CHECK (gainAt (100.0, p) < -80.0);
+        p.cutoffHz = 60.0f;
+        CHECK (gainAt (30.0, p) > -3.0);     // open again a little way up
+        p.cutoffHz = 20.0f;
+        p.morph = 2.0f;                      // a high pass down there stays open
+        CHECK (std::abs (gainAt (2000.0, p)) < 0.5);
+    }
+}
+
+TEST_CASE ("Filter: the channels sit a little apart")
+{
+    auto p = lowPass (FilterSlope::db24);
+    Filter f;
+    f.prepare (rate);
+    auto s = sine ((int) rate / 2, 1000.0, 0.1f);
+    run (f, s, p);
+    const int from = (int) rate / 4, to = (int) rate / 2;
+    double difference = 0.0;
+    for (int i = from; i < to; ++i)
+        difference += std::pow ((double) s.left[(size_t) i] - s.right[(size_t) i], 2.0);
+    const double apart = db (std::sqrt (difference / (to - from))) - db (rms (s.left, from, to));
+    INFO ("difference " << apart << " dB");
+    CHECK (apart > -60.0);
+    CHECK (apart < -20.0);
 }
 
 TEST_CASE ("Filter: ENV opens the cutoff with the input's level")

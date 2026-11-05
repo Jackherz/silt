@@ -676,6 +676,53 @@ TEST_CASE ("Follow: the input's level plays the envelope")
     CHECK (rms (always, 1.1, 1.3) > 0.05);
 }
 
+TEST_CASE ("Follow: an input attack retriggering the voice doesn't step the output")
+{
+    // Long grains, packed: they sum close to in phase, far from the voice's first
+    // estimate of its gain. A new note in the track retriggers the voice while the last
+    // note's grains are still playing, and nothing it plays may jump.
+    LiveEngine engine;
+    GrainParams p;
+    p.live = true;
+    p.liveTrigger = LiveTrigger::follow;
+    p.sizeMs = 1110.0;
+    p.rateHz = 100.0;
+    p.jitter = 0.5;
+    const int period = 2 * 48000;
+    const auto out = renderLive (engine, p, 4 * period, [=] (int i)
+    {
+        const int since = i % period;
+        const float swell = std::min (1.0f, (float) since / 96.0f) * std::exp (-(float) since / 48000.0f);
+        return 0.25f * swell * (float) std::sin (6.283185307179586 * 196.0 * i / sampleRate);
+    });
+
+    // The new note's own attack comes out 1.11 s later: look where only its retrigger can be heard.
+    for (int note = 2; note < 4; ++note)
+    {
+        float biggest = 0.0f, most = 0.0f;
+        for (int i = note * period; i < note * period + 14400; ++i)
+        {
+            most = std::max (most, std::abs (out.left[(size_t) i]));
+            biggest = std::max (biggest, std::abs (out.left[(size_t) i] - 2.0f * out.left[(size_t) i - 1] + out.left[(size_t) i - 2]));
+        }
+        INFO ("note " << note);
+        CHECK (most > 0.01f);
+        CHECK (biggest < 0.02f * most);
+    }
+}
+
+TEST_CASE ("One voice has grains for the longest SIZE at the fastest RATE")
+{
+    LiveEngine engine;
+    GrainParams p;
+    p.live = true;
+    p.liveTrigger = LiveTrigger::always;
+    p.sizeMs = 2000.0;
+    p.rateHz = 100.0;
+    renderLive (engine, p, 3 * 48000, [] (int i) { return 0.2f * (float) std::sin (6.283185307179586 * 240.0 * i / sampleRate); });
+    CHECK (engine.getActiveGrainCount() >= 195);
+}
+
 // --- Pitch page --------------------------------------------------------------------
 
 namespace

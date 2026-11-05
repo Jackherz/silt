@@ -19,12 +19,16 @@ struct FilterParams
     float mix = 1.0f;
 };
 
-// A stereo multimode filter: TPT state-variable stages (Zavalishin), one for
-// 12 dB/oct and two in series for 24. Both slopes run while the filter is on,
-// so switching slope crossfades instead of clicking.
+// A stereo multimode filter modelled on a transistor ladder: four one-pole stages, each
+// saturating, in a resonance loop, solved without a delay in the loop (after Mystran's
+// cheap non-linear zero-delay filters). Low, band and high pass at both slopes are mixes
+// of the same four poles (after the Oberheim Xpander), so MORPH and slope move without a
+// step, and loud signals press the resonance down instead of spiking through it. It runs
+// at twice the sample rate, so the saturation doesn't fold back. The two channels sit a
+// few cents apart, as two analogue filters do.
 //
-// Audio thread only, after prepare(). The cutoff glides (20 ms) and its
-// coefficients are interpolated sample by sample, so sweeps don't zipper.
+// Audio thread only, after prepare(). The cutoff glides (20 ms) and everything is
+// interpolated sample by sample, so sweeps don't zipper.
 class Filter
 {
 public:
@@ -34,32 +38,47 @@ public:
     // In place; left and right may be the same pointer (mono).
     void process (float* left, float* right, int numSamples, const FilterParams&) noexcept;
 
+    // What a setting comes to (slope: 0 is 12 dB, 1 is 24 dB), for the screen's curve too:
+    // the loop's feedback, and how much of each tap (stage input, poles 1 to 4) is heard.
+    static double feedbackFor (double resonance, double slope) noexcept;
+    static std::array<double, 5> tapMixFor (double morph, double slope, double resonance, double cutoffHz) noexcept;
+
 private:
-    struct Stage
+    // One path of the half-band filter: all-pass sections in series.
+    struct AllPassPath
     {
-        double s1 = 0.0, s2 = 0.0;
-        // Low, band and high pass outputs for input x, with g = tan(pi fc / fs) and damping k.
-        void run (double x, double g, double k, double& low, double& band, double& high) noexcept
+        std::array<double, 2> x {}, y {};
+        double run (double in, const std::array<double, 2>& coefficients) noexcept
         {
-            const double a1 = 1.0 / (1.0 + g * (g + k));
-            high = (x - (k + g) * s1 - s2) * a1;
-            band = g * high + s1;
-            low = g * band + s2;
-            s1 = g * high + band;
-            s2 = g * band + low;
+            for (size_t n = 0; n < coefficients.size(); ++n)
+            {
+                const double out = coefficients[n] * (in - y[n]) + x[n];
+                x[n] = in;
+                y[n] = out;
+                in = out;
+            }
+            return in;
         }
     };
 
     struct Channel
     {
-        Stage twelve, first, second;   // 12 dB; 24 dB = first then second
+        std::array<double, 4> poles {};
+        AllPassPath upA, upB, downA, downB;
+        double dcIn = 0.0, dcOut = 0.0;
     };
+
+    // One tick at the doubled rate; taps are the input to the stages and each stage's output.
+    static void tick (Channel&, double in, double f, double feedback, std::array<double, 5>& taps) noexcept;
 
     static constexpr int controlInterval = 16;
     double sampleRate = 44100.0;
     std::array<Channel, 2> channels {};
     double cutoffNow = 1000.0, resonanceNow = 0.0, morphNow = 0.0, driveNow = 0.0;
-    double gNow = 0.0;
+    double gNow = 0.0, feedbackNow = 0.0;
+    std::array<double, 5> mixNow {};   // how much of each tap makes the output
+    double evenNow = 0.0, driveGainNow = 1.0;
+    double dcCoefficient = 0.999;
     double slopeBlend = 0.0;      // 0: 12 dB, 1: 24 dB
     double wet = 0.0;             // how much filter is in the output (mix, and off/on)
     double envelope = 0.0;        // the input's level, 0…1 over −48…0 dBFS
