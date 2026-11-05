@@ -177,7 +177,7 @@ while a note sounds.
 **The sheet:** Silt is the instrument line of the Glyph Audio range, drawn on one shared sheet
 (`kit/`, a submodule: clone with `--recurse-submodules`):
 masthead with a catalogue number, numbered panels, a readout, hard frames and flat knobs,
-in VT323 with Press Start 2P for the wordmark (SIL Open Font License, `kit/fonts/`).
+in VT323 with Glyph Grotesque, a renamed Terminal Grotesque, for the wordmark (SIL Open Font License, `kit/fonts/`).
 
 **Presets** (header: ◀ name ▶, SAVE): a preset is the sound (every parameter, the
 modulation routes, the shown modulator), not the sample, the controller mapping or

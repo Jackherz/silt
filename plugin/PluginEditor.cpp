@@ -644,7 +644,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
                 safe->startTour();
         });
 
-    startTimerHz (30);
+    startTimerHz (60);
 }
 
 SiltEditor::~SiltEditor()
@@ -1658,18 +1658,21 @@ juce::String SiltEditor::statusText() const
 
 void SiltEditor::timerCallback()
 {
-    // Three kinds of tick, so the things that move never redraw in the same frame: macOS joins
+    // Turn about at 60 Hz, so the things that move never redraw in the same frame: macOS joins
     // what's dirty in one frame into a single rectangle, and the screen at the top with the
-    // modulators at the bottom would repaint everything between them. The screen gets two
-    // ticks in three, the modulators and the knobs they move one, and everything that has to
-    // look its parameters up by name goes on the screen's second tick.
-    timerTick = (timerTick + 1) % 3;
-    const bool modulationTick = timerTick == 0, screenTick = ! modulationTick, slowTick = timerTick == 1;
+    // modulators at the bottom would repaint everything between them. The screen and the
+    // modulators (with the knobs they move) each get 30 Hz, and everything that has to look
+    // its parameters up by name runs at 10 Hz.
+    timerTick = (timerTick + 1) % 6;
+    const bool modulationTick = timerTick % 2 == 1, screenTick = ! modulationTick, slowTick = timerTick == 0;
 
-    const float db = juce::Decibels::gainToDecibels (silt.captureMeter.takePeak(), -100.0f);
-    levelDb = db > levelDb ? db : juce::jmax (db, levelDb - 1.5f);
-    if (db > -60.0f)
-        inputHeardAt = juce::Time::getMillisecondCounter();
+    if (screenTick)
+    {
+        const float db = juce::Decibels::gainToDecibels (silt.captureMeter.takePeak(), -100.0f);
+        levelDb = db > levelDb ? db : juce::jmax (db, levelDb - 1.5f);
+        if (db > -60.0f)
+            inputHeardAt = juce::Time::getMillisecondCounter();
+    }
 
     if (silt.loadNote != loadNoteSeen)
     {
@@ -1741,7 +1744,8 @@ void SiltEditor::timerCallback()
         spaceSceneShown = shown;
     }
     }
-    updateBench();
+    if (screenTick)
+        updateBench();
     if (slowTick)
         chainView->update();
 
