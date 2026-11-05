@@ -61,10 +61,16 @@ int main (int argc, char* argv[])
     silt.setRateAndBufferSizeDetails (48000.0, 512);
     silt.prepareToPlay (48000.0, 512);
 
+    bool silentInput = false;
     for (int i = 3; i < argc; ++i)
     {
         const juce::String setting (argv[i]);
         const auto id = setting.upToFirstOccurrenceOf ("=", false, false);
+        if (id == "silent")   // silent=1: nothing reaches the input, to see the no-signal state
+        {
+            silentInput = true;
+            continue;
+        }
         if (id == "size")   // size=WxH: the window
         {
             const auto value = setting.fromFirstOccurrenceOf ("=", false, false);
@@ -121,6 +127,9 @@ int main (int argc, char* argv[])
         }
     }
 
+    if (silentInput)
+        input.setSize (0, 0);
+
     silt.loadFile (sample);
     const auto loaded = [&] { return silt.getOverview().name == sample.getFileNameWithoutExtension(); };
     for (int i = 0; i < 50 && ! loaded(); ++i)
@@ -144,7 +153,10 @@ int main (int argc, char* argv[])
         for (auto* child : editor->getChildren())
             if (auto* tab = dynamic_cast<juce::TextButton*> (child);
                 tab != nullptr && tab->getButtonText().upToFirstOccurrenceOf (" ", false, false) == juce::String (name).removeCharacters ("2"))
+            {
                 tab->triggerClick();   // RESONATOR2: the tab again, for its second half
+                break;                 // the first match only: MOD, not MOD ROUTES after it
+            }
 
         play (silt, 0.05, false);
         runMessageLoop (60);

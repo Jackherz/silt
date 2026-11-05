@@ -299,7 +299,7 @@ private:
     juce::Image backdrop;                              // the panel's still parts, drawn once per size and theme
     std::unique_ptr<silt::ui::Divider> sideDivider, screenDivider;
     SiltProcessor::Layout layoutAtDragStart;
-    struct SlotParts { juce::Rectangle<int> label, control, under, caption; };
+    struct SlotParts { juce::Rectangle<int> label, control, under; };
     SlotParts slotParts (int slot) const;
     static bool pageHasKey (int p) { return p == silt::layout::grain || p == silt::layout::shape || p == silt::layout::pitch || p == silt::layout::play || p == silt::layout::mod; }
     SlotParts partsOf (const silt::layout::Entry&) const;

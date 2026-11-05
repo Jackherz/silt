@@ -140,16 +140,20 @@ void ChainView::paint (juce::Graphics& g)
     const auto block = [&] (juce::Rectangle<float> r, int module, bool lifted)
     {
         const bool active = shownActive[(size_t) module], on = shownOn[(size_t) module];
-        g.setColour (stock().shadow);
-        g.fillRect (r.withTrimmedRight (2.0f).withTrimmedBottom (2.0f).translated (2.0f, 2.0f));
+        const bool open = module == openModule;
         const auto face = r.withTrimmedRight (2.0f).withTrimmedBottom (2.0f);
+        // Standing out is for a block that's doing something: the rest sit back, shadow and frame.
+        if (active || lifted || open)
+        {
+            g.setColour (stock().shadow);
+            g.fillRect (face.translated (2.0f, 2.0f));
+        }
         g.setColour (lifted ? ink : stock().panel);
         g.fillRect (face);
-        g.setColour (active || lifted ? ink : inkSoft);
-        g.drawRect (face, 1.2f);
+        g.setColour (active || lifted || open ? ink : inkSoft.withAlpha (0.5f));
+        g.drawRect (face, active || lifted || open ? 1.2f : 1.0f);
         // The top half opens its page, so the open page's block shows as a held key.
         const auto top = face.withBottom (face.getY() + face.getHeight() * 0.5f);
-        const bool open = module == openModule;
         if (open)
         {
             g.setColour (ink);

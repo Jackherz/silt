@@ -539,12 +539,17 @@ private:
         {
             g.drawText (juce::String (selfFeed ? "FEED: SILT'S OWN SOUND" : "LIVE INPUT") + (frozen ? "  FROZEN" : ""), top, juce::Justification::centredLeft);
             g.drawText (juce::String (silt::Engine::ringSeconds, 0) + " S  NOW >", top, juce::Justification::centredRight);
-            drawLiveWave (g, waveArea);
+            // Nothing in the whole history: the screen says so, the readout says what to do.
+            const bool empty = std::none_of (livePeaks.begin(), livePeaks.end(), [] (float peak) { return peak > 0.001f; });
+            if (empty)
+                drawEmptyLiveWave (g, waveArea, frozen ? "NOTHING HELD" : selfFeed ? "PLAY A NOTE" : "NO SIGNAL");
+            else
+                drawLiveWave (g, waveArea);
             g.setColour (screenLight.withAlpha (0.5f));
             g.drawHorizontalLine (rollArea.getY() - 3, (float) rollArea.getX(), (float) rollArea.getRight());
             drawGrains (g, waveArea, rollArea);
             g.setColour (juce::Colours::white);
-            g.drawText (numViews > 0 ? hud : juce::String ("READY."), bottom, juce::Justification::centredLeft);
+            g.drawText (numViews > 0 ? hud : empty ? juce::String() : juce::String ("READY."), bottom, juce::Justification::centredLeft);
             return;
         }
 
@@ -661,6 +666,24 @@ private:
             const float h = juce::jmin (1.0f, livePeaks[column]) * half;
             g.fillRect ((float) (area.getX() + x), mid - h, 1.0f, juce::jmax (1.0f, 2.0f * h));
         }
+        g.setColour (screenLime);
+        g.drawVerticalLine (area.getRight() - 1, (float) area.getY(), (float) area.getBottom());
+    }
+
+    // The live view with nothing in it: the time scale, a tick a second, with the word set into it.
+    void drawEmptyLiveWave (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& word)
+    {
+        const int mid = area.getCentreY();
+        const auto gap = area.withSizeKeepingCentre (kit::textWidth (g.getCurrentFont(), word) + 28, 16);
+        g.setColour (screenPale.withAlpha (0.3f));
+        g.drawHorizontalLine (mid, (float) area.getX(), (float) gap.getX());
+        g.drawHorizontalLine (mid, (float) gap.getRight(), (float) area.getRight());
+        const int seconds = (int) silt::Engine::ringSeconds;
+        for (int s = 1; s < seconds; ++s)
+            if (const int x = area.getX() + area.getWidth() * s / seconds; x < gap.getX() || x >= gap.getRight())
+                g.fillRect (x, mid - 2, 1, 5);
+        g.setColour (screenPale.withAlpha (0.8f));
+        g.drawText (word, gap, juce::Justification::centred);
         g.setColour (screenLime);
         g.drawVerticalLine (area.getRight() - 1, (float) area.getY(), (float) area.getBottom());
     }

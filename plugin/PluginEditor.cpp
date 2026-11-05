@@ -1536,18 +1536,14 @@ SiltEditor::SlotParts SiltEditor::partsOf (const layout::Entry& entry) const
 
 SiltEditor::SlotParts SiltEditor::slotParts (int slot) const
 {
-    constexpr int labelHeight = 18, valueBox = 20, underRow = 24, captionHeight = 30;
-    auto column = slotBounds (slot);
-    juce::Rectangle<int> caption;
-    if (column.getHeight() >= 190 && column.getWidth() >= 96)   // room, or no line at all
-        caption = column.removeFromBottom (captionHeight).reduced (6, 0);
+    constexpr int labelHeight = 18, valueBox = 20, underRow = 24;
+    const auto column = slotBounds (slot);
     const int knob = juce::jlimit (40, 92, juce::jmin (column.getWidth() - 16, column.getHeight() - labelHeight - valueBox - underRow - 8));
     auto block = column.withSizeKeepingCentre (column.getWidth(), juce::jmin (column.getHeight(), labelHeight + knob + valueBox + underRow));
     SlotParts parts;
     parts.label = block.removeFromTop (labelHeight).translated (0, 2);
     parts.under = block.removeFromBottom (underRow);
     parts.control = block.reduced (juce::jmin (10, column.getWidth() / 12), 0);
-    parts.caption = caption;
     return parts;
 }
 
@@ -2136,8 +2132,8 @@ void SiltEditor::drawSunk (juce::Graphics& g, juce::Rectangle<float> area, juce:
 void SiltEditor::paintPreview (juce::Graphics& g)
 {
     // A rule between the grain's envelope (slots 0–2) and the note's (3–6).
-    g.setColour (ink);
-    g.fillRect (slotBounds (3).getX() - 1, controlRow.getY() + 6, 2, controlRow.getHeight() - 12);
+    g.setColour (ink.withAlpha (0.2f));
+    g.drawVerticalLine (slotBounds (3).getX(), (float) controlRow.getY() + 8.0f, (float) controlRow.getBottom() - 8.0f);
 
     // Slot 7: one grain's envelope above, one note's ADSR below.
     auto cell = slotBounds (slotsPerRow - 1).reduced (10, 8).toFloat();
@@ -2224,9 +2220,9 @@ void SiltEditor::paint (juce::Graphics& g)
     const auto status = statusText();
     kit::drawReadout (g, lcdArea, stock(), juce::String (JucePlugin_Name).toUpperCase(), "LIVE", status, {}, status.length() > 26);
 
+    // One rule, between the modulators and the knobs: the columns are clear from what's in them.
     g.setColour (ink.withAlpha (0.2f));
-    for (int s = 0; s < slotsPerRow; ++s)
-        g.drawVerticalLine (slotBounds (s).getX(), (float) controlRow.getY() + 8.0f, (float) controlRow.getBottom() - 8.0f);
+    g.drawVerticalLine (slotBounds (0).getX(), (float) controlRow.getY() + 8.0f, (float) controlRow.getBottom() - 8.0f);
 
     g.setColour (ink);
     const auto labelFont = kit::label (17.0f);
@@ -2236,15 +2232,6 @@ void SiltEditor::paint (juce::Graphics& g)
         {
             const auto labelArea = partsOf (*c->entry).label;
             g.drawText (c->entry->label, labelArea, juce::Justification::centred);
-            if (const auto caption = silt::ui::captionFor (c->entry->id); caption.isNotEmpty() && ! c->entry->alwaysShown)
-                if (const auto area = partsOf (*c->entry).caption; ! area.isEmpty())
-                {
-                    g.setFont (kit::label (14.0f));
-                    g.setColour (inkSoft);
-                    g.drawFittedText (caption, area, juce::Justification::centredTop, 2, 1.0f);
-                    g.setFont (labelFont);
-                    g.setColour (ink);
-                }
             const float labelWidth = (float) kit::textWidth (labelFont, c->entry->label);
             g.setColour (ink);
             if (silt.isRandomExcluded (c->entry->id))

@@ -74,7 +74,7 @@ void ModChip::paint (juce::Graphics& g)
     const int routes = silt.routeCount (m);
     auto r = getLocalBounds().toFloat().reduced (1.5f);
 
-    // A rounded card in a hairline; armed: its colour; shown on MOD: ink.
+    // Only a trace of a frame until it matters; armed: its colour; shown on MOD: ink.
     if (muted)
     {
         g.setColour (ink.withAlpha (0.04f));
@@ -87,7 +87,7 @@ void ModChip::paint (juce::Graphics& g)
     }
     else
     {
-        g.setColour (selected ? ink.withAlpha (0.8f) : ink.withAlpha (0.32f));
+        g.setColour (ink.withAlpha (selected ? 0.8f : isMouseOver (true) ? 0.32f : 0.12f));
         g.drawRect (r, selected ? 1.4f : 1.0f);
     }
 
@@ -144,7 +144,7 @@ void ModChip::paint (juce::Graphics& g)
     trace.removeFromLeft (21.0f);
     const bool bipolar = silt::Modulator::isBipolar (silt.readModulatorParams (m));
     const float baseline = bipolar ? trace.getCentreY() : trace.getBottom();
-    g.setColour (ink.withAlpha (0.25f));
+    g.setColour (ink.withAlpha (0.15f));
     g.drawHorizontalLine ((int) baseline, trace.getX(), trace.getRight());
     juce::Path line;
     const int n = (int) history.size();
@@ -360,12 +360,14 @@ void ModBanner::paint (juce::Graphics& g)
     const auto& colour = modColour (m);
     const bool muted = ! silt.isModulatorEnabled (m);
     auto r = getLocalBounds().toFloat().reduced (2.0f);
+    // Its colour along the edge: the rail's chip already carries it at full strength.
     g.setColour (muted ? colour.dim : colour.base);
-    g.fillRect (r);
-    g.setColour (colour.ink);
+    g.drawRect (r, 1.5f);
     auto text = r.reduced (6.0f, 4.0f);
+    g.setColour (muted ? inkSoft : ink);
     g.setFont (monoFont (18.0f));
     g.drawText ("MOD " + juce::String (m + 1), text.removeFromTop (text.getHeight() * 0.5f), juce::Justification::centred);
+    g.setColour (inkSoft);
     g.setFont (monoFont (10.0f));
     const int routes = silt.routeCount (m);
     g.drawText (juce::String (typeName (typeOf (silt, m))) + "  " + juce::String (routes) + (routes == 1 ? " ROUTE" : " ROUTES")
@@ -603,8 +605,9 @@ void RouteList::paint (juce::Graphics& g)
 {
     g.setColour (bone);
     g.fillRect (getLocalBounds());
+    g.setColour (ink.withAlpha (0.35f));
+    g.drawRect (getLocalBounds(), 1);
     g.setColour (ink);
-    g.drawRect (getLocalBounds(), 2);
     g.setFont (panelFont (12.0f));
     g.drawText ("MOD ROUTES", getLocalBounds().reduced (10, 4).removeFromTop (22), juce::Justification::centredLeft);
 
@@ -619,7 +622,7 @@ void RouteList::paint (juce::Graphics& g)
     for (int m = 0; m < SiltProcessor::numModulators; ++m)
         muted += silt.isModulatorEnabled (m) ? 0 : 1;
     const int total = (int) silt.allRoutes().size();
-    g.setColour (ink);
+    g.setColour (inkSoft);
     g.setFont (monoFont (11.0f));
     g.drawText (juce::String (total) + (total == 1 ? " ROUTE" : " ROUTES") + "   " + juce::String (muted) + " MUTED",
                 footer.withTrimmedLeft (10), juce::Justification::centredLeft);
