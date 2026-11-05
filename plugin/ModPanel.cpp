@@ -1,4 +1,5 @@
 #include "ModPanel.h"
+#include "PageLayout.h"
 #include "ModColours.h"
 #include "Palette.h"
 
@@ -46,6 +47,24 @@ juce::Rectangle<int> ModChip::clearBox() const
 // modulator has done over the last two seconds (its shape, not just its
 // level). Bipolar sources trace round a centre line, the rest up from the
 // bottom. Armed: an outline in its colour; shown on the MOD page: an ink one.
+// What a chip says: where it's going, or what it is until it goes anywhere.
+static juce::String chipTitle (SiltProcessor& silt, int m)
+{
+    for (const auto& route : silt.allRoutes())
+        if (route.modulator == m)
+        {
+            const auto id = silt.targetParameter (route.target).getParameterID();
+            for (const auto& e : silt::layout::entries (SiltProcessor::isInstrument))
+                if (e.id == id && e.label.isNotEmpty())
+                    return "TO " + e.label;
+            return "TO " + silt.targetParameter (route.target).getName (12).toUpperCase();
+        }
+    if (typeOf (silt, m) != 0)
+        return typeName (typeOf (silt, m));
+    static const char* shapes[] { "SINE", "TRIANGLE", "SAW", "SQUARE" };
+    return shapes[juce::jlimit (0, 3, juce::roundToInt (silt.params.getRawParameterValue ("m" + juce::String (m + 1) + "Shape")->load()))];
+}
+
 void ModChip::paint (juce::Graphics& g)
 {
     const auto& colour = modColour (m);
@@ -117,7 +136,7 @@ void ModChip::paint (juce::Graphics& g)
     g.setColour (pendingClear ? signalRed : text);
     const auto label = pendingClear ? juce::String ("CLICK AGAIN")
                      : muted ? juce::String ("MUTED")
-                     : juce::String (typeName (typeOf (silt, m)));
+                     : chipTitle (silt, m);
     g.drawText (label, top, juce::Justification::centredLeft);
 
     // The trace.

@@ -783,7 +783,7 @@ TEST_CASE ("CHAIN order changes the sound: noise after a low-pass is brighter th
             auto* p = rig.silt.params.getParameter (id);
             p->setValueNotifyingHost (p->convertTo0to1 (v));
         };
-        setPlain ("filterMode", 2.0f);
+        setPlain ("filterMode", 1.0f);
         setPlain ("filterCutoff", 200.0f);
         setPlain ("colorNoise", 100.0f);
         setPlain ("chainOrder", (float) SiltProcessor::chainOrderIndex (order));
@@ -1704,7 +1704,7 @@ TEST_CASE ("A low-pass all the way down at full MIX leaves nothing of the sound 
         for (int i = 0; i < 300 && rig.silt.getOverview().name != temp.getFileNameWithoutExtension(); ++i)
             juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
         if (filtered)
-            for (auto [id, v] : std::vector<std::pair<const char*, float>> { { "filterMode", 2.0f }, { "filterCutoff", 20.0f }, { "filterMix", 100.0f } })
+            for (auto [id, v] : std::vector<std::pair<const char*, float>> { { "filterMode", 1.0f }, { "filterCutoff", 20.0f }, { "filterMix", 100.0f } })
             {
                 auto* p = rig.silt.params.getParameter (id);
                 p->setValueNotifyingHost (p->convertTo0to1 (v));
@@ -1759,7 +1759,7 @@ TEST_CASE ("MIX sends the dry input through the chain with the grains, in LIVE a
             p->setValueNotifyingHost (p->convertTo0to1 (v));
         }
         if (filtered)
-            for (auto [id, v] : std::vector<std::pair<const char*, float>> { { "filterMode", 2.0f }, { "filterCutoff", 20.0f } })
+            for (auto [id, v] : std::vector<std::pair<const char*, float>> { { "filterMode", 1.0f }, { "filterCutoff", 20.0f } })
             {
                 auto* p = rig.silt.params.getParameter (id);
                 p->setValueNotifyingHost (p->convertTo0to1 (v));

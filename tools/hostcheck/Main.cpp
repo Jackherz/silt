@@ -251,6 +251,9 @@ int main (int argc, char* argv[])
         const float quiet = playInput (*plugin, 1.0);
         check (full > 0.05f, "grains the track's input (peak " + juce::String (full, 3) + ")");
         check (quiet < full * 0.25f, "INPUT turns them down (peak " + juce::String (quiet, 3) + " at -24 dB)");
+        input->setValueNotifyingHost (1.0f);   // +24 dB: into the tape
+        const float cranked = playInput (*plugin, 3.0);
+        check (cranked < 1.01f && cranked > full * 0.8f, "INPUT cranked rounds over rather than peaking (peak " + juce::String (cranked, 3) + ")");
     }
 
     if (input != nullptr)
@@ -262,6 +265,7 @@ int main (int argc, char* argv[])
                 if (parameter->getName (32) == name)
                     parameter->setValueNotifyingHost (value);
         };
+        set ("Filter cutoff", 1.0f);
         const double open = noiseThrough (*plugin, 3.0);
         set ("Filter", 1.0f);          // 24 dB
         set ("Filter cutoff", 0.0f);   // 20 Hz
@@ -280,7 +284,7 @@ int main (int argc, char* argv[])
         set ("Mix", 0.35f);
         const double dryToo = noiseThrough (*plugin, 3.0);
         check (dryToo < -80.0, "the filter takes the dry side of MIX too (" + juce::String (dryToo, 1) + " dB)");
-        set ("Filter", 0.0f);
+        set ("Filter cutoff", 1.0f);   // wide open: passes everything
         set ("Mix", 0.0f);
         const double dryOnly = noiseThrough (*plugin, 1.0);
         check (std::abs (dryOnly) < 0.1, "MIX at 0 with nothing in the chain is the track itself (" + juce::String (dryOnly, 2) + " dB)");

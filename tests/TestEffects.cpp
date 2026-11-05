@@ -3,6 +3,7 @@
 
 #include <silt/Color.h>
 #include <silt/Filter.h>
+#include <kit/TapeInput.h>
 #include <silt/Pitches.h>
 #include <silt/Resonator.h>
 
@@ -533,6 +534,64 @@ TEST_CASE ("Filter: a low pass all the way down is closed, and it opens smoothly
         p.morph = 2.0f;                      // a high pass down there stays open
         CHECK (std::abs (gainAt (2000.0, p)) < 0.5);
     }
+}
+
+TEST_CASE ("INPUT past 0 dB meets the tape: a soft ceiling, not a peak")
+{
+    // A full-scale sine pushed by this many dB, after the tape.
+    const auto driven = [] (double hz, float db)
+    {
+        kit::TapeInput tape;
+        tape.prepare (rate);
+        auto s = sine ((int) rate, hz, 1.0f);
+        const float gain = std::pow (10.0f, db / 20.0f);
+        for (int i = 0; i < (int) s.left.size(); i += 64)
+        {
+            const int n = std::min (64, (int) s.left.size() - i);
+            for (int k = 0; k < n; ++k)
+            {
+                s.left[(size_t) (i + k)] *= gain;
+                s.right[(size_t) (i + k)] *= gain;
+            }
+            tape.process (s.left.data() + i, s.right.data() + i, n, db, db);
+        }
+        return s;
+    };
+
+    // At or below 0 dB, bit for bit.
+    {
+        auto flat = sine (4800, 220.0, 0.5f);
+        const auto original = flat.left;
+        kit::TapeInput tape;
+        tape.prepare (rate);
+        tape.process (flat.left.data(), flat.right.data(), 4800, 0.0f, 0.0f);
+        CHECK (flat.left == original);
+    }
+
+    for (const float db : { 3.0f, 12.0f, 24.0f })
+    {
+        const auto s = driven (220.0, db);
+        float most = 0.0f;
+        for (int i = (int) rate / 2; i < (int) rate; ++i)
+            most = std::max (most, std::abs (s.left[(size_t) i]));
+        INFO (db << " dB: peak " << most);
+        CHECK (most < 1.05f);
+        CHECK (most > 0.6f);
+    }
+
+    const int from = (int) rate / 2, to = (int) rate;
+    const auto low = driven (220.0, 18.0f);
+    const double one = toneLevel (low.left, 220.0, from, to);
+    CHECK (toneLevel (low.left, 660.0, from, to) > one - 30.0);   // odd harmonics: it's rounding over
+    CHECK (toneLevel (low.left, 440.0, from, to) > one - 50.0);   // and a little even: it leans
+
+    // The more it's pushed, the less top survives, relative to the same tone pushed gently.
+    const auto topAt = [&] (float db) { return toneLevel (driven (8000.0, db).left, 8000.0, from, to) - toneLevel (driven (220.0, db).left, 220.0, from, to); };
+    CHECK (topAt (24.0f) < topAt (2.0f) - 4.0);
+
+    // A hard-driven 7 kHz doesn't fold its harmonics back into the band.
+    const auto high = driven (7000.0, 24.0f);
+    CHECK (toneLevel (high.left, 13000.0, from, to) - toneLevel (high.left, 7000.0, from, to) < -40.0);
 }
 
 TEST_CASE ("Filter: the channels sit a little apart")

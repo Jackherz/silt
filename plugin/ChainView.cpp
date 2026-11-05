@@ -39,12 +39,14 @@ bool ChainView::moduleActive (const SiltProcessor& silt, int module)
     switch (module)
     {
         case SiltProcessor::moduleResonator: return value (silt, "resMix") > 0.0f;
-        case SiltProcessor::moduleFilter:    return value (silt, "filterMode") > 0.5f;
+        case SiltProcessor::moduleFilter:
+            return ! SiltProcessor::filterIsOpen (value (silt, "filterCutoff"), value (silt, "filterReso") * 0.01f, value (silt, "filterMorph"), value (silt, "filterDrive") * 0.01f,
+                                                  value (silt, "filterEnv") * 0.01f, value (silt, "filterKey") * 0.01f, value (silt, "filterMix") * 0.01f);
         case SiltProcessor::moduleColor:
             return value (silt, "colorMix") > 0.0f
-                && (value (silt, "colorDrive") > 0.0f || value (silt, "colorBits") < 16.0f || value (silt, "colorRate") < silt::Color::rateOff
+                && (value (silt, "colorDrive") > 0.0f || value (silt, "colorBits") < 15.99f || value (silt, "colorRate") < silt::Color::rateOff * 0.999f
                     || value (silt, "colorComp") > 0.0f || value (silt, "colorNoise") > 0.0f || value (silt, "colorWow") > 0.0f
-                    || std::abs (value (silt, "colorTone")) > 0.0f);
+                    || std::abs (value (silt, "colorTone")) > 0.05f);
         default:
             return value (silt, "spaceDelay") > 0.0f || value (silt, "spaceReverb") > 0.0f || value (silt, "spaceFreeze") > 0.5f;
     }
@@ -66,6 +68,24 @@ void ChainView::update()
         shownOn = on;
         repaint();
     }
+}
+
+void ChainView::setOpen (int module, int half)
+{
+    if (module != openModule || half != openHalf)
+    {
+        openModule = module;
+        openHalf = half;
+        repaint();
+    }
+}
+
+juce::Rectangle<int> ChainView::moduleBounds (int module) const
+{
+    for (int p = 0; p < SiltProcessor::numModules; ++p)
+        if (shownOrder[(size_t) p] == module)
+            return blockArea (p).toNearestInt().translated (getX(), getY());
+    return {};
 }
 
 juce::Rectangle<float> ChainView::blockArea (int position) const
@@ -127,18 +147,28 @@ void ChainView::paint (juce::Graphics& g)
         g.fillRect (face);
         g.setColour (active || lifted ? ink : inkSoft);
         g.drawRect (face, 1.2f);
+        // The top half opens its page, so the open page's block shows as a held key.
+        const auto top = face.withBottom (face.getY() + face.getHeight() * 0.5f);
+        const bool open = module == openModule;
+        if (open)
+        {
+            g.setColour (ink);
+            g.fillRect (top);
+        }
         g.setFont (kit::label (16.0f));
-        g.setColour (lifted ? stock().panel : active ? ink : inkSoft);
-        g.drawText (shortName (module), face.withBottom (face.getY() + face.getHeight() * 0.5f), juce::Justification::centred);
-        // The switch: solid while the module is on.
+        g.setColour (lifted || open ? stock().panel : active ? ink : inkSoft);
+        const juce::String half = open && module == SiltProcessor::moduleResonator ? (openHalf == 0 ? " 1/2" : " 2/2") : "";
+        g.drawText (shortName (module) + half, top, juce::Justification::centred);
+        // The switch: solid only while the module is changing the sound. On with nothing
+        // to do, it's an outline that still says ON.
         const auto box = face.withTrimmedTop (face.getHeight() * 0.52f).reduced (5.0f, 4.0f);
-        g.setColour (on ? stock().lit : (lifted ? stock().panel : inkSoft));
-        if (on)
+        g.setColour (active ? ink : lifted ? stock().panel : on ? ink : inkSoft);
+        if (active)
             g.fillRect (box);
         else
             g.drawRect (box, 1.0f);
         g.setFont (kit::label (14.0f));
-        g.setColour (on ? stock().shadow : (lifted ? stock().panel : inkSoft));
+        g.setColour (active ? stock().panel : lifted ? stock().panel : on ? ink : inkSoft);
         g.drawText (on ? "ON" : "OFF", box, juce::Justification::centred);
     };
 
@@ -159,6 +189,13 @@ void ChainView::mouseDown (const juce::MouseEvent& e)
 {
     dragging = -1;
     moved = false;
+    if (e.mods.isPopupMenu())
+    {
+        for (int p = 0; p < SiltProcessor::numModules; ++p)
+            if (blockArea (p).contains (e.position) && onMenu != nullptr)
+                onMenu (shownOrder[(size_t) p]);
+        return;
+    }
     for (int p = 0; p < SiltProcessor::numModules; ++p)
         if (switchArea (p).expanded (2.0f).contains (e.position))
         {

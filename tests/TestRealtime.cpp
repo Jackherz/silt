@@ -101,7 +101,7 @@ TEST_CASE ("Realtime: processBlock allocates nothing, across modes and effects")
         rig.set ("resMix", 60.0f);
         rig.set ("resDrive", 50.0f);
         rig.set ("resDrift", 40.0f);
-        rig.set ("filterMode", 2.0f);
+        rig.set ("filterMode", 1.0f);
         rig.set ("colorDrive", 50.0f);
         rig.set ("colorBits", 8.0f);
         rig.set ("colorRate", 8000.0f);
@@ -190,7 +190,7 @@ TEST_CASE ("Benchmark: CPU for typical and worst-case settings", "[.][benchmark]
             set ("heads", 8.0f);
             set ("resMix", 60.0f);
             set ("resDrive", 50.0f);
-            set ("filterMode", 2.0f);
+            set ("filterMode", 1.0f);
             set ("colorDrive", 50.0f);
             set ("colorComp", 50.0f);
             set ("colorWow", 40.0f);

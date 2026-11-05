@@ -190,7 +190,7 @@ private:
 
     struct Region { double begin, end; };
 
-    void spawnGrain (const GrainParams&, const SampleBuffer&) noexcept;
+    void spawnGrain (const GrainParams&, const SampleBuffer&, int sampleInBlock) noexcept;
     bool advancePlayhead (const GrainParams&, const SampleBuffer&) noexcept;
     float nextEnvelope (const GrainParams&) noexcept;
     struct GainEstimate { float estimate, coherent, incoherent; };
@@ -200,7 +200,7 @@ private:
     int grainLength (const GrainParams&, const Region&, double ratio) const noexcept;
     float readGrain (const Grain&, int channel) const noexcept;
     double grainStartFor (const Region&, double spanFrames) const noexcept;
-    double liveStart (const GrainParams&, const SampleBuffer& ring, int length, double ratio, double scatter) const noexcept;
+    double liveStart (const GrainParams&, const SampleBuffer& ring, int length, double ratio, double scatter, int sampleInBlock) const noexcept;
     double scatterWithin (const Region&, double spanFrames, double scatter) const noexcept;
     static Region computeRegion (const GrainParams&, const SampleBuffer&) noexcept;
     Region regionFor (const GrainParams&, const SampleBuffer&) const noexcept;   // this voice's: its slice, in Slice mode

@@ -42,7 +42,7 @@ const std::vector<Factory>& allFactories()
 
         { "Rust Rhythm",
           { { "rateMode", 1.0f }, { "rateDiv", 3.0f }, { "sizeSync", 1.0f }, { "sizeDiv", 3.0f }, { "spray", 10.0f },
-            { "filterMode", 2.0f }, { "filterCutoff", 1800.0f }, { "filterReso", 40.0f },
+            { "filterMode", 1.0f }, { "filterCutoff", 1800.0f }, { "filterReso", 40.0f },
             { "colorBits", 7.0f }, { "colorRate", 9000.0f }, { "colorComp", 50.0f },
             { "spaceDelay", 30.0f }, { "spaceSync", 1.0f }, { "spaceDiv", 8.0f }, { "spaceFeedback", 45.0f },
             { "m1Sync", 1.0f }, { "m1Div", 14.0f } },
@@ -64,7 +64,7 @@ const std::vector<Factory>& allFactories()
 
         { "Dark Drone",
           { { "pitch", -12.0f }, { "size", 900.0f }, { "rate", 8.0f }, { "spray", 25.0f }, { "attack", 1500.0f }, { "release", 4000.0f },
-            { "filterMode", 2.0f }, { "filterCutoff", 700.0f }, { "filterReso", 25.0f }, { "colorWow", 20.0f },
+            { "filterMode", 1.0f }, { "filterCutoff", 700.0f }, { "filterReso", 25.0f }, { "colorWow", 20.0f },
             { "spaceReverb", 60.0f }, { "spaceDecay", 20.0f }, { "spaceSize", 100.0f }, { "spaceTone", 30.0f },
             { "m1Rate", 0.05f } },
           { "1:filterCutoff:0.3" } },
@@ -72,7 +72,7 @@ const std::vector<Factory>& allFactories()
         // MOD 4 is a macro: one knob opens the filter and the space together.
         { "Shimmer Pad",
           { { "attack", 800.0f }, { "release", 3000.0f }, { "fade", 100.0f }, { "size", 300.0f }, { "spray", 15.0f },
-            { "filterMode", 1.0f }, { "filterCutoff", 1200.0f },
+            { "filterMode", 0.0f }, { "filterCutoff", 1200.0f },
             { "spaceShimmer", 60.0f }, { "spaceReverb", 55.0f }, { "spaceDecay", 12.0f },
             { "m4Type", 5.0f }, { "m4Macro", 30.0f } },
           { "4:filterCutoff:0.5", "4:spaceReverb:0.3", "4:spaceShimmer:0.3" } },
@@ -90,7 +90,7 @@ const std::vector<Factory>& allFactories()
           { { "keyMode", 3.0f }, { "sliceCount", 16.0f }, { "endMode", 0.0f },
             { "rateMode", 1.0f }, { "rateDiv", 1.0f }, { "sizeSync", 1.0f }, { "sizeDiv", 1.0f }, { "fade", 40.0f },
             { "attack", 1.0f }, { "release", 60.0f },
-            { "colorBits", 9.0f }, { "colorRate", 12000.0f }, { "filterMode", 1.0f }, { "filterCutoff", 5000.0f }, { "filterReso", 30.0f },
+            { "colorBits", 9.0f }, { "colorRate", 12000.0f }, { "filterMode", 0.0f }, { "filterCutoff", 5000.0f }, { "filterReso", 30.0f },
             { "m1Type", 1.0f }, { "m1Sync", 1.0f }, { "m1Div", 6.0f }, { "m1Smooth", 0.0f } },
           { "1:filterCutoff:0.25", "1:reverse:0.5" }, true },
 
@@ -98,7 +98,7 @@ const std::vector<Factory>& allFactories()
         { "Feed Bloom",
           { { "keyMode", 2.0f }, { "liveRun", 0.0f }, { "feedback", 92.0f }, { "size", 260.0f }, { "rate", 12.0f },
             { "spray", 30.0f }, { "randPitch", 0.1f }, { "randPan", 60.0f }, { "attack", 400.0f }, { "release", 2500.0f },
-            { "filterMode", 1.0f }, { "filterCutoff", 3500.0f },
+            { "filterMode", 0.0f }, { "filterCutoff", 3500.0f },
             { "spaceReverb", 40.0f }, { "spaceDecay", 6.0f }, { "spaceSize", 75.0f },
             { "m1Rate", 0.1f } },
           { "1:filterCutoff:0.2" }, true },
@@ -140,6 +140,80 @@ const std::vector<Factory>& allFactories()
             { "scale", 9.0f }, { "key", 4.0f }, { "rateMode", 1.0f }, { "rateDiv", 3.0f }, { "size", 140.0f }, { "release", 900.0f },
             { "spaceDelay", 30.0f }, { "spaceSync", 1.0f }, { "spaceDiv", 6.0f }, { "spaceReverb", 25.0f } },
           {} },
+
+        { "Moth Light",
+          { { "size", 420.0f }, { "rate", 18.0f }, { "spray", 45.0f }, { "randPan", 80.0f }, { "randPitch", 0.08f }, { "attack", 600.0f }, { "release", 3000.0f },
+            { "filterMode", 0.0f }, { "filterCutoff", 2600.0f }, { "filterReso", 15.0f }, { "spaceReverb", 50.0f }, { "spaceDecay", 9.0f }, { "spaceSize", 90.0f }, { "spaceTone", 35.0f },
+            { "m1Rate", 0.08f } },
+          { "1:filterCutoff:0.18" } },
+
+        { "Salt Flats",
+          { { "size", 1400.0f }, { "rate", 40.0f }, { "spray", 60.0f }, { "randPan", 60.0f }, { "attack", 1500.0f }, { "release", 5000.0f },
+            { "filterMode", 1.0f }, { "filterCutoff", 900.0f }, { "colorWow", 12.0f }, { "spaceReverb", 45.0f }, { "spaceDecay", 14.0f }, { "spaceSize", 100.0f },
+            { "m1Rate", 0.03f } },
+          { "1:filterCutoff:0.25" } },
+
+        { "Old Cassette",
+          { { "size", 240.0f }, { "rate", 14.0f }, { "spray", 8.0f }, { "colorWow", 60.0f }, { "colorDrive", 35.0f }, { "colorTone", -45.0f }, { "colorNoise", 30.0f }, { "colorBits", 12.0f },
+            { "filterMode", 0.0f }, { "filterCutoff", 5200.0f }, { "spaceReverb", 15.0f }, { "spaceDecay", 1.5f } },
+          {} },
+
+        { "Slow Tide",
+          { { "size", 800.0f }, { "rate", 9.0f }, { "spray", 25.0f }, { "randPan", 45.0f }, { "attack", 1200.0f }, { "release", 4000.0f }, { "spaceDelay", 25.0f }, { "spaceTime", 900.0f }, { "spaceFeedback", 55.0f },
+            { "spaceReverb", 40.0f }, { "spaceDecay", 8.0f }, { "filterMode", 0.0f }, { "filterCutoff", 3000.0f }, { "m1Rate", 0.06f } },
+          { "1:filterCutoff:0.3", "1:spray:0.15" } },
+
+        { "Hollow Bell",
+          { { "size", 70.0f }, { "rate", 12.0f }, { "spray", 6.0f }, { "release", 1600.0f }, { "resMix", 70.0f }, { "resNotes", 2.0f }, { "resDecay", 3.5f }, { "resOddEven", -70.0f }, { "resReso", 80.0f }, { "resDamp", 25.0f },
+            { "spaceReverb", 25.0f }, { "spaceDecay", 5.0f } },
+          {} },
+
+        { "Rain on Tin",
+          { { "size", 22.0f }, { "rate", 80.0f }, { "spray", 70.0f }, { "jitter", 100.0f }, { "randAmp", 80.0f }, { "randPan", 100.0f }, { "fade", 40.0f },
+            { "filterMode", 0.0f }, { "filterCutoff", 7000.0f }, { "filterMorph", 0.5f }, { "colorBits", 11.0f }, { "spaceReverb", 20.0f }, { "spaceDecay", 2.0f } },
+          {} },
+
+        { "Night Bus",
+          { { "rateMode", 1.0f }, { "rateDiv", 6.0f }, { "sizeSync", 1.0f }, { "sizeDiv", 6.0f }, { "spray", 12.0f }, { "fade", 55.0f }, { "colorDrive", 25.0f }, { "colorTone", -20.0f },
+            { "filterMode", 1.0f }, { "filterCutoff", 1400.0f }, { "filterReso", 35.0f }, { "spaceDelay", 35.0f }, { "spaceSync", 1.0f }, { "spaceDiv", 8.0f }, { "spaceFeedback", 45.0f },
+            { "m1Sync", 1.0f }, { "m1Div", 14.0f } },
+          { "1:filterCutoff:0.3" } },
+
+        { "Back to Front",
+          { { "size", 340.0f }, { "rate", 12.0f }, { "reverse", 85.0f }, { "spray", 18.0f }, { "slant", 80.0f }, { "randPan", 35.0f }, { "spaceReverb", 35.0f }, { "spaceDecay", 4.0f }, { "spaceTone", 45.0f } },
+          {} },
+
+        { "Warm Ladder",
+          { { "size", 120.0f }, { "rate", 26.0f }, { "spray", 6.0f }, { "filterMode", 1.0f }, { "filterCutoff", 650.0f }, { "filterReso", 62.0f }, { "filterDrive", 40.0f }, { "filterEnv", 45.0f }, { "filterKey", 50.0f },
+            { "release", 700.0f }, { "spaceReverb", 15.0f }, { "spaceDecay", 2.0f }, { "m1Rate", 0.2f } },
+          { "1:filterCutoff:0.12" } },
+
+        { "Breath Held",
+          { { "size", 2000.0f }, { "rate", 30.0f }, { "spray", 15.0f }, { "fade", 100.0f }, { "attack", 2500.0f }, { "release", 6000.0f }, { "filterMode", 0.0f }, { "filterCutoff", 1800.0f }, { "spaceReverb", 35.0f }, { "spaceDecay", 10.0f } },
+          {} },
+
+        { "Paper Choir",
+          { { "rateMode", 2.0f }, { "grains", 18.0f }, { "grainSize", 200.0f }, { "randPitch", 0.2f }, { "randPan", 75.0f }, { "spray", 12.0f }, { "attack", 500.0f }, { "release", 2200.0f },
+            { "filterMode", 0.0f }, { "filterCutoff", 4200.0f }, { "filterMorph", 0.35f }, { "spaceReverb", 40.0f }, { "spaceDecay", 6.0f }, { "spaceShimmer", 15.0f } },
+          {} },
+
+        { "Dust Engine",
+          { { "rateMode", 1.0f }, { "rateDiv", 3.0f }, { "sizeSync", 1.0f }, { "sizeDiv", 1.0f }, { "randAmp", 60.0f }, { "reverse", 20.0f }, { "colorBits", 8.0f }, { "colorRate", 9000.0f }, { "colorDrive", 45.0f }, { "colorComp", 40.0f },
+            { "filterMode", 0.0f }, { "filterCutoff", 6000.0f } },
+          {} },
+
+        // MIX in the room: the track stays present, and the reverb takes both.
+        { "Far Room",
+          { { "mix", 55.0f }, { "size", 300.0f }, { "rate", 14.0f }, { "spray", 35.0f }, { "randPan", 60.0f }, { "spaceReverb", 55.0f }, { "spaceDecay", 7.0f }, { "spaceSize", 90.0f }, { "spaceTone", 40.0f } },
+          {} },
+
+        { "Broken Clock",
+          { { "size", 95.0f }, { "rate", 7.0f }, { "jitter", 100.0f }, { "reverse", 30.0f }, { "randAmp", 50.0f }, { "randPitch", 0.0f }, { "spaceDelay", 40.0f }, { "spaceTime", 310.0f }, { "spaceFeedback", 60.0f }, { "colorWow", 20.0f } },
+          {} },
+
+        { "Under Ice",
+          { { "size", 700.0f }, { "rate", 22.0f }, { "spray", 40.0f }, { "pitch", -12.0f }, { "filterMode", 1.0f }, { "filterCutoff", 420.0f }, { "filterReso", 25.0f }, { "spaceReverb", 45.0f }, { "spaceDecay", 11.0f }, { "spaceTone", 15.0f }, { "m1Rate", 0.05f } },
+          { "1:filterCutoff:0.2" } },
     };
     return list;
 }
@@ -151,6 +225,10 @@ juce::String categoryOfFactory (const juce::String& name)
         { "Init", "TONAL" },          { "Glass Cloud", "PADS" },     { "Tape Choir", "TEXTURES" },  { "Rust Rhythm", "RHYTHMIC" },
         { "Bell Garden", "TONAL" },   { "Wander", "TEXTURES" },      { "Dark Drone", "DRONES" },    { "Shimmer Pad", "PADS" },
         { "Hit Chop", "SLICES" },     { "Stutter Grid", "SLICES" },  { "Feed Bloom", "TEXTURES" },  { "Sample Strings", "TONAL" },
+        { "Moth Light", "PADS" },     { "Salt Flats", "DRONES" },    { "Old Cassette", "TEXTURES" }, { "Slow Tide", "PADS" },
+        { "Hollow Bell", "TONAL" },   { "Rain on Tin", "TEXTURES" }, { "Night Bus", "RHYTHMIC" },   { "Back to Front", "TEXTURES" },
+        { "Warm Ladder", "TONAL" },   { "Breath Held", "DRONES" },   { "Paper Choir", "PADS" },     { "Dust Engine", "RHYTHMIC" },
+        { "Far Room", "PADS" },       { "Broken Clock", "RHYTHMIC" }, { "Under Ice", "DRONES" },
         { "Grit Bells", "TONAL" },    { "Ducked Echoes", "RHYTHMIC" }, { "Spread Chorus", "PADS" }, { "Head Patterns", "RHYTHMIC" },
     };
     const auto it = categoryOf.find (name);

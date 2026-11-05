@@ -1,5 +1,7 @@
 #pragma once
 
+#include <kit/HalfBand.h>
+
 #include <array>
 
 namespace silt
@@ -44,27 +46,10 @@ public:
     static std::array<double, 5> tapMixFor (double morph, double slope, double resonance, double cutoffHz) noexcept;
 
 private:
-    // One path of the half-band filter: all-pass sections in series.
-    struct AllPassPath
-    {
-        std::array<double, 2> x {}, y {};
-        double run (double in, const std::array<double, 2>& coefficients) noexcept
-        {
-            for (size_t n = 0; n < coefficients.size(); ++n)
-            {
-                const double out = coefficients[n] * (in - y[n]) + x[n];
-                x[n] = in;
-                y[n] = out;
-                in = out;
-            }
-            return in;
-        }
-    };
-
     struct Channel
     {
         std::array<double, 4> poles {};
-        AllPassPath upA, upB, downA, downB;
+        kit::HalfBandPath upA, upB, downA, downB;
         double dcIn = 0.0, dcOut = 0.0;
     };
 

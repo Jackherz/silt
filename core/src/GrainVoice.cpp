@@ -347,17 +347,20 @@ bool GrainVoice::advancePlayhead (const GrainParams& p, const SampleBuffer& buff
 // forward reads at a ratio above 1 gain on the write head, reversed reads
 // start at the far end of their span, and the write head overwrites the
 // oldest audio as the grain plays, so neither end of the read may cross it.
-double GrainVoice::liveStart (const GrainParams& p, const SampleBuffer& ring, int length, double ratio, double scatter) const noexcept
+double GrainVoice::liveStart (const GrainParams& p, const SampleBuffer& ring, int length, double ratio, double scatter, int sampleInBlock) const noexcept
 {
+    // "Now" to the sample the grain starts on. Grains starting at different distances behind
+    // the audio cancel its highs when they overlap, a low-pass nobody asked for.
+    const double now = p.liveNow + sampleInBlock;
     constexpr double guard = 64.0 + edgeGuardFrames;
     const double span = length * ratio;
-    const double newest = p.liveNow - guard - std::max (span, (ratio - 1.0) * length);
-    const double oldest = p.liveNow - ring.getNumFrames() + length + p.liveMargin + guard;
-    const double aimed = p.liveNow - p.liveDelayMs * 0.001 * ring.getSampleRate() + scatter;
+    const double newest = now - guard - std::max (span, (ratio - 1.0) * length);
+    const double oldest = now - ring.getNumFrames() + length + p.liveMargin + guard;
+    const double aimed = now - p.liveDelayMs * 0.001 * ring.getSampleRate() + scatter;
     return std::clamp (aimed, oldest, std::max (oldest, newest));
 }
 
-void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) noexcept
+void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer, int sampleInBlock) noexcept
 {
     // Grains mode keeps a ceiling of twice the count: while Size shrinks, the
     // longer grains already playing would otherwise block new ones and leave
@@ -401,7 +404,7 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer) n
     double start = looping ? region.begin + wrapFrames (playhead + scatter - region.begin, (int) regionFrames)
                            : grainStartFor (region, length * ratio) + scatterWithin (region, length * ratio, scatter);
     if (p.live)
-        start = liveStart (p, buffer, length, ratio, scatter);
+        start = liveStart (p, buffer, length, ratio, scatter, sampleInBlock);
     const bool reversed = random.next01() < p.reverseChance;
     const auto span = grainReadSpan (start, length, ratio);
 
@@ -528,14 +531,14 @@ void GrainVoice::render (float* left, float* right, int numSamples,
                 const double ppq = p.gridPpq + i * p.ppqPerSample;
                 if (firstGrainPending)
                 {
-                    spawnGrain (p, *buffer);
+                    spawnGrain (p, *buffer, i);
                     lastSpawnPpq = ppq;
                 }
                 else if (ppq >= nextGridPpq - 1.0e-9)
                 {
                     // Skip a grid line that falls right after the note's own grain.
                     if (ppq - lastSpawnPpq > 0.25 * p.gridDivision)
-                        spawnGrain (p, *buffer);
+                        spawnGrain (p, *buffer, i);
                     lastSpawnPpq = ppq;
                     while (nextGridPpq <= ppq + 1.0e-9)
                         nextGridPpq += p.gridDivision;
@@ -544,7 +547,7 @@ void GrainVoice::render (float* left, float* right, int numSamples,
             }
             else if (samplesToNextGrain <= 0.0)
             {
-                spawnGrain (p, *buffer);
+                spawnGrain (p, *buffer, i);
                 // Jitter spreads the next start over 0…2 intervals at full amount,
                 // keeping the average rate.
                 const double jitter = std::clamp (p.jitter, 0.0, 1.0);

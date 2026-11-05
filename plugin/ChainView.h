@@ -14,6 +14,11 @@ public:
     explicit ChainView (SiltProcessor&);
 
     std::function<void (int module)> onOpen;   // a module was clicked
+    std::function<void (int module)> onMenu;   // a module was right-clicked
+
+    // The module whose page is open (−1: none) and, for RES, which of its two halves.
+    void setOpen (int module, int half);
+    juce::Rectangle<int> moduleBounds (int module) const;
 
     void update();   // the timer: repaints when the order or a module's state changed
     void paint (juce::Graphics&) override;
@@ -37,5 +42,6 @@ private:
     float dragOffset = 0.0f;    // pointer x − the block's left edge
     float dragX = 0.0f;         // the dragged block's left edge
     bool moved = false;
+    int openModule = -1, openHalf = 0;
 };
 } // namespace silt::ui

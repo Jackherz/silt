@@ -215,9 +215,11 @@ void drawFilter (juce::Graphics& g, juce::Rectangle<float> area, const SiltProce
 {
     const int mode = juce::roundToInt (live (silt, "filterMode"));
     const float cutoff = live (silt, "filterCutoff");
-    const auto title = mode == 0 ? juce::String ("FILTER - OFF")
-                                 : "FILTER - " + text (silt, "filterMorph", live (silt, "filterMorph")) + " " + juce::String (mode == 2 ? "24 DB" : "12 DB")
-                                       + " " + text (silt, "filterCutoff", cutoff);
+    const bool open = SiltProcessor::filterIsOpen (cutoff, live (silt, "filterReso") * 0.01f, live (silt, "filterMorph"), live (silt, "filterDrive") * 0.01f,
+                                                   live (silt, "filterEnv") * 0.01f, live (silt, "filterKey") * 0.01f, live (silt, "filterMix") * 0.01f);
+    const auto title = open ? juce::String ("FILTER - OPEN")
+                            : "FILTER - " + text (silt, "filterMorph", live (silt, "filterMorph")) + " " + juce::String (mode == 1 ? "24 DB" : "12 DB")
+                                  + " " + text (silt, "filterCutoff", cutoff);
     auto plot = frame (g, area, title);
 
     const auto xFor = [&] (double hz) { return plot.getX() + plot.getWidth() * (float) (std::log10 (hz / 20.0) / 3.0); };
@@ -233,9 +235,9 @@ void drawFilter (juce::Graphics& g, juce::Rectangle<float> area, const SiltProce
     for (int i = 0; i <= 120; ++i)
     {
         const double hz = 20.0 * std::pow (1000.0, i / 120.0);
-        const double db = mode == 0 ? 0.0
+        const double db = open ? 0.0
                                     : 20.0 * std::log10 (std::max (1.0e-6, filterMagnitude (hz, cutoff, live (silt, "filterReso") * 0.01,
-                                                                                            live (silt, "filterMorph"), mode == 2, live (silt, "filterMix") * 0.01)));
+                                                                                            live (silt, "filterMorph"), mode == 1, live (silt, "filterMix") * 0.01)));
         const juce::Point<float> p (xFor (hz), yFor (db));
         if (i == 0)
         {
@@ -251,7 +253,7 @@ void drawFilter (juce::Graphics& g, juce::Rectangle<float> area, const SiltProce
     g.setColour (rust.withAlpha (0.35f));
     g.fillPath (fill);
     glowStroke (g, curve, juce::Colour (0xffd8693f), 1.5f);
-    if (mode != 0)
+    if (! open)
     {
         g.setColour (screenPale.withAlpha (0.7f));
         g.drawVerticalLine ((int) xFor (cutoff), plot.getY(), plot.getBottom());

@@ -11,10 +11,6 @@ namespace
 {
 constexpr double pi = 3.14159265358979323846;
 
-// Half-band all-pass paths: flat to 0.42 of the rate, 69 dB down from 0.6.
-constexpr std::array<double, 2> pathA { 0.07986642623635751, 0.5453536510711322 };
-constexpr std::array<double, 2> pathB { 0.28382934487410993, 0.8344118914807379 };
-
 constexpr double level = 1.5;           // how hard a full-scale signal reaches the stages at no DRIVE
 constexpr double maxDriveDb = 24.0;
 constexpr double evenAtRest = 0.03, evenAtFullDrive = 0.2;   // a little second harmonic, as a real input stage has
@@ -196,11 +192,11 @@ void Filter::process (float* left, float* right, int numSamples, const FilterPar
                     return sum;
                 };
                 std::array<double, 5> taps;
-                tick (c, shaped (c.upA.run (driven, pathA)), f, feedback, taps);
+                tick (c, shaped (c.upA.run (driven, kit::HalfBandPath::a)), f, feedback, taps);
                 const double older = mixed (taps);
-                tick (c, shaped (c.upB.run (driven, pathB)), f, feedback, taps);
+                tick (c, shaped (c.upB.run (driven, kit::HalfBandPath::b)), f, feedback, taps);
                 const double newer = mixed (taps);
-                const double y = 0.5 * (c.downA.run (newer, pathA) + c.downB.run (older, pathB)) / (level * std::sqrt (driveGain));
+                const double y = 0.5 * (c.downA.run (newer, kit::HalfBandPath::a) + c.downB.run (older, kit::HalfBandPath::b)) / (level * std::sqrt (driveGain));
 
                 // The even harmonic's offset, and the only thing that would stay on with no input.
                 c.dcOut = y - c.dcIn + dcCoefficient * c.dcOut;

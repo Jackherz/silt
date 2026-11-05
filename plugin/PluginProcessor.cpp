@@ -245,8 +245,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
 
     // Filter: after the resonator.
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "filterMode", 1 }, "Filter",
-                                                              juce::StringArray { "Off", "12 dB", "24 dB" }, 0),
-                withUnit ("filterCutoff", "Filter cutoff", skewed (20.0f, 20000.0f, 1000.0f), 1000.0f, [] (float v, int)
+                                                              juce::StringArray { "12 dB", "24 dB" }, 0),
+                withUnit ("filterCutoff", "Filter cutoff", skewed (20.0f, 20000.0f, 1000.0f), 20000.0f, [] (float v, int)
                 {
                     return v >= 1000.0f ? juce::String (v / 1000.0f, v >= 10000.0f ? 1 : 2) + " kHz"
                                         : juce::String (juce::roundToInt (v)) + " Hz";
@@ -609,6 +609,7 @@ void SiltProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamples
         moduleLevel[(size_t) m] = raw->moduleOn[(size_t) m]->load() > 0.5f ? 1.0f : 0.0f;
     resonator.prepare (sampleRate);
     filter.prepare (sampleRate);
+    tapeInput.prepare (sampleRate);
     color.prepare (sampleRate);
     space.prepare (sampleRate);
     for (size_t m = 0; m < modulators.size(); ++m)
@@ -797,7 +798,7 @@ silt::FilterParams SiltProcessor::readFilterParams() const noexcept
 {
     const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
     silt::FilterParams p;
-    p.slope = (silt::FilterSlope) juce::jlimit (0, 2, (int) v (raw->filterMode));
+    p.slope = (int) v (raw->filterMode) == 1 ? silt::FilterSlope::db24 : silt::FilterSlope::db12;
     p.cutoffHz = v (raw->filterCutoff);
     p.resonance = v (raw->filterReso) * 0.01f;
     p.morph = v (raw->filterMorph);
@@ -805,6 +806,9 @@ silt::FilterParams SiltProcessor::readFilterParams() const noexcept
     p.envAmount = v (raw->filterEnv) * 0.01f;
     p.keyOctaves = lastNote >= 0 ? v (raw->filterKey) * 0.01f * (float) (lastNote - 60) / 12.0f : 0.0f;
     p.mix = v (raw->filterMix) * 0.01f;
+    // Wide open with nothing to add, it passes the sound through untouched.
+    if (filterIsOpen (p.cutoffHz, p.resonance, p.morph, p.drive, p.envAmount, v (raw->filterKey) * 0.01f, p.mix))
+        p.slope = silt::FilterSlope::off;
     return p;
 }
 
@@ -1070,6 +1074,9 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
                 inRight = inputScaled[1].data();
             }
             peak *= juce::jmax (target, inputGainNow);
+            // Past 0 dB the track meets the tape rather than peaking.
+            if (inLeft == inputScaled[0].data())
+                tapeInput.process (inputScaled[0].data(), inputScaled[1].data(), len, juce::Decibels::gainToDecibels (inputGainNow, -100.0f), juce::Decibels::gainToDecibels (target, -100.0f));
             inputGainNow = target;
         }
         modContext.inputPeak = peak;
@@ -1098,6 +1105,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
             grainParams.gridPpq = blockPpq + start * ppqPerSample;
         }
         lastLive = grainParams.live;
+        delayForced.store (grainParams.live && grainParams.liveDelayMs < grainParams.sizeMs * std::max (1.0, std::pow (2.0, grainParams.pitchSemitones / 12.0)), std::memory_order_relaxed);
 
         const int liveWriteBefore = engine.getLiveWritePosition();
         engine.process (wet.getWritePointer (0), wet.getWritePointer (1), len, inLeft, inRight,
@@ -2104,6 +2112,7 @@ silt::layout::Context SiltProcessor::layoutContext() const
     };
     c.modShown = modShown.load();
     c.resonatorHalf = resonatorHalf.load();
+    c.delayForced = delayForced.load (std::memory_order_relaxed);
     return c;
 }
 
@@ -2951,8 +2960,7 @@ void SiltProcessor::getStateInformation (juce::MemoryBlock& destData)
     {
         state.setProperty ("editorWidth", editorWidth.load(), nullptr);
         state.setProperty ("editorHeight", editorHeight.load(), nullptr);
-        state.setProperty ("layout", juce::String (layoutWell.load()) + "," + juce::String (layoutRail.load()) + ","
-                                         + juce::String (layoutField.load()) + "," + juce::String (layoutInset.load()) + "," + juce::String (layoutSide.load()), nullptr);
+        state.setProperty ("layout", juce::String (layoutWell.load()) + "," + juce::String (layoutSide.load()), nullptr);
     }
 
     juce::MemoryBlock flac;
@@ -3054,14 +3062,10 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
         randomExcluded = juce::StringArray::fromTokens (tree.getProperty ("randomExcluded").toString(), ",", "");
     editorWidth.store ((int) tree.getProperty ("editorWidth", 0));
     editorHeight.store ((int) tree.getProperty ("editorHeight", 0));
-    if (const auto layout = juce::StringArray::fromTokens (tree.getProperty ("layout").toString(), ",", ""); layout.size() >= 4)
+    if (const auto layout = juce::StringArray::fromTokens (tree.getProperty ("layout").toString(), ",", ""); layout.size() == 2)
     {
         layoutWell.store (juce::jlimit (0.1f, 0.9f, layout[0].getFloatValue()));
-        layoutRail.store (juce::jlimit (0.1f, 0.4f, layout[1].getFloatValue()));
-        if (layout.size() > 4)
-            layoutSide.store (juce::jlimit (0.1f, 0.5f, layout[4].getFloatValue()));
-        layoutField.store (juce::jlimit (0.15f, 0.85f, layout[2].getFloatValue()));
-        layoutInset.store (juce::jlimit (0.15f, 0.7f, layout[3].getFloatValue()));
+        layoutSide.store (juce::jlimit (0.1f, 0.5f, layout[1].getFloatValue()));
     }
 
     if constexpr (! isInstrument)

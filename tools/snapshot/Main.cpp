@@ -76,9 +76,6 @@ int main (int argc, char* argv[])
         {
             const auto parts = juce::StringArray::fromTokens (setting.fromFirstOccurrenceOf ("=", false, false), ",", "");
             silt.layoutWell.store (parts[0].getFloatValue());
-            silt.layoutRail.store (parts[1].getFloatValue());
-            silt.layoutField.store (parts[2].getFloatValue());
-            silt.layoutInset.store (parts[3].getFloatValue());
             continue;
         }
         if (id == "view")   // view=from,to: the waveform zoomed to that part (shares)

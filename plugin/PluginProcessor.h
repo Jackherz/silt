@@ -8,6 +8,7 @@
 #include <silt/Engine.h>
 #include <silt/Color.h>
 #include <silt/Filter.h>
+#include <kit/TapeInput.h>
 #include <silt/LevelMeter.h>
 #include <silt/Modulator.h>
 #include <silt/Resonator.h>
@@ -125,6 +126,15 @@ public:
     static std::array<int, numModules> chainOrder (int index);
     static int chainOrderIndex (const std::array<int, numModules>&);
     static juce::String moduleName (int module);
+    // True when the filter would change nothing: all the way open (or a high pass all the
+    // way down) with nothing moving it, or MIX at 0.
+    static bool filterIsOpen (float cutoffHz, float resonance, float morph, float drive, float env, float key, float mix)
+    {
+        if (mix <= 0.0f)
+            return true;
+        const bool still = resonance <= 0.0f && drive <= 0.0f && std::abs (env) < 0.001f && std::abs (key) < 0.001f;
+        return still && ((morph <= 0.001f && cutoffHz >= 19900.0f) || (morph >= 1.999f && cutoffHz <= 21.0f));
+    }
     static juce::String moduleOnId (int module);       // its ON switch: "resOn", "filterOn", "colorOn", "spaceOn"
     static juce::String chainOrderName (int index);   // "R>F>C>S"
 
@@ -283,9 +293,10 @@ public:
     // takes, how much of the width the mod rail takes, and within the screen
     // how much of its height the grain field (and the corner picture) takes
     // and how much of its width the corner picture takes.
-    struct Layout { float well = 0.36f, rail = 0.16f, field = 0.36f, inset = 0.33f, side = 0.27f; };
+    struct Layout { float well = 0.36f, side = 0.27f; };
     static Layout defaultLayout() { return {}; }
-    std::atomic<float> layoutWell { 0.36f }, layoutRail { 0.16f }, layoutField { 0.36f }, layoutInset { 0.33f }, layoutSide { 0.27f };   // as Layout's
+    std::atomic<float> layoutWell { 0.36f }, layoutSide { 0.27f };
+    std::atomic<bool> delayForced { false };   // SIZE (and pitch) reach further back than DELAY asks: DELAY has no say
 
     // Read by the editor on the message thread.
     silt::LevelMeter captureMeter;
@@ -388,6 +399,7 @@ private:
     void writeScope (std::array<std::atomic<float>, scopeSize>&, const float* l, const float* r, int count) noexcept;
     float sampleGainNow = 1.0f;   // audio thread: the gain ramped to
     float mixNow = 1.0f;          // audio thread: MIX, ramped across a chunk
+    kit::TapeInput tapeInput;    // audio thread: INPUT past 0 dB
     float inputGainNow = 1.0f;    // audio thread: Silt FX's INPUT, ramped to
     std::array<std::array<float, modulationInterval>, 2> inputScaled {};   // audio thread: the input through INPUT
 

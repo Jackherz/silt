@@ -29,6 +29,7 @@ struct Context
     std::function<float (const juce::String& id)> value;
     int modShown = 0;
     int resonatorHalf = 0;   // RESONATOR has two pages of controls: 0 or 1
+    bool delayForced = false;   // the grains reach further back than DELAY asks
     float v (const juce::String& id) const { return value (id); }
 };
 

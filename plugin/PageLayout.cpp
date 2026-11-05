@@ -89,7 +89,9 @@ std::vector<Entry> build (bool instrument)
     {
         // Silt FX: always LIVE, so no MODE, and LIVE's controls from the first slot.
         knob (play, 0, "liveDelay", "DELAY", off ("delaySync"));
+        e.back().dimmed = [] (const Context& c) { return c.delayForced; };
         knob (play, 0, "delayDiv", "DELAY", on ("delaySync"));
+        e.back().dimmed = [] (const Context& c) { return c.delayForced; };
         under (Kind::underButton, play, 0, "delaySync", 60, {}, "SYNC");
         knob (play, 1, "feedback", "FEEDBACK");
         button (play, 2, "freeze", "FREEZE", "FREEZE");
@@ -97,7 +99,7 @@ std::vector<Entry> build (bool instrument)
         knob (play, 4, "root", "ROOT");
         // How the track comes in and goes out: on screen whatever the page, as a MIX left
         // down somewhere out of sight sounds like every effect has stopped working.
-        for (const auto& [slot, id, label] : { std::tuple { 5, "gain", "OUTPUT" }, std::tuple { 6, "mix", "MIX" }, std::tuple { 7, "inputGain", "INPUT" } })
+        for (const auto& [slot, id, label] : { std::tuple { 5, "gain", "OUTPUT" }, std::tuple { 6, "mix", "DRY/GRAIN" }, std::tuple { 7, "inputGain", "INPUT" } })
         {
             knob (play, slot, id, label);
             e.back().alwaysShown = true;
@@ -116,14 +118,16 @@ std::vector<Entry> build (bool instrument)
         menu (play, 4, "endMode", "AT THE END", { "LOOP", "HOLD", "STOP" }, sampleMode);
         under (Kind::underMenu, play, 1, "snap", 104, { "SNAP OFF", "SNAP ZERO", "SNAP TRANS" }, {}, sampleMode);
         knob (play, 1, "liveDelay", "DELAY", both (liveMode, off ("delaySync")));
+        e.back().dimmed = [] (const Context& c) { return c.delayForced; };
         knob (play, 1, "delayDiv", "DELAY", both (liveMode, on ("delaySync")));
+        e.back().dimmed = [] (const Context& c) { return c.delayForced; };
         knob (play, 2, "feedback", "FEEDBACK", liveMode);
         button (play, 3, "freeze", "FREEZE", "FREEZE", liveMode);
         menu (play, 4, "liveRun", "NO NOTES", { "OFF", "ALWAYS", "FOLLOW" }, liveMode);
         under (Kind::underButton, play, 1, "delaySync", 60, {}, "SYNC", liveMode);
         knob (play, 5, "root", "ROOT");
         knob (play, 6, "gain", "OUTPUT");
-        knob (play, 7, "mix", "MIX", liveMode);
+        knob (play, 7, "mix", "DRY/GRAIN", liveMode);
     }
 
     // RESONATOR: a bank of ringing bands on the grains. SCALE notes come from the
@@ -150,7 +154,7 @@ std::vector<Entry> build (bool instrument)
 
     // FILTER: after the resonator. MORPH blends low, band and high pass; ENV lets
     // the level move the cutoff; KEY follows the notes played.
-    menu (filter, 0, "filterMode", "MODE", { "OFF", "12 DB", "24 DB" });
+    menu (filter, 0, "filterMode", "MODE", { "12 DB", "24 DB" });
     knob (filter, 1, "filterCutoff", "CUTOFF");
     knob (filter, 2, "filterReso", "RESO");
     knob (filter, 3, "filterMorph", "MORPH");

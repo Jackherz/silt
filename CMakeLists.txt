@@ -44,7 +44,7 @@ add_library(silt_core STATIC
     core/src/SampleBuffer.cpp
     core/src/Snap.cpp
     core/src/Space.cpp)
-target_include_directories(silt_core PUBLIC core/include)
+target_include_directories(silt_core PUBLIC core/include kit/include)   # the kit's JUCE-free DSP headers
 target_compile_options(silt_core PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W4> $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wshadow>)
 set_target_properties(silt_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 

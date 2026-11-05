@@ -711,6 +711,28 @@ TEST_CASE ("Follow: an input attack retriggering the voice doesn't step the outp
     }
 }
 
+TEST_CASE ("Dense live grains leave the highs alone: overlapping isn't a filter")
+{
+    const auto levelAt = [] (double hz)
+    {
+        LiveEngine engine;
+        GrainParams p;
+        p.live = true;
+        p.liveTrigger = LiveTrigger::always;
+        p.sizeMs = 1400.0;
+        p.rateHz = 100.0;
+        p.jitter = 0.5;
+        const auto out = renderLive (engine, p, 5 * 48000, [=] (int i) { return 0.2f * (float) std::sin (6.283185307179586 * hz * i / sampleRate); });
+        double sum = 0.0;
+        for (int i = 3 * 48000; i < 5 * 48000; ++i)
+            sum += (double) out.left[(size_t) i] * out.left[(size_t) i];
+        return std::sqrt (sum / (2 * 48000));
+    };
+    const double low = levelAt (200.0), high = levelAt (5000.0);
+    INFO ("200 Hz " << low << ", 5 kHz " << high);
+    CHECK (high > low * 0.7);
+}
+
 TEST_CASE ("One voice has grains for the longest SIZE at the fastest RATE")
 {
     LiveEngine engine;

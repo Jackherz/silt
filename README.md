@@ -18,7 +18,7 @@ Design and build plan: [`../granular-sampler-vst-research/09-implementation-plan
 - **Silt FX has no sample:** it only grains its track's audio (always Live mode), so it
   has no LOAD, ARM, RESAMPLE, DRAG, sample GAIN or sample tools. **LEVELS**, always on
   screen, holds **INPUT** (-24 to +24 dB, how loud the track goes into the grains; presets
-  and RANDOM leave it alone), **MIX** and **OUTPUT**.
+  and RANDOM leave it alone. Past 0 dB it drives an old tape machine: a soft ceiling instead of a peak, more bass, less top and a little hiss the harder you push), **MIX** and **OUTPUT**.
 - **MIX** (Silt FX, and LIVE and FEED on Silt): the dry input against the grains. Both go on
   through the chain together, so a filter or reverb works on the dry signal too, and MIX at
   0 makes Silt FX a plain effects chain. RANDOM leaves it alone.

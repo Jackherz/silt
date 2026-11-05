@@ -149,7 +149,7 @@ public:
         if (n > 0)
             std::copy (v.begin(), v.begin() + n, views.begin());
         numViews = n;
-        fadeFrames = n > 0 ? 45 : juce::jmax (0, fadeFrames - 1);   // trails fade for 1.5 s after the last grain
+        fadeFrames = n > 0 ? 90 : juce::jmax (0, fadeFrames - 1);   // trails fade for 3 s after the last grain
         const bool changed = n > 0 || fadeFrames > 0 || h != heads || info != hud;
         heads = h;
         hud = info;
@@ -403,7 +403,7 @@ public:
     }
 
     juce::Point<int> getInsetTopLeft() const { return insetArea().getTopLeft(); }
-    void restyle() { bezel = {}; field = {}; fieldBackdrop = {}; repaint(); }   // after a theme change
+    void restyle() { field = {}; fieldBackdrop = {}; repaint(); }   // after a theme change
 
     juce::Rectangle<int> scopeArea() const
     {
@@ -443,24 +443,12 @@ public:
             g.reduceClipRegion (area.toNearestInt());
             drawInset (g, area);
         }
-
-        // Under glass: a shadow cast by the bezel along the top, and a faint sheen.
-        if (! glass.isEmpty())
-        {
-            const auto face = glass.toFloat();
-            g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.45f), 0.0f, face.getY(),
-                                                     juce::Colours::transparentBlack, 0.0f, face.getY() + 9.0f, false));
-            g.fillRect (face.withHeight (9.0f));
-            g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.07f), 0.0f, face.getY(),
-                                                     juce::Colours::transparentWhite, 0.0f, face.getY() + face.getHeight() * 0.45f, false));
-            g.fillRect (face.withHeight (face.getHeight() * 0.45f));
-        }
     }
 
     // Right-aligned at the bottom: the grain roll's height plus the status line.
     juce::Rectangle<int> insetArea() const
     {
-        auto content = getLocalBounds().reduced (8 + 12 + 10, 8 + 8 + 6);
+        auto content = getLocalBounds().reduced (6 + 10, 6 + 6);
         const int rollAndStatus = juce::roundToInt ((float) (content.getHeight() - 36) * fieldShare) + 20;
         return content.removeFromRight (juce::roundToInt ((float) content.getWidth() * insetShare)).removeFromBottom (rollAndStatus);
     }
@@ -523,27 +511,13 @@ private:
 
     void paintScreen (juce::Graphics& g)
     {
-        // The bezel: a dark frame lit from above, a lighter ring, then the
-        // glass; drawn once per size and theme.
+        // Flat, like the rest of the sheet: the screen's colour inside a hard frame.
         auto r = getLocalBounds();
-        if (bezel.getWidth() != getWidth() || bezel.getHeight() != getHeight())
-        {
-            bezel = juce::Image (juce::Image::ARGB, juce::jmax (1, getWidth()), juce::jmax (1, getHeight()), true);
-            juce::Graphics b (bezel);
-            auto ring = r;
-            b.setGradientFill (juce::ColourGradient (frame.brighter (0.25f), 0.0f, (float) ring.getY(), frame.darker (0.35f), 0.0f, (float) ring.getBottom(), false));
-            b.fillRect (ring.toFloat());
-            b.setColour (juce::Colours::white.withAlpha (0.12f));
-            b.drawRect (ring.toFloat().reduced (0.5f), 1.0f);
-            ring.reduce (8, 8);
-            b.setGradientFill (juce::ColourGradient (screenLight.brighter (0.15f), 0.0f, (float) ring.getY(), screenLight.darker (0.15f), 0.0f, (float) ring.getBottom(), false));
-            b.fillRect (ring.toFloat());
-            ring.reduce (12, 8);
-            b.setColour (screenBlue);
-            b.fillRect (ring);
-        }
-        g.drawImageAt (bezel, 0, 0);
-        r.reduce (20, 16);
+        g.setColour (screenBlue);
+        g.fillRect (r);
+        g.setColour (frame);
+        g.drawRect (r, 2);
+        r.reduce (6, 6);
         glass = r;
 
         auto inner = r.reduced (10, 6);
@@ -747,7 +721,7 @@ private:
         juce::Graphics g (field);
         // Fade what's there, each look at its own pace: clouds linger, film flickers off.
         static constexpr int keep[] { 170, 205, 150, 120, 236 };   // of 256 per frame, by FieldLook
-        const int kept = keep[(int) look];
+        const int kept = (keep[(int) look] + 256) / 2;   // long trails: the field keeps the last seconds in view
         ++tick;
         {
             juce::Image::BitmapData pixels (field, juce::Image::BitmapData::readWrite);
@@ -1006,7 +980,6 @@ private:
     juce::Image fieldBackdrop;   // what's behind the grains, by look
     unsigned tick = 0;     // the field's own clock, for twinkles and waves
     juce::Rectangle<int> glass;   // the screen's face, inside the bezel
-    juce::Image bezel;            // the bezel and the empty glass, drawn once per size and theme
     float fieldShare = 0.36f, insetShare = 0.33f;
     int fadeFrames = 0;    // frames left to fade after the last grain
     bool scopeShown = false, scopeQuiet = true;

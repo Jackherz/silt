@@ -377,7 +377,7 @@ TEST_CASE ("A theme changes the palette, and Cream puts it back")
     CHECK (silt::ui::chassis == cream);
 }
 
-TEST_CASE ("The strip's controls fit without overlapping at the smallest size")
+TEST_CASE ("The keys fit without overlapping at the smallest size")
 {
     EditorRig rig;
     rig.editor->setSize (860, 520);
@@ -395,10 +395,10 @@ TEST_CASE ("The strip's controls fit without overlapping at the smallest size")
 TEST_CASE ("The screen's grip trades height with the knobs, is kept with the session, and double-click resets it")
 {
     EditorRig rig;
-    rig.editor->setSize (1800, 900);   // wide and short: the well's height, not the column's width, limits the knobs
+    rig.editor->setSize (1800, 900);   // wide: the well's height, not the column's width, limits the knobs
     auto* knob = rig.editor->findKnob ("pitch");
     REQUIRE (knob != nullptr);
-    const int knobBefore = knob->getHeight();
+    const int gripBefore = [&] { for (auto* child : rig.editor->getChildren()) if (auto* g = dynamic_cast<silt::ui::Divider*> (child); g != nullptr && g->getMouseCursor() == juce::MouseCursor::UpDownResizeCursor) return g->getY(); return 0; }();
 
     // The bar under the screen, its whole width: drag it up 80 px.
     silt::ui::Divider* grip = nullptr;
@@ -411,7 +411,7 @@ TEST_CASE ("The screen's grip trades height with the knobs, is kept with the ses
     grip->onStart();
     rig.editor->dragScreenEdge (-80);
     CHECK (rig.silt.layoutWell.load() > before);
-    CHECK (knob->getHeight() > knobBefore);   // the knobs grow with their well
+    CHECK (grip->getY() < gripBefore);   // the well takes the height from the screen
 
     // Kept with the session.
     juce::MemoryBlock state;
@@ -475,7 +475,7 @@ TEST_CASE ("A right-click on a page key opens its menu without pressing it or ch
     for (auto* child : rig.editor->getChildren())
         if (auto* b = dynamic_cast<juce::TextButton*> (child); b != nullptr && b->getRadioGroupId() == 1)
         {
-            if (b->getButtonText() == "FILTER")
+            if (b->getButtonText() == "SHAPE")
                 filterKey = b;
             if (b->getButtonText() == "GRAIN")
                 grainKey = b;
@@ -580,7 +580,7 @@ TEST_CASE ("Presets: every factory preset has a category; favourites, views and 
     CHECK (count ("ALL", {}) == PresetManager::numFactoryPresets());
     CHECK (count ("SLICES", {}) == 2);
     CHECK (count ("ALL", "bloom") == 1);         // any case
-    CHECK (count ("ALL", "rhythmic") == 3);      // a category matches too
+    CHECK (count ("ALL", "rhythmic") == 6);      // a category matches too
     CHECK (count ("FAVOURITES", {}) == 0);
     presets.setFavourite ("Glass Cloud", true);
     presets.setFavourite ("Dark Drone", true);
@@ -1039,4 +1039,20 @@ TEST_CASE ("The modulators sit beside the knobs, and the knobs clear them")
     REQUIRE (chips != nullptr);
     CHECK (chips->getRight() < knob->getX());
     CHECK (std::abs (chips->getBounds().getCentreY() - knob->getBounds().getCentreY()) < 40);
+}
+
+TEST_CASE ("The Bench's hand stays out for as long as the bars are recording")
+{
+    juce::ScopedJuceInitialiser_GUI juce;
+    kit::bench::Strip strip (silt::ui::stock(), "I-01", "SILT", "SILT");
+    strip.set ("", "", "SEND >", true, false);
+    CHECK_FALSE (strip.handIsHeldOut());
+    strip.set ("", "WAITING", "STOP", true, false);
+    CHECK (strip.handIsHeldOut());
+    CHECK (strip.handsShowing() == kit::bench::Strip::Hands::offer);
+    strip.set ("", "RECORDING", "STOP", true, false);
+    CHECK (strip.handIsHeldOut());
+    strip.set ("", "SENT", "SEND >", true, false);
+    CHECK_FALSE (strip.handIsHeldOut());
+    CHECK (strip.handsShowing() == kit::bench::Strip::Hands::offer);   // on its way back, not gone at once
 }
