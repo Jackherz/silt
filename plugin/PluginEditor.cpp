@@ -376,7 +376,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
 
     // The Bench: SEND records what you hear and passes it on. An effect can send here,
     // too, and the instrument can take that as its sample. Silt FX has no sample to take into.
-    benchStrip = std::make_unique<kit::bench::Strip> (stock(), SiltProcessor::isInstrument ? "I-01" : "I-01 FX", SiltProcessor::isInstrument ? "SILT" : "SILT FX");
+    benchStrip = std::make_unique<kit::bench::Strip> (stock(), SiltProcessor::isInstrument ? "I-01" : "I-01 FX", SiltProcessor::isInstrument ? "SILT" : "SILT FX", "SILT");
     benchStrip->reservedRight = 132;
     benchStrip->onTake = [this] { takeMoment(); };
     benchStrip->onSend = [this] { sendMoment(); };
@@ -1980,7 +1980,7 @@ void SiltEditor::updateBench()
     {
         juce::AudioBuffer<float> moment;
         double rate = 0.0;
-        if (silt.outputRecorder.take (moment, rate) && kit::bench::send (moment, rate, benchChip(), benchName()))
+        if (silt.outputRecorder.take (moment, rate) && kit::bench::send (moment, rate, benchChip(), benchName(), "SILT"))
         {
             momentSent = juce::Time::currentTimeMillis();
             flash = "BARS SENT";
@@ -2038,7 +2038,7 @@ void SiltEditor::sendMoment()
     }
     else
     {
-        const auto file = kit::bench::newAudioFile (silt.audioName());
+        const auto file = kit::bench::newAudioFile ("SILT", silt.audioName());
         if (silt.writeAudioFile (file) && kit::bench::publish (file, silt.getOverview().seconds, benchChip(), benchName()))
             momentSent = juce::Time::currentTimeMillis();
     }

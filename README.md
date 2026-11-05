@@ -225,7 +225,8 @@ doesn't click. A controller can still page to CHAIN for ORDER and the four switc
 next bar line (at once if the host is stopped) and passes it on, or sends the sample if you
 choose that. TAKE makes what an effect sent the sample (Silt FX has nothing to take into).
 FOLDER opens it in the Finder, chooses another folder, or picks a category, which is a folder
-inside it; everything sent stays there, in `~/Music/Bench/` until you choose. Silt keeps the
+inside it. Silt and Silt FX share a folder, separate from Brood's (`~/Music/Bench/Silt/` until
+you choose), and sending between plug-ins works whichever you choose. Silt keeps the
 first 30 seconds of what it takes.
 
 **MIDI:** notes on any channel (omni). The sustain pedal (CC 64) holds notes until it's let

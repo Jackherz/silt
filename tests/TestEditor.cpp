@@ -881,7 +881,7 @@ TEST_CASE ("The Bench: a moment an effect sent becomes the sample, and the sampl
     for (int i = 0; i < moment.getNumSamples(); ++i)
         for (int c = 0; c < 2; ++c)
             moment.setSample (c, i, 0.5f * std::sin ((float) i * 0.05f));
-    REQUIRE (kit::bench::send (moment, 24000.0, "E-01", "BROOD"));
+    REQUIRE (kit::bench::send (moment, 24000.0, "E-01", "BROOD", "BROOD"));
     const auto sent = kit::bench::latest ("I-01");
     REQUIRE (sent.has_value());
     CHECK (sent->fromChip == "E-01");
