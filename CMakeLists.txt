@@ -25,7 +25,7 @@ option(SILT_CORE_ONLY "Build only the JUCE-free core and its tests" OFF)
 
 # Identity. PROVISIONAL until the first public build (plan D2/D3). After that
 # these never change: hosts store them in every saved project.
-set(SILT_COMPANY "Silt Audio")
+set(SILT_COMPANY "Glyph Audio")
 set(SILT_MANUFACTURER_CODE SltA)
 set(SILT_BUNDLE_PREFIX com.siltaudio)
 
@@ -104,6 +104,9 @@ juce_add_binary_data(silt_samples
         resources/samples/guitar-harmonics.flac)
 
 # The shared panel kit: the look, the fonts, the preset browser and the Bench.
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/kit/CMakeLists.txt")
+    message(FATAL_ERROR "The kit is missing. Run: git submodule update --init")
+endif()
 add_subdirectory(kit)
 
 # Host check: loads a built VST3 and round-trips a sample through its state.

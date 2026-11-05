@@ -7,8 +7,8 @@
 // modulator), not the sample, the controller mapping or the window. A factory
 // set is built in; user presets are .siltpreset files (XML) in the standard
 // preset folder:
-//   macOS    ~/Library/Audio/Presets/Silt Audio/<plug-in>/
-//   Windows  %APPDATA%/Silt Audio/<plug-in>/Presets/
+//   macOS    ~/Library/Audio/Presets/Glyph Audio/<plug-in>/
+//   Windows  %APPDATA%/Glyph Audio/<plug-in>/Presets/
 // The browser, the bar and the file handling are the kit's; this is Silt's part.
 class PresetManager final : public kit::PresetLibrary
 {

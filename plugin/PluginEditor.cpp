@@ -162,6 +162,15 @@ void SiltEditor::FineSlider::mouseUp (const juce::MouseEvent& e)
 
 void SiltEditor::FineSlider::mouseDoubleClick (const juce::MouseEvent& e)
 {
+    // On a ring: that modulator comes off this knob, as a double-click resets anything else.
+    if (const int m = modulatorAtRing (e.position); m >= 0 && m != armedHintModulator)
+    {
+        if (routeGesture)
+            routeGesture();
+        setAmount (m, 0.0f);
+        repaint();
+        return;
+    }
     if (e.mods.isAltDown() && target >= 0)
     {
         if (routeGesture)
@@ -2134,7 +2143,7 @@ void SiltEditor::paint (juce::Graphics& g)
         b.fillAll (s.page);
         const bool instrument = SiltProcessor::isInstrument;
         kit::drawMasthead (b, header, s, instrument ? "I-01" : "I-01 FX", s.accent, s.onAccent, juce::String (JucePlugin_Name).toUpperCase() + ".",
-                           instrument ? "INSTRUMENT LINE" : "EFFECTS SIDE", instrument ? "GRANULAR SAMPLER" : "GRANULAR, LIVE");
+                           "GLYPH AUDIO", instrument ? "GRANULAR SAMPLER" : "GRANULAR, LIVE");
         b.setColour (s.shadow);
         b.fillRect (screen->getBounds().translated (3, 3));
         if constexpr (SiltProcessor::isInstrument)

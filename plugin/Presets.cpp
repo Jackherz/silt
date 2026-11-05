@@ -184,9 +184,16 @@ juce::File PresetManager::defaultFolder()
 {
     const auto data = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory);
 #if JUCE_MAC
-    return data.getChildFile ("Audio/Presets/Silt Audio").getChildFile (JucePlugin_Name);
+    const auto folder = data.getChildFile ("Audio/Presets/Glyph Audio").getChildFile (JucePlugin_Name);
+    // Presets from before the range had a name.
+    if (const auto old = data.getChildFile ("Audio/Presets/Silt Audio").getChildFile (JucePlugin_Name); old.isDirectory() && ! folder.exists())
+    {
+        folder.getParentDirectory().createDirectory();
+        old.moveFileTo (folder);
+    }
+    return folder;
 #else
-    return data.getChildFile ("Silt Audio").getChildFile (JucePlugin_Name).getChildFile ("Presets");
+    return data.getChildFile ("Glyph Audio").getChildFile (JucePlugin_Name).getChildFile ("Presets");
 #endif
 }
 

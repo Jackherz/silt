@@ -974,3 +974,25 @@ TEST_CASE ("The Bench: SEND records bars of the exact output and sends them when
     kit::bench::folderForTests = juce::File();
     folderFile.getFile().deleteRecursively();
 }
+
+TEST_CASE ("Double-clicking a modulation ring takes that modulator off the knob")
+{
+    EditorRig rig;
+    auto* knob = dynamic_cast<SiltEditor::FineSlider*> (rig.editor->findKnob ("pitch"));
+    REQUIRE (knob != nullptr);
+    knob->setAmount (0, 0.5f);
+    knob->setAmount (1, 0.25f);
+    rig.editor->setVisible (true);
+    // Draw it, which is what says where the rings are.
+    juce::Image image (juce::Image::ARGB, rig.editor->getWidth(), rig.editor->getHeight(), true);
+    juce::Graphics g (image);
+    rig.editor->paintEntireComponent (g, true);
+    REQUIRE (knob->ringBase > 0.0f);
+    const auto onSecondRing = knob->ringCentre.translated (0.0f, -(knob->ringBase + 3.0f));
+    CHECK (knob->modulatorAtRing (onSecondRing) == 1);
+    const auto now = juce::Time::getCurrentTime();
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    knob->mouseDoubleClick (juce::MouseEvent (source, onSecondRing, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, knob, knob, now, onSecondRing, now, 2, false));
+    CHECK (knob->amountOf (1) == 0.0f);
+    CHECK (knob->amountOf (0) == 0.5f);
+}

@@ -98,8 +98,8 @@ routed to). Design: `docs/mod-section-design.md`.
   down (Shift for fine; it snaps to zero). With a modulator armed, every knob shows
   a dashed ring in its colour: drag that to make the route. Hovering a ring changes
   the cursor and the LCD says what it does. Alt-drag on the knob is a shortcut (the
-  armed modulator, or the knob's only route, or the last one used); Alt+double-click
-  removes it. Plain drag on the knob is always its value; double-click resets it.
+  armed modulator, or the knob's only route, or the last one used); double-clicking a ring
+  or Alt+double-clicking the knob removes it. Plain drag on the knob is always its value; double-click resets it.
   Right-click a knob for each modulator's depth, polarity and removal, in its colour.
 - **Polarity per route:** bipolar (±, both ways round the knob) or unipolar (+, one
   way). A route starts as its source is (WAVE and RANDOM bipolar, the rest unipolar);
@@ -170,8 +170,8 @@ TIME is the spacing between the rings, FEEDBACK how many (each fainter), DELAY h
 ping-pong alternates them between two stars side by side. FREEZE stops the sky; DUCK dims it
 while a note sounds.
 
-**The sheet:** Silt is the instrument line of a range drawn on one shared sheet (`kit/`, the
-same copy in each plug-in's repository until the range has a repository of its own):
+**The sheet:** Silt is the instrument line of the Glyph Audio range, drawn on one shared sheet
+(`kit/`, a submodule: clone with `--recurse-submodules`):
 masthead with a catalogue number, numbered panels, a readout, hard frames and flat knobs,
 in VT323 with Press Start 2P for the wordmark (SIL Open Font License, `kit/fonts/`).
 
@@ -181,8 +181,8 @@ the window. Sixteen factory presets are built in (Init, Glass Cloud, Tape Choir,
 Rhythm, Bell Garden, Wander, Dark Drone, Shimmer Pad, Hit Chop, Stutter Grid, Feed Bloom,
 Sample Strings, Grit Bells, Ducked Echoes, Spread Chorus, Head Patterns; the three played
 from notes in SLICE or FEED are left out of Silt FX). Loading one is a single undo step. User presets are
-`.siltpreset` XML files in `~/Library/Audio/Presets/Silt Audio/<plug-in>/` on macOS
-(`%APPDATA%/Silt Audio/<plug-in>/Presets` on Windows). SAVE updates a user preset,
+`.siltpreset` XML files in `~/Library/Audio/Presets/Glyph Audio/<plug-in>/` on macOS
+(`%APPDATA%/Glyph Audio/<plug-in>/Presets` on Windows). SAVE updates a user preset,
 or asks for a name and a category. Click the name for the **browser**: search, category
 keys (PADS, TEXTURES, DRONES, TONAL, RHYTHMIC, SLICES, USER) and ★ favourites (click a
 star; kept in `favourites.txt` in the preset folder). Clicking a preset, or the arrow keys,
@@ -225,7 +225,7 @@ doesn't click. A controller can still page to CHAIN for ORDER and the four switc
 next bar line (at once if the host is stopped) and passes it on, or sends the sample if you
 choose that. TAKE makes what an effect sent the sample (Silt FX has nothing to take into).
 FOLDER opens it in the Finder, chooses another folder, or picks a category, which is a folder
-inside it. Silt and Silt FX share a folder, separate from Brood's (`~/Music/Bench/Silt/` until
+inside it. Silt and Silt FX share a folder, separate from Brood's (`~/Music/Glyph Audio/Silt/` until
 you choose), and sending between plug-ins works whichever you choose. Silt keeps the
 first 30 seconds of what it takes.
 
