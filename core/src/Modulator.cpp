@@ -27,7 +27,8 @@ bool Modulator::isBipolar (const ModulatorParams& p) noexcept
     switch (p.type)
     {
         case ModType::wave:
-        case ModType::random:   return true;
+        case ModType::random:
+        case ModType::grain:    return true;
         case ModType::midi:     return p.source == MidiSource::note || p.source == MidiSource::pitchBend;
         default:                return false;
     }
@@ -60,6 +61,7 @@ float Modulator::advance (const ModulatorParams& p, const ModContext& c) noexcep
         case ModType::envelope: return envelope (p, c);
         case ModType::follow:   return follow (p, c);
         case ModType::macro:    return std::clamp (p.macro, 0.0f, 1.0f);
+        case ModType::grain:    return 0.0f;   // no movement of its own: each grain rolls as it starts
         case ModType::midi:
             switch (p.source)
             {

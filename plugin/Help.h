@@ -119,7 +119,8 @@ inline juce::String helpFor (const juce::String& id)
         { "colorOn", "COLOR: on, or passed by untouched" },
         { "spaceOn", "SPACE: on, or passed by untouched" },
         // MOD (any modulator: the part after m1…m4)
-        { "mod:Type", "TYPE: wave, random, envelope, follow, MIDI" },
+        { "mod:Type", "TYPE: what moves it; PER GRAIN rolls each grain" },
+        { "mod:GrainSpread", "SPREAD: even, mostly small, or mostly extreme" },
         { "mod:Shape", "SHAPE: the wave's form" },
         { "mod:Rate", "RATE: how fast it moves (below 0: reverse)" },
         { "mod:Div", "RATE: a cycle per note value" },

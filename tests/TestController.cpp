@@ -1793,3 +1793,33 @@ TEST_CASE ("MIX sends the dry input through the chain with the grains, in LIVE a
         CHECK (levelOut (mode, 50.0f, true) < 1.0e-4);
     }
 }
+
+// --- PER GRAIN --------------------------------------------------------------------------
+
+TEST_CASE ("PER GRAIN reaches grain settings, each grain its own, and nothing else")
+{
+    Rig rig;
+    loadSine (rig);
+    auto* type = rig.silt.params.getParameter ("m1Type");
+    type->setValueNotifyingHost (type->convertTo0to1 (6.0f));
+    runBlocks (rig, 2);
+
+    const int pitch = rig.silt.modulationTarget ("pitch"), filter = rig.silt.modulationTarget ("filterCutoff");
+    REQUIRE (pitch >= 0);
+    REQUIRE (filter >= 0);
+    CHECK (rig.silt.routeCanWork (0, pitch));
+    CHECK_FALSE (rig.silt.routeCanWork (0, filter));
+    CHECK (rig.silt.routeCanWork (1, filter));   // the other types go anywhere
+
+    // A route that can't work moves nothing, whatever's stored.
+    rig.silt.setRouteAmount (0, filter, 0.5f);
+    const float cutoff = rig.silt.params.getRawParameterValue ("filterCutoff")->load();
+    runBlocks (rig, 4);
+    CHECK (rig.silt.modulatedValue01 (filter) == Catch::Approx (rig.silt.targetParameter (filter).convertTo0to1 (cutoff)).margin (1.0e-4));
+
+    // It has no movement of its own: the knob stays put.
+    rig.silt.setRouteAmount (0, pitch, 0.5f);
+    const float pitchKnob = rig.silt.targetParameter (pitch).getValue();
+    runBlocks (rig, 4);
+    CHECK (rig.silt.modulatedValue01 (pitch) == Catch::Approx (pitchKnob).margin (1.0e-4));
+}

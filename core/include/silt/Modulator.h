@@ -5,7 +5,7 @@
 namespace silt
 {
 
-enum class ModType { wave, random, envelope, follow, midi, macro };
+enum class ModType { wave, random, envelope, follow, midi, macro, grain };
 enum class MidiSource { velocity, note, modWheel, aftertouch, pitchBend };
 
 struct ModulatorParams

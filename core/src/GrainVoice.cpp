@@ -45,6 +45,7 @@ void GrainVoice::reset() noexcept
         g = {};
     activeGrains = 0;
     grainsInUse = 0;
+    retiringGrains = 0;
     envStage = EnvStage::idle;
     envLevel = 0.0f;
     spawning = false;
@@ -360,17 +361,86 @@ double GrainVoice::liveStart (const GrainParams& p, const SampleBuffer& ring, in
     return std::clamp (aimed, oldest, std::max (oldest, newest));
 }
 
+double GrainVoice::rollScatter (GrainScatter::Spread spread) noexcept
+{
+    switch (spread)
+    {
+        case GrainScatter::Spread::centre:   // mostly small changes, the odd big one
+            return (double) (random.nextBipolar() + random.nextBipolar() + random.nextBipolar()) / 3.0;
+        case GrainScatter::Spread::edges:    // mostly near one extreme or the other
+        {
+            const double u = (double) random.nextBipolar(), rest = 1.0 - std::abs (u);
+            return std::copysign (1.0 - rest * rest * rest, u);
+        }
+        case GrainScatter::Spread::even: break;
+    }
+    return (double) random.nextBipolar();
+}
+
+// Fades out the oldest grain not already going, quickly enough to leave its place almost at
+// once and slowly enough not to click.
+bool GrainVoice::retireOldestGrain() noexcept
+{
+    Grain* oldest = nullptr;
+    for (int n = 0; n < grainsInUse; ++n)
+    {
+        auto& g = grains[(size_t) n];
+        if (g.remaining > 0 && g.fadeStep == 0.0f && (oldest == nullptr || g.born < oldest->born))
+            oldest = &g;
+    }
+    if (oldest == nullptr)
+        return false;
+    oldest->fadeGain = 1.0f;
+    oldest->fadeStep = (float) (1.0 / std::max (1.0, 0.005 * sampleRate));
+    ++retiringGrains;
+    return true;
+}
+
 void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer, int sampleInBlock) noexcept
 {
+    intervalScale = 1.0;
     // Grains mode keeps a ceiling of twice the count: while Size shrinks, the
     // longer grains already playing would otherwise block new ones and leave
-    // gaps. A full pool drops the grain rather than cutting one off mid-envelope.
-    if ((p.grainCount > 0 && activeGrains >= 2 * p.grainCount) || activeGrains >= p.grainLimit)
+    // gaps. That's the setting at work, not a shortage.
+    if (p.grainCount > 0 && activeGrains >= 2 * p.grainCount)
         return;
+    // Out of room: the oldest grain makes way, so the sound keeps following the playhead.
+    if (activeGrains - retiringGrains >= p.grainLimit)
+    {
+        ++grainsOverLimit;
+        if (! retireOldestGrain())
+            return;
+    }
     auto free = std::find_if (grains.begin(), grains.end(), [] (const Grain& g) { return g.remaining <= 0; });
-    if (free == grains.end())
+    if (free == grains.end())   // every place taken by a grain on its way out: this one waits its turn
+    {
+        ++grainsOverLimit;
         return;
+    }
 
+    if (p.scatter == nullptr || p.scatter->count == 0)
+    {
+        startGrain (p, buffer, sampleInBlock, *free);
+        return;
+    }
+
+    // This grain's own settings: what was set, plus a fresh roll from every PER GRAIN route.
+    auto rolled = p;
+    for (int i = 0; i < p.scatter->count; ++i)
+    {
+        const auto& item = p.scatter->items[(size_t) i];
+        const double roll = rollScatter (item.spread);
+        lastRolls[(size_t) item.source] = (float) roll;
+        const double amount = item.oneWay ? 0.5 * (roll + 1.0) : roll;
+        rolled.*item.field = std::clamp (rolled.*item.field + (amount >= 0.0 ? amount * item.up : amount * item.down), item.low, item.high);
+    }
+    if (rolled.rateHz > 0.0)
+        intervalScale = p.rateHz / rolled.rateHz;
+    startGrain (rolled, buffer, sampleInBlock, *free);
+}
+
+void GrainVoice::startGrain (const GrainParams& p, const SampleBuffer& buffer, int sampleInBlock, Grain& g) noexcept
+{
     const int frames = buffer.getNumFrames();
     const double semitones = nextGrainSemitones (p);
     const double ratio = semitonesToRatio (semitones) * (buffer.getSampleRate() / sampleRate);
@@ -412,9 +482,11 @@ void GrainVoice::spawnGrain (const GrainParams& p, const SampleBuffer& buffer, i
     const float pan = random.nextBipolar() * (float) std::clamp (p.randomPan, 0.0, 1.0);
     const float amp = 1.0f - random.next01() * (float) std::clamp (p.randomAmp, 0.0, 1.0);
 
-    Grain& g = *free;
-    grainsInUse = std::max (grainsInUse, (int) (free - grains.begin()) + 1);
+    grainsInUse = std::max (grainsInUse, (int) (&g - grains.data()) + 1);
     g.source = &buffer;
+    g.born = grainsStarted;
+    g.fadeGain = 1.0f;
+    g.fadeStep = 0.0f;
     g.loops = false;
     g.backwardWraps = 0;
     g.readPos = wrapFrames (reversed ? span.hi : span.lo, frames);
@@ -551,7 +623,7 @@ void GrainVoice::render (float* left, float* right, int numSamples,
                 // Jitter spreads the next start over 0…2 intervals at full amount,
                 // keeping the average rate.
                 const double jitter = std::clamp (p.jitter, 0.0, 1.0);
-                samplesToNextGrain += interval * (1.0 + jitter * random.nextBipolar());
+                samplesToNextGrain += interval * intervalScale * (1.0 + jitter * random.nextBipolar());
             }
             firstGrainPending = false;
             samplesToNextGrain -= 1.0;
@@ -573,7 +645,14 @@ void GrainVoice::render (float* left, float* right, int numSamples,
                 if (g.remaining <= 0)
                     continue;
 
-                const float env = g.envelope (window, g.phase);
+                float env = g.envelope (window, g.phase);
+                if (g.fadeStep > 0.0f)
+                {
+                    env *= g.fadeGain;
+                    g.fadeGain -= g.fadeStep;
+                    if (g.fadeGain <= 0.0f)
+                        g.remaining = 1;   // this is its last sample
+                }
                 g.lastEnvelope = env;
                 const float sL = g.gainL * readGrain (g, 0);
                 const float sR = g.gainR * readGrain (g, 1);
@@ -594,7 +673,11 @@ void GrainVoice::render (float* left, float* right, int numSamples,
                 }
                 g.phase += g.phaseInc;
                 if (--g.remaining == 0)
+                {
                     --activeGrains;
+                    if (g.fadeStep > 0.0f)
+                        --retiringGrains;
+                }
             }
             while (grainsInUse > 0 && grains[(size_t) grainsInUse - 1].remaining <= 0)
                 --grainsInUse;
@@ -619,6 +702,7 @@ void GrainVoice::render (float* left, float* right, int numSamples,
                 g.remaining = 0;
             activeGrains = 0;
             grainsInUse = 0;
+            retiringGrains = 0;
         }
     }
 

@@ -20,6 +20,28 @@ enum class LiveTrigger { off, always, follow };
 // The Grain and Voice page controls (spec §3, plan §5), in engine units.
 // Grain controls are latched into each grain at its onset, so changes never
 // alter a grain in flight.
+struct GrainParams;
+
+// What a PER GRAIN modulator does: a grain setting rolled afresh for each grain as it starts.
+// Each route rolls for itself, so a grain's size says nothing about its pitch. Filled in by
+// whoever owns the routes; an empty list costs nothing and draws no random numbers.
+struct GrainScatter
+{
+    enum class Spread { even, centre, edges };
+    struct Item
+    {
+        double GrainParams::* field = nullptr;
+        double up = 0.0, down = 0.0;      // how far a whole roll moves it, each way
+        double low = 0.0, high = 0.0;     // the setting's own limits
+        Spread spread = Spread::even;
+        bool oneWay = false;              // rolls 0…1 rather than −1…1
+        int source = 0;                   // which modulator, for showing its rolls
+    };
+    static constexpr int maxItems = 32, maxSources = 4;
+    std::array<Item, maxItems> items {};
+    int count = 0;
+};
+
 struct GrainParams
 {
     // Grain
@@ -59,8 +81,9 @@ struct GrainParams
     int grainCount = 0;
     // The most grains this voice may have sounding at once (the engine shares
     // its grain budget out across the voices playing; a voice at its share
-    // skips new grains, as a full pool does).
+    // fades out its oldest grain to make room, so it keeps following the playhead).
     int grainLimit = 64;
+    const GrainScatter* scatter = nullptr;   // not owned; null or empty: nothing rolls
 
     // Live mode: grains read the engine's live ring buffer instead of the
     // sample, liveDelayMs behind the newest audio. The engine sets liveNow (the
@@ -146,6 +169,8 @@ public:
     int getCurrentNote() const noexcept { return currentNote; }
     int getActiveGrainCount() const noexcept { return activeGrains; }
     std::uint64_t getGrainsStarted() const noexcept { return grainsStarted; }
+    std::uint64_t getGrainsOverLimit() const noexcept { return grainsOverLimit; }   // cut short or skipped for want of room
+    float getLastRoll (int source) const noexcept { return lastRolls[(size_t) source]; }   // a PER GRAIN source's latest, −1…1
     double getLastGrainStart() const noexcept { return lastGrainStart; }   // buffer frames
     double getLastGrainSemitones() const noexcept { return lastGrainSemitones; }   // above the root note
 
@@ -173,6 +198,8 @@ private:
         double phase = 0.0;         // 0…1 through the envelope
         double phaseInc = 0.0;
         int remaining = 0;          // output samples left; 0 = free
+        std::uint64_t born = 0;     // which grain of this voice it was, to find the oldest
+        float fadeGain = 1.0f, fadeStep = 0.0f;   // retired: on its way out early
         float gainL = 0.0f, gainR = 0.0f;
         GrainEnvelope envelope;
         Interpolation interpolation = Interpolation::cubic;
@@ -191,6 +218,9 @@ private:
     struct Region { double begin, end; };
 
     void spawnGrain (const GrainParams&, const SampleBuffer&, int sampleInBlock) noexcept;
+    void startGrain (const GrainParams&, const SampleBuffer&, int sampleInBlock, Grain&) noexcept;
+    bool retireOldestGrain() noexcept;
+    double rollScatter (GrainScatter::Spread) noexcept;
     bool advancePlayhead (const GrainParams&, const SampleBuffer&) noexcept;
     float nextEnvelope (const GrainParams&) noexcept;
     struct GainEstimate { float estimate, coherent, incoherent; };
@@ -220,6 +250,10 @@ private:
     std::array<Grain, maxGrains> grains {};
     int activeGrains = 0;
     int grainsInUse = 0;   // one past the last playing grain: new ones take the lowest free place
+    int retiringGrains = 0;
+    std::uint64_t grainsOverLimit = 0;
+    double intervalScale = 1.0;   // a rolled RATE: the gap to the next grain, against the steady one
+    std::array<float, GrainScatter::maxSources> lastRolls {};
 
     int currentNote = -1;
     double noteRatio = 1.0;

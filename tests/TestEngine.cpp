@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 
 #include "TestHelpers.h"
 
@@ -1196,4 +1197,144 @@ TEST_CASE ("Slice mode, MANUAL: a key plays from its mark to the next")
         CHECK (views[(size_t) i].start >= 0.099f);
         CHECK (views[(size_t) i].end <= 0.601f);
     }
+}
+
+TEST_CASE ("A full voice retires its oldest grains, counts them, keeps following the playhead, and doesn't click")
+{
+    TestEngine engine (makeSine (240.0, 8.0));
+    GrainParams p;
+    p.sizeMs = 2000.0;
+    p.rateHz = 100.0;
+    p.fade = 1.0;
+
+    // Sixteen notes share the budget, so each voice runs out of room.
+    std::vector<NoteEvent> notes;
+    for (int n = 0; n < 16; ++n)
+        notes.push_back ({ 0, 48 + n, 1.0f, true });
+    std::vector<float> l (64), r (64);
+    float last = 0.0f;
+    double worstStep = 0.0;
+    std::uint64_t startedHalfway = 0;
+    for (int done = 0; done < 240000; done += 64)
+    {
+        engine.process (l.data(), r.data(), 64, done == 0 ? notes.data() : nullptr, done == 0 ? 16 : 0, p);
+        if (done == 96000)
+            startedHalfway = engine.getVoice (0).getGrainsStarted();
+        for (const float x : l)
+        {
+            if (done > 96000)
+                worstStep = std::max (worstStep, (double) std::abs (x - last));
+            last = x;
+        }
+        // The fading ones go over by no more than a few for each voice.
+        CHECK (engine.getActiveGrainCount() <= Engine::grainBudget48k + 16 * 2);
+    }
+    CHECK (engine.getGrainsOverLimit() > 0);
+    // New grains keep coming at the full rate: 3 s at 100 a second, and none go missing.
+    CHECK ((double) (engine.getVoice (0).getGrainsStarted() - startedHalfway) == Catch::Approx (300.0).margin (5.0));
+    CHECK (worstStep < 0.05);
+}
+
+TEST_CASE ("A voice with room never counts a grain over the limit")
+{
+    TestEngine engine (makeSine (240.0, 4.0));
+    GrainParams p;
+    p.sizeMs = 100.0;
+    p.rateHz = 20.0;
+    std::vector<float> l (64), r (64);
+    NoteEvent on { 0, 60, 1.0f, true };
+    for (int done = 0; done < 48000; done += 64)
+        engine.process (l.data(), r.data(), 64, done == 0 ? &on : nullptr, done == 0 ? 1 : 0, p);
+    CHECK (engine.getGrainsOverLimit() == 0);
+}
+
+TEST_CASE ("An empty scatter list changes nothing, down to the last sample")
+{
+    TestEngine plain (makeNoise()), listed (makeNoise());
+    GrainParams p;
+    p.spray = 0.3;
+    p.randomPitch = 2.0;
+    GrainScatter none;
+    auto q = p;
+    q.scatter = &none;
+    std::vector<float> al (64), ar (64), bl (64), br (64);
+    NoteEvent on { 0, 60, 1.0f, true };
+    for (int done = 0; done < 48000; done += 64)
+    {
+        plain.process (al.data(), ar.data(), 64, done == 0 ? &on : nullptr, done == 0 ? 1 : 0, p);
+        listed.process (bl.data(), br.data(), 64, done == 0 ? &on : nullptr, done == 0 ? 1 : 0, q);
+        REQUIRE (al == bl);
+        REQUIRE (ar == br);
+    }
+}
+
+TEST_CASE ("PER GRAIN rolls each grain for itself, in the spread asked for")
+{
+    const auto spreadOf = [] (GrainScatter::Spread spread)
+    {
+        TestEngine engine (makeSine (240.0, 4.0));
+        GrainScatter scatter;
+        scatter.count = 1;
+        scatter.items[0] = { &GrainParams::pitchSemitones, 12.0, 12.0, -48.0, 48.0, spread, false, 0 };
+        GrainParams p;
+        p.sizeMs = 20.0;
+        p.rateHz = 100.0;
+        p.scatter = &scatter;
+        std::vector<float> l (64), r (64);
+        NoteEvent on { 0, 60, 1.0f, true };
+        std::vector<double> rolls;
+        std::uint64_t seen = 0;
+        for (int done = 0; done < 480000; done += 64)
+        {
+            engine.process (l.data(), r.data(), 64, done == 0 ? &on : nullptr, done == 0 ? 1 : 0, p);
+            const auto& voice = engine.getVoice (0);
+            if (voice.getGrainsStarted() != seen)
+            {
+                seen = voice.getGrainsStarted();
+                rolls.push_back (voice.getLastGrainSemitones() / 12.0);
+            }
+        }
+        return rolls;
+    };
+    const auto share = [] (const std::vector<double>& rolls, double from, double to)
+    {
+        return (double) std::count_if (rolls.begin(), rolls.end(), [=] (double x) { return std::abs (x) >= from && std::abs (x) < to; }) / (double) rolls.size();
+    };
+
+    const auto even = spreadOf (GrainScatter::Spread::even);
+    const auto centre = spreadOf (GrainScatter::Spread::centre);
+    const auto edges = spreadOf (GrainScatter::Spread::edges);
+    REQUIRE (even.size() > 500);
+    for (const auto* rolls : { &even, &centre, &edges })
+        for (const double x : *rolls)
+            CHECK (std::abs (x) <= 1.0);
+    CHECK (share (even, 0.0, 0.5) == Catch::Approx (0.5).margin (0.08));
+    CHECK (share (centre, 0.0, 0.5) > 0.75);
+    CHECK (share (edges, 0.5, 1.01) == Catch::Approx (0.794).margin (0.05));   // 1 − 0.794³ is a half
+}
+
+TEST_CASE ("PER GRAIN SIZE makes grains of different lengths")
+{
+    TestEngine engine (makeSine (240.0, 4.0));
+    GrainScatter scatter;
+    scatter.count = 1;
+    scatter.items[0] = { &GrainParams::sizeMs, 180.0, 90.0, 10.0, 2000.0, GrainScatter::Spread::even, false, 0 };
+    GrainParams p;
+    p.sizeMs = 100.0;
+    p.rateHz = 20.0;
+    p.scatter = &scatter;
+    std::vector<float> l (64), r (64);
+    NoteEvent on { 0, 60, 1.0f, true };
+    int lowest = 1000, highest = 0;
+    for (int done = 0; done < 480000; done += 64)
+    {
+        engine.process (l.data(), r.data(), 64, done == 0 ? &on : nullptr, done == 0 ? 1 : 0, p);
+        if (done > 48000)
+        {
+            lowest = std::min (lowest, engine.getActiveGrainCount());
+            highest = std::max (highest, engine.getActiveGrainCount());
+        }
+    }
+    CHECK (highest > lowest);   // a steady SIZE and RATE would hold the count steady
+    CHECK (engine.getGrainsOverLimit() == 0);
 }

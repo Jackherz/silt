@@ -10,8 +10,8 @@ namespace
 {
 const char* typeName (int type)
 {
-    static const char* names[] { "WAVE", "RANDOM", "ENV", "FOLLOW", "MIDI", "MACRO" };
-    return names[juce::jlimit (0, 5, type)];
+    static const char* names[] { "WAVE", "RANDOM", "ENV", "FOLLOW", "MIDI", "MACRO", "PER GRAIN" };
+    return names[juce::jlimit (0, 6, type)];
 }
 
 int typeOf (SiltProcessor& silt, int m)
@@ -370,7 +370,7 @@ void ModBanner::paint (juce::Graphics& g)
     g.setColour (inkSoft);
     g.setFont (monoFont (10.0f));
     const int routes = silt.routeCount (m);
-    g.drawText (juce::String (typeName (typeOf (silt, m))) + "  " + juce::String (routes) + (routes == 1 ? " ROUTE" : " ROUTES")
+    g.drawText (juce::String (typeOf (silt, m) == 6 ? "GRAIN" : typeName (typeOf (silt, m))) + "  " + juce::String (routes) + (routes == 1 ? " ROUTE" : " ROUTES")
                     + (muted ? "  MUTED" : ""),
                 text, juce::Justification::centred);
 }

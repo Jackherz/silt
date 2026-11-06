@@ -759,7 +759,7 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
 {
     const int m = silt.modShown.load();
     auto p = silt.readModulatorParams (m);
-    const char* types[] { "WAVE", "RANDOM", "ENVELOPE", "FOLLOW", "MIDI", "MACRO" };
+    const char* types[] { "WAVE", "RANDOM", "ENVELOPE", "FOLLOW", "MIDI", "MACRO", "PER GRAIN" };
     juce::String title = "MOD " + juce::String (m + 1) + " - " + types[(int) p.type];
     if (p.type == silt::ModType::wave)
         title << "  PHASE " << juce::roundToInt (p.phase * 360.0f) << juce::String::charToString ((juce::juce_wchar) 0x00b0)

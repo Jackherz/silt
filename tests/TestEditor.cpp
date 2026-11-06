@@ -1056,3 +1056,21 @@ TEST_CASE ("The Bench's hand stays out for as long as the bars are recording")
     CHECK_FALSE (strip.handIsHeldOut());
     CHECK (strip.handsShowing() == kit::bench::Strip::Hands::offer);   // on its way back, not gone at once
 }
+
+TEST_CASE ("The MOD page draws every kind of modulator")
+{
+    EditorRig rig;
+    auto* type = rig.silt.params.getParameter ("m1Type");
+    const int kinds = dynamic_cast<juce::AudioParameterChoice*> (type)->choices.size();
+    CHECK (kinds == 7);
+    rig.editor->showPage (silt::layout::mod);
+    for (int kind = 0; kind < kinds; ++kind)
+    {
+        type->setValueNotifyingHost (type->convertTo0to1 ((float) kind));
+        rig.editor->refreshLayout();
+        juce::Image image (juce::Image::ARGB, rig.editor->getWidth(), rig.editor->getHeight(), true);
+        juce::Graphics g (image);
+        rig.editor->paintEntireComponent (g, true);
+        CHECK (image.isValid());
+    }
+}

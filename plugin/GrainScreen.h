@@ -622,17 +622,21 @@ private:
 
     void drawWave (juce::Graphics& g, juce::Rectangle<int> area)
     {
-        if (! waveCache.isValid() || waveCache.getWidth() != area.getWidth() || waveCache.getHeight() != area.getHeight())
+        // Drawn once for each view, at the screen's own resolution.
+        const float pixels = juce::jmax (1.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
+        const int width = juce::jmax (1, juce::roundToInt ((float) area.getWidth() * pixels));
+        const int height = juce::jmax (1, juce::roundToInt ((float) area.getHeight() * pixels));
+        if (! waveCache.isValid() || waveCache.getWidth() != width || waveCache.getHeight() != height)
         {
-            waveCache = juce::Image (juce::Image::ARGB, area.getWidth(), area.getHeight(), true);
+            waveCache = juce::Image (juce::Image::ARGB, width, height, true);
             juce::Graphics c (waveCache);
-            const float mid = (float) area.getHeight() * 0.5f, half = (float) area.getHeight() * 0.48f;
+            const float mid = (float) height * 0.5f, half = (float) height * 0.48f;
             const int cols = (int) overview.minimum.size();
             // The columns in view, each pixel taking the loudest of those under it.
             // At the sample gain: columns pushed past full scale are drawn red.
-            const double first = viewStart * cols, perPixel = (viewEnd - viewStart) * cols / juce::jmax (1, area.getWidth());
-            waveEnvelope.assign ((size_t) area.getWidth(), 0.0f);
-            for (int x = 0; x < area.getWidth(); ++x)
+            const double first = viewStart * cols, perPixel = (viewEnd - viewStart) * cols / width;
+            waveEnvelope.assign ((size_t) area.getWidth(), 0.0f);   // for the scenes, in the panel's own units
+            for (int x = 0; x < width; ++x)
             {
                 const int c0 = juce::jlimit (0, cols - 1, (int) (first + x * perPixel));
                 const int c1 = juce::jlimit (c0 + 1, cols, (int) (first + (x + 1) * perPixel));
@@ -645,14 +649,18 @@ private:
                 hi *= displayGain;
                 lo *= displayGain;
                 const bool clipped = hi > 1.0f || lo < -1.0f;
-                waveEnvelope[(size_t) x] = juce::jmin (1.0f, juce::jmax (hi, -lo));
+                auto& envelope = waveEnvelope[(size_t) juce::jlimit (0, area.getWidth() - 1, x * area.getWidth() / width)];
+                envelope = juce::jmax (envelope, juce::jmin (1.0f, juce::jmax (hi, -lo)));
                 const float top = mid - juce::jmin (1.0f, hi) * half;
                 const float bottom = mid - juce::jmax (-1.0f, lo) * half;
                 c.setColour (clipped ? signalRed : screenPale);
                 c.fillRect ((float) x, top, 1.0f, juce::jmax (1.0f, bottom - top));
             }
         }
-        g.drawImageAt (waveCache, area.getX(), area.getY());
+        const juce::Graphics::ScopedSaveState saved (g);
+        g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
+        g.drawImageTransformed (waveCache, juce::AffineTransform::scale ((float) area.getWidth() / (float) width, (float) area.getHeight() / (float) height)
+                                               .translated ((float) area.getX(), (float) area.getY()));
     }
 
     void drawLiveWave (juce::Graphics& g, juce::Rectangle<int> area)

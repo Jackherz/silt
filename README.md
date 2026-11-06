@@ -87,9 +87,11 @@ REV runs it backwards against the bar; phase, SYM (where the cycle turns round: 
 saws and pulse widths), CURVE (bulging and lazy to spiked and snappy; greyed on a
 square, which it can't bend), retrigger on notes), RANDOM (smooth to stepped, jitter, free or
 synced), ENVELOPE (ADSR from the notes played; REPEAT loops it while held), FOLLOW
-(the input's level), MIDI (velocity, note, mod wheel, aftertouch, pitch bend) or
+(the input's level), MIDI (velocity, note, mod wheel, aftertouch, pitch bend),
 MACRO (a knob, automatable and controller-mappable, that moves everything it's
-routed to). Design: `docs/mod-section-design.md`.
+routed to) or PER GRAIN (a fresh roll for each grain and each route, SPREAD even,
+centred or at the edges; it reaches only what a grain takes up as it starts, such as
+PITCH, SIZE, RATE, SPRAY, REVERSE and DELAY). Design: `docs/mod-section-design.md`.
 
 - **The mod rail**, beside the knobs on every page (drag the bar between them to resize): a chip per modulator with its colour and
   number, type, a two-second trace of what it's doing (its shape, round a centre

@@ -739,6 +739,13 @@ void SiltEditor::wireModulation (FineSlider& s)
     s.routeGesture = [this] { silt.beginRouteGesture(); };
     s.setAmount = [this, target, &s] (int m, float amount)
     {
+        if (amount != 0.0f && ! silt.routeCanWork (m, target))
+        {
+            flash = "PER GRAIN ONLY REACHES GRAIN SETTINGS";
+            flashUntil = juce::Time::getMillisecondCounter() + 2000;
+            repaint (lcdArea);
+            return;
+        }
         silt.editRoutes ([&] { silt.setRouteAmount (m, target, amount); });
         lastUsedMod = m;
         s.repaint();
@@ -797,7 +804,7 @@ void SiltEditor::wireModulation (FineSlider& s)
 void SiltEditor::showKnobMenu (FineSlider& s)
 {
     static constexpr float depths[] { 1.0f, 0.5f, 0.25f, 0.1f, -0.1f, -0.25f, -0.5f, -1.0f };
-    static const char* types[] { "WAVE", "RANDOM", "ENV", "FOLLOW", "MIDI", "MACRO" };
+    static const char* types[] { "WAVE", "RANDOM", "ENV", "FOLLOW", "MIDI", "MACRO", "PER GRAIN" };
     const int target = s.target;
     const auto id = s.getComponentID();
     juce::PopupMenu menu;
@@ -863,7 +870,7 @@ void SiltEditor::showKnobMenu (FineSlider& s)
             {
                 if (i == 97 || i == 98)
                     silt.setRoutePolarity (m, target, i == 97 ? SiltProcessor::bipolar : SiltProcessor::unipolar);
-                else
+                else if (i == 99 || silt.routeCanWork (m, target))
                     silt.setRouteAmount (m, target, i == 99 ? 0.0f : depths[i]);
             });
             lastUsedMod = m;
@@ -1713,7 +1720,17 @@ void SiltEditor::timerCallback()
 
     juce::String hud;
     if (n > 0)
+    {
         hud = juce::String (n) + (n == 1 ? " GRAIN   " : " GRAINS   ") + juce::String (voices) + (voices == 1 ? " VOICE" : " VOICES");
+        // Out of room: say so for a moment after the last grain had to make way.
+        if (const auto over = silt.grainsOverLimit.load (std::memory_order_relaxed); over != overLimitSeen)
+        {
+            overLimitSeen = over;
+            fullUntil = juce::Time::getMillisecondCounter() + 1000;
+        }
+        if (juce::Time::getMillisecondCounter() < fullUntil)
+            hud += "   FULL";
+    }
     const bool live = silt.liveMode.load();
     const bool frozen = param ("freeze") > 0.5f;
     if (live)
@@ -2198,11 +2215,16 @@ void SiltEditor::paintPreview (juce::Graphics& g)
 
 void SiltEditor::paint (juce::Graphics& g)
 {
-    // What doesn't move is drawn once per size and theme.
-    if (backdrop.getWidth() != getWidth() || backdrop.getHeight() != getHeight())
+    // What doesn't move is drawn once per size and theme, at the screen's own resolution so it's
+    // as sharp as what's drawn fresh beside it.
+    const float pixels = juce::jmax (1.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
+    const int backdropWidth = juce::jmax (1, juce::roundToInt ((float) getWidth() * pixels));
+    const int backdropHeight = juce::jmax (1, juce::roundToInt ((float) getHeight() * pixels));
+    if (backdrop.getWidth() != backdropWidth || backdrop.getHeight() != backdropHeight)
     {
-        backdrop = juce::Image (juce::Image::RGB, juce::jmax (1, getWidth()), juce::jmax (1, getHeight()), false);
+        backdrop = juce::Image (juce::Image::RGB, backdropWidth, backdropHeight, false);
         juce::Graphics b (backdrop);
+        b.addTransform (juce::AffineTransform::scale (pixels));
         const auto& s = stock();
         b.fillAll (s.page);
         const bool instrument = SiltProcessor::isInstrument;
@@ -2219,7 +2241,12 @@ void SiltEditor::paint (juce::Graphics& g)
         kit::drawSheet (b, tray, s, 2);
         kit::drawSheet (b, wellArea, s);
     }
-    g.drawImageAt (backdrop, 0, 0);
+    {
+        const juce::Graphics::ScopedSaveState saved (g);
+        g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
+        g.drawImageTransformed (backdrop, juce::AffineTransform::scale ((float) getWidth() / (float) backdrop.getWidth(),
+                                                                        (float) getHeight() / (float) backdrop.getHeight()));
+    }
 
     const auto status = statusText();
     kit::drawReadout (g, lcdArea, stock(), juce::String (JucePlugin_Name).toUpperCase(), "LIVE", status, {}, status.length() > 26);

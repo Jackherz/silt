@@ -79,6 +79,7 @@ public:
     const SampleBuffer* getLiveBuffer() const noexcept { return live.get(); }
     int getLiveWritePosition() const noexcept { return liveWrite; }
     int getActiveGrainCount() const noexcept;
+    std::uint64_t getGrainsOverLimit() const noexcept;   // ever: cut short or skipped for want of room
     const GrainVoice& getVoice (int index) const noexcept { return voices[(size_t) index]; }
 
     // Every sounding grain, for the UI. Returns how many were written.

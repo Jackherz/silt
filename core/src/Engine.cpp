@@ -56,6 +56,14 @@ void Engine::collectGarbage()
     delete retired.exchange (nullptr);
 }
 
+std::uint64_t Engine::getGrainsOverLimit() const noexcept
+{
+    std::uint64_t total = 0;
+    for (const auto& v : voices)
+        total += v.getGrainsOverLimit();
+    return total;
+}
+
 int Engine::getActiveGrainCount() const noexcept
 {
     int count = 0;

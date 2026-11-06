@@ -4,7 +4,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <iostream>
+
 #include "../plugin/PluginProcessor.h"
+#include "../plugin/Presets.h"
 
 #include <atomic>
 #include <cstdlib>
@@ -131,6 +134,16 @@ TEST_CASE ("Realtime: processBlock allocates nothing, across modes and effects")
         CHECK (rig.run (200) == 0);
     }
 
+    SECTION ("PER GRAIN routes, rolling every grain")
+    {
+        rig.set ("m1Type", 6.0f);
+        rig.set ("m1GrainSpread", 2.0f);
+        rig.set ("m1Voice", 1.0f);   // no effect on this type
+        for (const auto* id : { "pitch", "size", "rate", "spray", "reverse", "randPan", "fade" })
+            rig.silt.setRouteAmount (0, rig.silt.modulationTarget (id), 0.4f);
+        CHECK (rig.run (200) == 0);
+    }
+
     SECTION ("LIVE, FEED and SLICE")
     {
         rig.set ("keyMode", 1.0f);
@@ -227,6 +240,40 @@ TEST_CASE ("Benchmark: CPU for typical and worst-case settings", "[.][benchmark]
             for (const int block : { 32, 128 })
                 std::printf ("%-7s %5.0f Hz  %3d-sample blocks: %5.1f%% of one core\n", worst ? "worst" : "typical", rate, block, measure (rate, block, worst));
     SUCCEED();
+}
+
+// Not run with the suite: `silt-plugin-tests "[factory-density]"`. Which factory sounds a
+// six-note chord pushes over the grain budget: the only ones its limit can change.
+TEST_CASE ("Factory presets against the grain budget", "[.][factory-density]")
+{
+    juce::ScopedJuceInitialiser_GUI juce;
+    for (int i = 0; i < PresetManager::numFactoryPresets(); ++i)
+    {
+        SiltProcessor silt;
+        silt.enableAllBuses();
+        silt.prepareToPlay (48000.0, 128);
+        // The sample a new instance opens with arrives on the message thread.
+        for (int wait = 0; wait < 300 && silt.getOverview().minimum.empty(); ++wait)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        REQUIRE_FALSE (silt.getOverview().minimum.empty());
+        PresetManager library (silt);
+        const auto xml = PresetManager::factoryPreset (i);
+        silt.applyPresetValues (*xml, library.factoryName (i));
+        juce::AudioBuffer<float> buffer (juce::jmax (silt.getTotalNumInputChannels(), silt.getTotalNumOutputChannels()), 128);
+        juce::MidiBuffer midi;
+        for (const int note : { 48, 55, 60, 64, 67, 71 })
+            midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
+        int most = 0;
+        for (int b = 0; b < (int) (6.0 * 48000.0 / 128.0); ++b)
+        {
+            buffer.clear();
+            silt.processBlock (buffer, midi);
+            midi.clear();
+            std::array<silt::GrainView, SiltProcessor::maxGrainViews> views;
+            most = juce::jmax (most, silt.readGrainViews (views));
+        }
+        std::cout << (silt.grainsOverLimit.load() > 0 ? "OVER  " : "ok    ") << library.factoryName (i) << "  " << most << " grains  over " << (long long) silt.grainsOverLimit.load() << "\n";
+    }
 }
 
 TEST_CASE ("Grain budget: dense, many-note settings stay within it, per-voice modulation or not")

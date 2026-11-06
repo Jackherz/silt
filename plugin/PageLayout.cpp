@@ -200,9 +200,12 @@ std::vector<Entry> build (bool instrument)
         const auto wave = type (0), random = type (1), envelope = type (2), follow = type (3), midi = type (4), macro = type (5);
         const Shown timed = [=] (const Context& c) { return wave (c) || random (c); };
 
-        menu (mod, 1, id ("Type"), "TYPE", { "WAVE", "RANDOM", "ENVELOPE", "FOLLOW", "MIDI", "MACRO" }, shownMod);
+        const auto perGrain = type (6);
+        const Shown notPerGrain = [=] (const Context& c) { return shownMod (c) && ! perGrain (c); };
+        menu (mod, 1, id ("Type"), "TYPE", { "WAVE", "RANDOM", "ENVELOPE", "FOLLOW", "MIDI", "MACRO", "PER GRAIN" }, shownMod);
         under (Kind::underButton, mod, 1, id ("Enable"), 50, {}, "ON", shownMod);
-        under (Kind::underButton, mod, 2, id ("Voice"), 64, {}, "VOICE", shownMod);
+        under (Kind::underButton, mod, 2, id ("Voice"), 64, {}, "VOICE", notPerGrain);
+        menu (mod, 2, id ("GrainSpread"), "SPREAD", { "EVEN", "CENTRE", "EDGES" }, perGrain);
 
         knob (mod, 2, id ("Shape"), "SHAPE", wave);
         knob (mod, 3, id ("Rate"), "RATE", both (timed, off (id ("Sync"))));

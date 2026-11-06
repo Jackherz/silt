@@ -337,7 +337,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
         const auto id = [n] (const char* suffix) { return "m" + juce::String (n) + suffix; };
         const auto name = [n] (const char* what) { return "Mod " + juce::String (n) + " " + what; };
         layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("Type"), 1 }, name ("type"),
-                                                                  juce::StringArray { "Wave", "Random", "Envelope", "Follow", "MIDI", "Macro" }, 0),
+                                                                  juce::StringArray { "Wave", "Random", "Envelope", "Follow", "MIDI", "Macro", "Per grain" }, 0),
                     // Through zero: −50…+50 Hz on a cubic (most of the travel at slow rates,
                     // smooth through 0, so modulation can sweep across it). Below zero
                     // a WAVE runs backwards; near 0 it holds (STOP).
@@ -383,6 +383,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                     // the cycle, so a chord's voices move apart instead of together.
                     percent (id ("Spread"), name ("voice spread"), 0.0f),
                     percent (id ("Macro"), name ("macro"), 0.0f),
+                    // PER GRAIN: how its rolls fall: evenly, mostly small, or mostly extreme.
+                    std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("GrainSpread"), 1 }, name ("grain spread"),
+                                                                  juce::StringArray { "Even", "Centre", "Edges" }, 0),
                     // WAVE: where the cycle turns round (50%: as drawn) and how it bends (0%: straight).
                     percent (id ("Sym"), name ("symmetry"), 50.0f),
                     withUnit (id ("Curve"), name ("curve"), Range (-100.0f, 100.0f, 0.1f), 0.0f, [] (float v, int)
@@ -543,6 +546,19 @@ SiltProcessor::SiltProcessor()
         if (const int t = modulationTarget (id); t >= 0)
             voiceTargets.push_back (t);
 
+    // What a PER GRAIN modulator reaches: the settings a grain takes up as it starts.
+    {
+        using GP = silt::GrainParams;
+        const std::tuple<const char*, double GP::*, double> scattered[] {
+            { "pitch", &GP::pitchSemitones, 1.0 }, { "size", &GP::sizeMs, 1.0 }, { "grainSize", &GP::sizeMs, 1.0 }, { "rate", &GP::rateHz, 1.0 },
+            { "spray", &GP::spray, 0.01 }, { "reverse", &GP::reverseChance, 0.01 }, { "randAmp", &GP::randomAmp, 0.01 }, { "randPan", &GP::randomPan, 0.01 },
+            { "fade", &GP::fade, 0.01 }, { "slant", &GP::slant, 0.01 }, { "ease", &GP::ease, 0.01 }, { "randPitch", &GP::randomPitch, 1.0 },
+            { "patternDepth", &GP::patternDepth, 1.0 }, { "headSpread", &GP::headSpread, 0.01 }, { "liveDelay", &GP::liveDelayMs, 1.0 } };
+        for (const auto& [id, field, scale] : scattered)
+            if (const int t = modulationTarget (id); t >= 0)
+                scatterTargets.push_back ({ t, field, scale });
+    }
+
     for (int m = 0; m < numModulators; ++m)
     {
         // Modulated values where a setting is a target: modulators read each
@@ -556,7 +572,7 @@ SiltProcessor::SiltProcessor()
         };
         modulatorRaw[(size_t) m] = { p ("Type"), p ("Rate"), p ("Sync"), p ("Div"), p ("Shape"), p ("Phase"), p ("Retrig"), p ("Smooth"), p ("Jitter"),
                                      p ("Attack"), p ("Decay"), p ("Sustain"), p ("Release"), p ("Repeat"), p ("FAttack"), p ("FRelease"), p ("Gain"), p ("Source"),
-                                     p ("Enable"), p ("Voice"), p ("Macro"), p ("Sym"), p ("Curve"), p ("Rev"), p ("Spread") };
+                                     p ("Enable"), p ("Voice"), p ("Macro"), p ("Sym"), p ("Curve"), p ("Rev"), p ("Spread"), p ("GrainSpread") };
     }
 
     for (auto* parameter : getParameters())
@@ -749,6 +765,7 @@ silt::GrainParams SiltProcessor::readParams (const float* voiceValues) const noe
         default:
             break;
     }
+    p.scatter = grainScatter.count > 0 ? &grainScatter : nullptr;
     return p;
 }
 
@@ -1296,6 +1313,16 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         const auto& voice = engine.getVoice (v);
         voicePlayheads[(size_t) v].store (voice.isActive() ? voice.getPlayheadPosition() : -1.0f, std::memory_order_relaxed);
     }
+    grainsOverLimit.store (engine.getGrainsOverLimit(), std::memory_order_relaxed);
+    // A PER GRAIN modulator shows what the grains are really rolling.
+    for (int m = 0; m < numModulators; ++m)
+        if (grainSource[(size_t) m] && modEnabled[(size_t) m])
+            for (int v = 0; v < silt::Engine::numVoices; ++v)
+                if (engine.getVoice (v).isActive())
+                {
+                    modOutputs[(size_t) m].store (engine.getVoice (v).getLastRoll (m), std::memory_order_relaxed);
+                    break;
+                }
 }
 
 // Audio thread: steps the modulators over this chunk, then writes every
@@ -1313,7 +1340,9 @@ void SiltProcessor::applyModulation() noexcept
         if (! modEnabled[(size_t) m])
             value[(size_t) m] = 0.0f;
         globalModValues[(size_t) m] = value[(size_t) m];
-        modOutputs[(size_t) m].store (value[(size_t) m], std::memory_order_relaxed);
+        grainSource[(size_t) m] = mp.type == silt::ModType::grain;
+        if (! grainSource[(size_t) m] || ! modEnabled[(size_t) m])   // otherwise it shows the grains' rolls, below
+            modOutputs[(size_t) m].store (value[(size_t) m], std::memory_order_relaxed);
         modPhases[(size_t) m].store ((float) modulators[(size_t) m].getPhase(), std::memory_order_relaxed);
         modStages[(size_t) m].store (modulators[(size_t) m].getStage(), std::memory_order_relaxed);
         modStageMs[(size_t) m].store (modulators[(size_t) m].getStageMs(), std::memory_order_relaxed);
@@ -1326,7 +1355,7 @@ void SiltProcessor::applyModulation() noexcept
         const float base = targets[t].raw->load (std::memory_order_relaxed);
         float offset = 0.0f;
         for (int m = 0; m < numModulators; ++m)
-            if (const float amount = routeAmounts[(size_t) m * maxTargets + t].load (std::memory_order_relaxed); amount != 0.0f && modEnabled[(size_t) m])
+            if (const float amount = routeAmounts[(size_t) m * maxTargets + t].load (std::memory_order_relaxed); amount != 0.0f && modEnabled[(size_t) m] && ! grainSource[(size_t) m])
                 offset += amount * shapedFor (m, (int) t, value[(size_t) m]);
         if (offset == 0.0f)
         {
@@ -1337,6 +1366,48 @@ void SiltProcessor::applyModulation() noexcept
         const float moved = juce::jlimit (0.0f, 1.0f, p->convertTo0to1 (base) + offset);
         modulated[t].store (p->convertFrom0to1 (moved), std::memory_order_relaxed);
     }
+    buildGrainScatter();
+}
+
+// Audio thread: this chunk's PER GRAIN routes, each as how far a whole roll moves its setting,
+// in the setting's own units, from where it now sits. It's a route like any other, so the same
+// depth covers the same part of the knob's travel.
+void SiltProcessor::buildGrainScatter() noexcept
+{
+    grainScatter.count = 0;
+    for (int m = 0; m < numModulators; ++m)
+    {
+        if (! grainSource[(size_t) m] || ! modEnabled[(size_t) m])
+            continue;
+        const auto spread = (silt::GrainScatter::Spread) juce::jlimit (0, 2, (int) modulatorRaw[(size_t) m].grainSpread->load (std::memory_order_relaxed));
+        for (const auto& target : scatterTargets)
+        {
+            const float amount = routeAmounts[(size_t) m * maxTargets + (size_t) target.target].load (std::memory_order_relaxed);
+            if (amount == 0.0f || grainScatter.count >= silt::GrainScatter::maxItems)
+                continue;
+            auto* p = targets[(size_t) target.target].parameter;
+            const float now = modulated[(size_t) target.target].load (std::memory_order_relaxed);
+            const float now01 = p->convertTo0to1 (now);
+            const float depth = std::abs (amount);
+            const double above = (double) p->convertFrom0to1 (juce::jmin (1.0f, now01 + depth)) - now;
+            const double below = (double) now - p->convertFrom0to1 (juce::jmax (0.0f, now01 - depth));
+            auto& item = grainScatter.items[(size_t) grainScatter.count++];
+            item.field = target.field;
+            item.up = (amount >= 0.0f ? above : -below) * target.scale;
+            item.down = (amount >= 0.0f ? below : -above) * target.scale;
+            item.low = p->convertFrom0to1 (0.0f) * target.scale;
+            item.high = p->convertFrom0to1 (1.0f) * target.scale;
+            item.spread = spread;
+            item.oneWay = ! routeIsBipolar (m, target.target);
+            item.source = m;
+        }
+    }
+}
+
+bool SiltProcessor::routeCanWork (int modulator, int target) const noexcept
+{
+    return readModulatorParams (modulator).type != silt::ModType::grain
+        || std::any_of (scatterTargets.begin(), scatterTargets.end(), [target] (const ScatterTarget& s) { return s.target == target; });
 }
 
 silt::ModulatorParams SiltProcessor::readModulatorParams (int m) const noexcept
@@ -1344,7 +1415,7 @@ silt::ModulatorParams SiltProcessor::readModulatorParams (int m) const noexcept
     const auto& r = modulatorRaw[(size_t) m];
     const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
     silt::ModulatorParams p;
-    p.type = (silt::ModType) juce::jlimit (0, 5, (int) v (r.type));
+    p.type = (silt::ModType) juce::jlimit (0, 6, (int) v (r.type));
     p.rateHz = v (r.rate);
     p.sync = v (r.sync) > 0.5f;
     p.reverse = v (r.rev) > 0.5f;
@@ -1807,7 +1878,7 @@ void SiltProcessor::VoiceModulation::prepareChunk() noexcept
     active = false;
     for (int m = 0; m < numModulators; ++m)
     {
-        perVoice[(size_t) m] = owner.isModulatorEnabled (m) && owner.modulatorRaw[(size_t) m].voice->load (std::memory_order_relaxed) > 0.5f;
+        perVoice[(size_t) m] = owner.isModulatorEnabled (m) && owner.modulatorRaw[(size_t) m].voice->load (std::memory_order_relaxed) > 0.5f && ! owner.grainSource[(size_t) m];
         if (perVoice[(size_t) m])
             for (const int t : owner.voiceTargets)
                 active = active || owner.routeAmount (m, t) != 0.0f;
@@ -1866,7 +1937,7 @@ void SiltProcessor::VoiceModulation::compute (int v) noexcept
     {
         float offset = 0.0f;
         for (int m = 0; m < numModulators; ++m)
-            if (const float amount = owner.routeAmount (m, t); amount != 0.0f && owner.modEnabled[(size_t) m])
+            if (const float amount = owner.routeAmount (m, t); amount != 0.0f && owner.modEnabled[(size_t) m] && ! owner.grainSource[(size_t) m])
                 offset += amount * owner.shapedFor (m, t, perVoice[(size_t) m] ? values[(size_t) v][(size_t) m] : owner.globalModValues[(size_t) m]);
         const float moved = juce::jlimit (0.0f, 1.0f, base01[(size_t) t] + offset);
         scratch[(size_t) t] = owner.targets[(size_t) t].parameter->convertFrom0to1 (moved);
@@ -1915,6 +1986,7 @@ void SiltProcessor::VoiceModulation::apply (int v, silt::GrainParams& out) noexc
     own.liveMargin = out.liveMargin;
     own.liveNow = out.liveNow;
     own.pattern = out.pattern;
+    own.scatter = out.scatter;
     own.patternSteps = juce::jlimit (1, 16, own.patternSteps);
     out = own;
 }
@@ -1926,7 +1998,7 @@ bool SiltProcessor::isVoiceTarget (int target) const noexcept
 
 bool SiltProcessor::isModulatorPerVoice (int m) const noexcept
 {
-    return modulatorRaw[(size_t) m].voice->load (std::memory_order_relaxed) > 0.5f;
+    return modulatorRaw[(size_t) m].voice->load (std::memory_order_relaxed) > 0.5f && readModulatorParams (m).type != silt::ModType::grain;
 }
 
 // --- presets ---------------------------------------------------------------------------

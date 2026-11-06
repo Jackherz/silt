@@ -108,6 +108,10 @@ public:
     // parameters stay put; the modulator types start excluded. Both are
     // saved with the session, not in presets. Message thread.
     int randomisePage (int page);   // how many controls changed
+    // Whether a route from this modulator would do anything: PER GRAIN only reaches what a grain
+    // takes up as it starts.
+    bool routeCanWork (int modulator, int target) const noexcept;
+    std::atomic<std::uint64_t> grainsOverLimit { 0 };       // ever; rising: grains are being cut short for want of room
     // RESET: a page's controls back to their defaults (both halves of RESONATOR;
     // on MOD, the modulator shown), or every page's, as one undo step. Routes,
     // the sample and ROOT stay. Returns how many controls changed.
@@ -418,11 +422,16 @@ private:
     struct ModulatorRaw
     {
         std::atomic<float>* type, *rate, *sync, *div, *shape, *phase, *retrig, *smooth, *jitter;
-        std::atomic<float>* attack, *decay, *sustain, *release, *repeat, *followAttack, *followRelease, *gain, *source, *enable, *voice, *macro, *sym, *curve, *rev, *spread;
+        std::atomic<float>* attack, *decay, *sustain, *release, *repeat, *followAttack, *followRelease, *gain, *source, *enable, *voice, *macro, *sym, *curve, *rev, *spread, *grainSpread;
     };
     std::array<bool, 128> heldKeys {};   // audio thread: which notes are down, so repeats don't miscount
     std::array<bool, 128> sustainedKeys {};   // audio thread: let go while the sustain pedal is down
     bool sustainDown = false;
+    std::array<bool, numModulators> grainSource {};        // audio thread: this chunk's PER GRAIN modulators
+    struct ScatterTarget { int target; double silt::GrainParams::* field; double scale; };
+    std::vector<ScatterTarget> scatterTargets;
+    silt::GrainScatter grainScatter;                       // audio thread: this chunk's rolls to make
+    void buildGrainScatter() noexcept;
     std::array<float, numModulators> globalModValues {};   // audio thread: this chunk's shared values
     std::array<bool, numModulators> nativeBipolar {}, modEnabled {};   // audio thread, per chunk
     std::array<std::atomic<int>, numModulators * maxTargets> routePolarity {};
