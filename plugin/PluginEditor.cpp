@@ -2033,22 +2033,35 @@ void SiltEditor::resized()
         tray = keys;
     }
 
-    // The page keys: what makes the grains, the effects, then movement. The chain's blocks
-    // open the effects' pages too.
+    // The page keys, in three groups with room between: what makes the grains, the effects,
+    // then movement. Each key is the same width whichever group it's in.
     {
-        const auto keys = tray.reduced (1);
+        constexpr int groupGap = 10, border = 1;
         int count = 0;
         for (size_t t = 0; t < pageTabs.size(); ++t)
             count += pageHasKey ((int) t) ? 1 : 0;
-        int shown = 0;
+        const int groups = (int) keyGroups.size();
+        const int room = tray.getWidth() - (groups - 1) * groupGap - 2 * groups * border;
+        const auto row = tray.reduced (0, border);
+        size_t group = 0;
+        int shown = 0, groupLeft = tray.getX(), lastRight = tray.getX();
+        int offset = tray.getX() + border;
         for (size_t t = 0; t < pageTabs.size(); ++t)
         {
             if (! pageHasKey ((int) t))
                 continue;
-            const int left = keys.getX() + keys.getWidth() * shown / count, right = keys.getX() + keys.getWidth() * (shown + 1) / count;
-            pageTabs[t].setBounds (keys.withLeft (left).withRight (right));
+            if ((int) t == layout::resonator || (int) t == layout::mod)
+            {
+                keyGroups[group++] = tray.withLeft (groupLeft).withRight (lastRight + border);
+                groupLeft = lastRight + border + groupGap;
+                offset += 2 * border + groupGap;
+            }
+            const int left = offset + room * shown / count;
+            lastRight = offset + room * (shown + 1) / count;
+            pageTabs[t].setBounds (row.withLeft (left).withRight (lastRight));
             ++shown;
         }
+        keyGroups[group] = tray.withLeft (groupLeft).withRight (lastRight + border);
     }
 
     // The well: the modulators, then the knobs, one per column.
@@ -2281,7 +2294,8 @@ void SiltEditor::paint (juce::Graphics& g)
             kit::drawPanel (b, levelsPanel, s, "01", "LEVELS", "IN TO OUT");
         kit::drawPanel (b, chainPanel, s, "02", "CHAIN", "DRAG TO REORDER");
         // The page keys' frame, and the well.
-        kit::drawSheet (b, tray, s, 2);
+        for (const auto& group : keyGroups)
+            kit::drawSheet (b, group, s, 2);
         kit::drawSheet (b, wellArea, s);
     }
     {

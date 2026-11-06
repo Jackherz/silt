@@ -278,6 +278,7 @@ private:
     juce::String hoverHelp;
     std::uint64_t overLimitSeen = 0;
     int editedCheck = 0;
+    std::array<juce::Rectangle<int>, 3> keyGroups;   // the page keys' three groups
     int seenCheck = 0;
     bool windowSeen = true;
     juce::uint32 fullUntil = 0;

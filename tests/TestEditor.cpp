@@ -1160,8 +1160,16 @@ TEST_CASE ("Every page has its key beside the others, and RES pressed again show
         CHECK (keys[i]->getButtonText() == names[i]);
         CHECK (keys[i]->getWidth() > 40);
     }
+    // Three groups: the grains', the effects', MOD. Together within a group, a little apart between.
     for (size_t i = 0; i + 1 < keys.size(); ++i)
-        CHECK (keys[i]->getRight() <= keys[i + 1]->getX() + 1);
+    {
+        const int gap = keys[i + 1]->getX() - keys[i]->getRight();
+        INFO (names[i] << " to " << names[i + 1]);
+        if (i == 3 || i == 7)
+            CHECK (gap >= 6);
+        else
+            CHECK (gap <= 1);
+    }
 
     rig.silt.resonatorHalf.store (0);
     keys[4]->triggerClick();
