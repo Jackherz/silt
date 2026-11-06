@@ -78,6 +78,8 @@ void applySetting (silt::GrainParams& p, silt::ResonatorParams& r, silt::FilterP
     else if (key == "resnotes")  r.notes = value == "harmonics" ? silt::ResonatorNotes::harmonics
                                          : value == "bell" ? silt::ResonatorNotes::bell : silt::ResonatorNotes::scale;
     else if (key == "resrange")  r.rangeOctaves = (float) v;
+    else if (key == "resbands")  r.bandCount = (int) v;
+    else if (key == "resdamp")   r.damp = (float) v;
     else if (key == "resdecay")  r.decaySeconds = (float) v;
     else if (key == "resbright") r.bright = (float) v;
     else if (key == "reswidth")  r.width = (float) v;

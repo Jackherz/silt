@@ -157,6 +157,7 @@ private:
     juce::Rectangle<int> slotBounds (int slot) const;
     juce::String statusText() const;
     void paintPreview (juce::Graphics&);
+    juce::Rectangle<int> shapePreviewArea() const;
     float param (const char* id) const
     {
         const auto* value = silt.params.getRawParameterValue (id);
@@ -277,6 +278,8 @@ private:
     juce::String hoverHelp;
     std::uint64_t overLimitSeen = 0;
     int editedCheck = 0;
+    int seenCheck = 0;
+    bool windowSeen = true;
     juce::uint32 fullUntil = 0;
     bool hoverHelpOn = true;
     int grainView = -1;   // the ? menu's GRAIN VIEW: −1 matches the theme, else a GrainScreen::FieldLook

@@ -45,14 +45,14 @@ first, then snapped once), PATTERN (a repeating pitch pattern, stepping each gra
 STEPS and NEW (a new pattern, saved with the set), and HEADS (1–8 playheads per note,
 evenly around the region at full SPREAD; in Live mode, further back in time).
 
-**RESONATOR page:** a bank of up to 12 ringing band-pass filters after the grains.
+**RESONATOR page:** a modal bank after the grains: up to 128 ringing modes, each a hit rings as hard at any decay.
 TUNE (the lowest band), NOTES (SCALE: the PITCH page's scale and key, or the root and
-fifths with no scale; HARMONICS; BELL partials), RANGE (1–4 octaves the bands reach),
+fifths with no scale; HARMONICS; BELL partials), RANGE (1–8 octaves the bands reach, by default to the top of hearing),
 DECAY (how long the bands ring once the sound stops, 50 ms–20 s; while sound comes in
 they stay narrow and pitched, so short decays still colour it), BRIGHT (how much quieter and shorter the high bands
 are), WIDTH (bands alternate left and right), FOLLOW (tune to the last note played),
-MIX (0 is an exact bypass). The rings are held to the input's level, so a tone
-right on a band can't run away; anything left over saturates softly rather than clips.
+MIX (0 is an exact bypass). The rings are held to the input's peaks, so a tone
+right on a band can't run away and a short hit isn't crushed; anything left over saturates softly rather than clips.
 
 **FILTER page** (after the resonator): MODE (OFF, an exact bypass; 12 or 24 dB/oct),
 A transistor-ladder model, each of its four stages saturating, run at twice the sample rate.
@@ -217,7 +217,9 @@ copying the slices first); each drag, add or remove is one undo step, and MANUAL
 saved with the set. Scroll on the waveform to zoom (to 32×; Shift or a sideways swipe moves
 along), drag the bar under it or the ZOOM label, double-click the label to see it all.
 
-**RANDOM and RESET:** RANDOM's menu (right-click) sets a CHARACTER: ANYTHING, TONAL (stays in tune), RHYTHMIC (short and regular) or TEXTURE (dense and scattered); the last three leave PITCH where it is. RANDOM moves the open page's controls by the amount beside it
+**CPU:** while no one can see the window (closed, minimised, on another Space or fully covered) nothing is drawn; it picks up again when the window comes back. The sound carries on regardless. Silt keeps running in silence, so free-running modulators stay in step and long decays aren't cut off.
+
+**RANDOM and RESET:** RANDOM's menu (right-click) sets a CHARACTER: ANYTHING, TONAL (stays in tune), RHYTHMIC (short and regular) or TEXTURE (dense and scattered); the last three never touch anything that sets tuning, on any page: PITCH, RND PITCH, SCALE, KEY, PATTERN, ROOT, MODE, or the RESONATOR's TUNE, NOTES, FOLLOW, SPREAD and DRIFT, and COLOR's WOW. RANDOM moves the open page's controls by the amount beside it
 (right-click: amounts, which controls to leave out; right-click a knob to leave it out).
 RESET (right-click a page key, or RANDOM's menu) puts a page, or every page, back to its
 defaults, keeping the routes, the sample and ROOT. Both are one undo step.

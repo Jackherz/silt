@@ -227,7 +227,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 }),
                 std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "resNotes", 1 }, "Resonator notes",
                                                               juce::StringArray { "Scale", "Harmonics", "Bell", "Sample" }, 0),
-                withUnit ("resRange", "Resonator range", Range (1.0f, 4.0f, 0.01f), 2.0f,
+                withUnit ("resRange", "Resonator range", Range (1.0f, 8.0f, 0.01f), 8.0f,
                           [] (float v, int) { return juce::String (v, 1) + " oct"; }),
                 withUnit ("resDecay", "Resonator decay", skewed (0.05f, 20.0f, 1.5f), 1.5f,
                           [] (float v, int) { return formatMs (v * 1000.0f, 0); }),
@@ -1799,7 +1799,15 @@ int SiltProcessor::resetAllPages()
 
 namespace
 {
-struct CharacterLimit { const char* id; float low, high; bool leave; };
+struct CharacterLimit { const char* id; float low, high; };
+
+// What any CHARACTER leaves exactly where it is: everything that sets or shifts tuning.
+bool setsTuning (const juce::String& id)
+{
+    static const juce::StringArray ids { "pitch", "randPitch", "scale", "key", "root", "keyMode", "patternDepth", "patternSteps",
+                                         "resTune", "resNotes", "resFollow", "resSpread", "resDrift", "colorWow" };
+    return ids.contains (id);
+}
 
 // What RANDOM keeps to, in each parameter's own units. Anything unlisted roams as usual.
 const CharacterLimit* characterLimit (int character, const juce::String& id)
@@ -1807,16 +1815,16 @@ const CharacterLimit* characterLimit (int character, const juce::String& id)
     static const std::vector<CharacterLimit> limits[] {
         {},
         // TONAL: stays in tune, long enough to hear a pitch.
-        { { "pitch", 0, 0, true }, { "randPitch", 0.0f, 0.15f, false }, { "reverse", 0.0f, 10.0f, false }, { "spray", 0.0f, 25.0f, false },
-          { "size", 80.0f, 800.0f, false }, { "rate", 10.0f, 50.0f, false }, { "jitter", 20.0f, 100.0f, false }, { "patternDepth", 0, 0, true },
-          { "fade", 50.0f, 100.0f, false }, { "colorBits", 12.0f, 16.0f, false } },
+        { { "reverse", 0.0f, 10.0f }, { "spray", 0.0f, 25.0f },
+          { "size", 80.0f, 800.0f }, { "rate", 10.0f, 50.0f }, { "jitter", 20.0f, 100.0f },
+          { "fade", 50.0f, 100.0f }, { "colorBits", 12.0f, 16.0f } },
         // RHYTHMIC: short, regular grains that stay put.
-        { { "pitch", 0, 0, true }, { "randPitch", 0.0f, 0.0f, false }, { "size", 20.0f, 180.0f, false }, { "rate", 4.0f, 30.0f, false },
-          { "jitter", 0.0f, 10.0f, false }, { "spray", 0.0f, 8.0f, false }, { "fade", 20.0f, 70.0f, false }, { "reverse", 0.0f, 30.0f, false } },
+        { { "size", 20.0f, 180.0f }, { "rate", 4.0f, 30.0f },
+          { "jitter", 0.0f, 10.0f }, { "spray", 0.0f, 8.0f }, { "fade", 20.0f, 70.0f }, { "reverse", 0.0f, 30.0f } },
         // TEXTURE: dense, scattered and wide.
-        { { "pitch", 0, 0, true }, { "randPitch", 0.0f, 2.0f, false }, { "size", 30.0f, 500.0f, false }, { "rate", 15.0f, 80.0f, false },
-          { "spray", 30.0f, 100.0f, false }, { "jitter", 50.0f, 100.0f, false }, { "randPan", 40.0f, 100.0f, false }, { "randAmp", 20.0f, 80.0f, false },
-          { "fade", 60.0f, 100.0f, false } },
+        { { "size", 30.0f, 500.0f }, { "rate", 15.0f, 80.0f },
+          { "spray", 30.0f, 100.0f }, { "jitter", 50.0f, 100.0f }, { "randPan", 40.0f, 100.0f }, { "randAmp", 20.0f, 80.0f },
+          { "fade", 60.0f, 100.0f } },
     };
     if (character <= 0 || character >= (int) std::size (limits))
         return nullptr;
@@ -1847,11 +1855,11 @@ int SiltProcessor::randomisePage (int page)
             const int steps = juce::jmax (2, parameter->getNumSteps());
             after = (float) randomiser.nextInt (steps) / (float) (steps - 1);
         }
-        // A CHARACTER keeps what it names within reason, and leaves pitch where you put it.
+        // A CHARACTER keeps what it names within reason, and never touches tuning.
+        if (randomCharacter.load() > 0 && setsTuning (e->id))
+            continue;
         if (const auto* limit = characterLimit (randomCharacter.load(), e->id))
         {
-            if (limit->leave)
-                continue;
             auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter);
             after = juce::jlimit (ranged->convertTo0to1 (limit->low), ranged->convertTo0to1 (limit->high), after);
         }

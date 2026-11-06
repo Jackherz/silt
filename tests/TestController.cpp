@@ -1863,30 +1863,52 @@ TEST_CASE ("Loading only a preset's effects leaves the grains, the routes and th
     CHECK (rig.silt.presetName == "Mine");
 }
 
-TEST_CASE ("RANDOM's character keeps to its limits and leaves pitch alone")
+TEST_CASE ("RANDOM's character keeps to its limits, and on every page leaves tuning alone")
 {
     Rig rig;
-    auto* pitch = rig.silt.params.getParameter ("pitch");
-    const float pitchWas = pitch->getValue();
+    const char* const tuning[] { "pitch", "randPitch", "scale", "key", "root", "keyMode", "patternDepth", "patternSteps",
+                                 "resTune", "resNotes", "resFollow", "resSpread", "resDrift", "colorWow" };
     rig.silt.randomAmount.store (1.0f);
     for (const auto& [character, sizeLow, sizeHigh] : { std::tuple { 1, 80.0f, 800.0f }, std::tuple { 2, 20.0f, 180.0f }, std::tuple { 3, 30.0f, 500.0f } })
     {
         rig.silt.randomCharacter.store (character);
-        for (int i = 0; i < 40; ++i)
-        {
-            rig.silt.randomisePage (silt::layout::grain);
-            const float size = rig.silt.params.getRawParameterValue ("size")->load();
-            CHECK (size >= sizeLow - 0.5f);
-            CHECK (size <= sizeHigh + 0.5f);
-            CHECK (pitch->getValue() == pitchWas);
-        }
+        // Off their defaults, so a clamp to some range would show as a change too.
+        for (const auto* id : tuning)
+            rig.silt.params.getParameter (id)->setValueNotifyingHost (0.37f);
+        std::vector<float> was;
+        for (const auto* id : tuning)
+            was.push_back (rig.silt.params.getParameter (id)->getValue());
+        for (int i = 0; i < 25; ++i)
+            for (int page = 0; page < silt::layout::numPages; ++page)
+            {
+                rig.silt.randomisePage (page);
+                for (size_t t = 0; t < std::size (tuning); ++t)
+                {
+                    INFO (tuning[t] << " on page " << page << ", character " << character);
+                    REQUIRE (rig.silt.params.getParameter (tuning[t])->getValue() == was[t]);
+                }
+            }
+        const float size = rig.silt.params.getRawParameterValue ("size")->load();
+        CHECK (size >= sizeLow - 0.5f);
+        CHECK (size <= sizeHigh + 0.5f);
+        rig.silt.params.getParameter ("keyMode")->setValueNotifyingHost (0.0f);
     }
+
+    // ANYTHING still moves them.
     rig.silt.randomCharacter.store (0);
+    auto* resTune = rig.silt.params.getParameter ("resTune");
+    const float tuneWas = resTune->getValue();
     bool moved = false;
     for (int i = 0; i < 40 && ! moved; ++i)
     {
-        rig.silt.randomisePage (silt::layout::grain);
-        moved = ! juce::exactlyEqual (pitch->getValue(), pitchWas);
+        rig.silt.randomisePage (silt::layout::resonator);
+        moved = ! juce::exactlyEqual (resTune->getValue(), tuneWas);
     }
-    CHECK (moved);   // ANYTHING still moves pitch
+    CHECK (moved);
+}
+
+TEST_CASE ("The tail outlasts the longest decay, so a host doesn't cut it or stop calling")
+{
+    Rig rig;
+    CHECK (rig.silt.getTailLengthSeconds() >= 60.0);
 }

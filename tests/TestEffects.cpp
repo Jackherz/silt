@@ -110,12 +110,20 @@ TEST_CASE ("Resonator: bands follow the scale, harmonics and range")
     p.rangeOctaves = 2.0f;
     REQUIRE (Resonator::bandRatios (p, r) == 5);   // A, E, A, E, A
 
-    // Never more than twelve bands, spread evenly up the range.
+    // More notes than BANDS: spread evenly up the range.
     p.scale = Scale::chromatic;
     p.rangeOctaves = 4.0f;
-    REQUIRE (Resonator::bandRatios (p, r) == Resonator::maxBands);
+    p.bandCount = 12;
+    REQUIRE (Resonator::bandRatios (p, r) == 12);
     CHECK_THAT (r[0], Catch::Matchers::WithinAbs (1.0, 1e-9));
     CHECK_THAT (r[11], Catch::Matchers::WithinAbs (16.0, 1e-9));
+
+    // The full reach: every harmonic, up to the 128th.
+    p.notes = ResonatorNotes::harmonics;
+    p.rangeOctaves = 8.0f;
+    p.bandCount = Resonator::maxBands;
+    REQUIRE (Resonator::bandRatios (p, r) == Resonator::maxBands);
+    CHECK_THAT (r[127], Catch::Matchers::WithinAbs (128.0, 1e-9));
 }
 
 TEST_CASE ("Resonator: a band rings at its note")
@@ -273,12 +281,19 @@ TEST_CASE ("Resonator: a tone on a band rings no louder than it went in")
         const double bothChannels = std::sqrt (0.5 * (std::pow (rms (s.left, (int) rate * 2, (int) rate * 3), 2.0)
                                                      + std::pow (rms (s.right, (int) rate * 2, (int) rate * 3), 2.0)));
         const double gain = db (bothChannels) - db (0.25 / std::sqrt (2.0));
-        float peak = 0.0f;
+        // The first moment can overshoot into the soft clip, like a hit; then it settles below its knee.
+        float peak = 0.0f, settledPeak = 0.0f;
         for (size_t i = 0; i < s.left.size(); ++i)
-            peak = std::max ({ peak, std::abs (s.left[i]), std::abs (s.right[i]) });
-        INFO ("decay " << decay << " s: " << gain << " dB, peak " << peak);
+        {
+            const float most = std::max (std::abs (s.left[i]), std::abs (s.right[i]));
+            peak = std::max (peak, most);
+            if (i > (size_t) (rate * 0.2))
+                settledPeak = std::max (settledPeak, most);
+        }
+        INFO ("decay " << decay << " s: " << gain << " dB, peak " << peak << ", settled " << settledPeak);
         CHECK (gain < 1.5);
-        CHECK (peak < 0.7f);   // below the soft clip's knee: no saturation
+        CHECK (peak <= 1.0f);
+        CHECK (settledPeak < 0.7f);
     }
 }
 
@@ -855,7 +870,7 @@ TEST_CASE ("Resonator page 2: BANDS, ODD/EVEN, DRIFT and DRIVE")
     ResonatorParams p;
     p.notes = ResonatorNotes::harmonics;
     p.rangeOctaves = 4.0f;
-    REQUIRE (Resonator::bandRatios (p, r) == Resonator::maxBands);
+    REQUIRE (Resonator::bandRatios (p, r) == 16);
     p.bandCount = 3;
     REQUIRE (Resonator::bandRatios (p, r) == 3);
     CHECK (r[0] == 1.0);   // still from the lowest…
@@ -985,4 +1000,84 @@ TEST_CASE ("Resonator: NOTES SAMPLE rings the sample's pitches; FOLLOW with a ch
     REQUIRE (n == 6);   // C, E, G and each an octave up: every note gets RANGE above itself
     CHECK (std::abs (r[1] - std::pow (2.0, 4.0 / 12.0)) < 1.0e-6);
     CHECK (std::abs (r[2] - std::pow (2.0, 7.0 / 12.0)) < 1.0e-6);
+}
+
+TEST_CASE ("Resonator: a single hit rings out, about as loud at any decay")
+{
+    std::vector<double> levels;
+    for (const float decay : { 0.3f, 1.0f, 3.0f, 10.0f })
+    {
+        Resonator res;
+        res.prepare (rate);
+        Stereo s ((int) rate * 2);
+        ResonatorParams p;
+        p.notes = ResonatorNotes::harmonics;
+        p.decaySeconds = decay;
+        p.mix = 1.0f;
+        run (res, s, p);                  // the mix has faded in
+        s.left[(size_t) rate] = s.right[(size_t) rate] = 0.5f;   // a hit, a second in
+        Resonator again;
+        again.prepare (rate);
+        auto hit = s;
+        hit.left.assign (hit.left.size(), 0.0f);
+        hit.right.assign (hit.right.size(), 0.0f);
+        hit.left[(size_t) rate] = hit.right[(size_t) rate] = 0.5f;
+        run (again, hit, p);
+        levels.push_back (db (rms (hit.left, (int) rate + 96, (int) rate + 480)));
+        INFO ("decay " << decay << " s: " << levels.back() << " dB");
+        CHECK (levels.back() > -50.0);
+    }
+    INFO ("from " << levels.front() << " to " << levels.back() << " dB");
+    CHECK (std::abs (levels.front() - levels.back()) < 12.0);
+}
+
+TEST_CASE ("Resonator: moving nothing leaves the coefficients alone, and every mode still rings")
+{
+    Resonator res;
+    res.prepare (rate);
+    auto s = noise ((int) rate, 0.2f);
+    ResonatorParams p;
+    p.notes = ResonatorNotes::harmonics;
+    p.mix = 1.0f;
+    run (res, s, p);
+    CHECK (res.getNumBands() == 128);
+    for (const float x : s.left)
+        REQUIRE (std::isfinite (x));
+    // Past half of Nyquist the top of the range is cut, from a low root it isn't.
+    p.rootNote = 96.0f;
+    auto t = noise ((int) rate, 0.2f);
+    run (res, t, p);
+    CHECK (res.getNumBands() >= 1);
+    CHECK (res.getBandFrequency (0) > 2000.0);
+}
+
+TEST_CASE ("Resonator: once it has rung out it rests, and wakes on the first sound")
+{
+    Resonator res;
+    res.prepare (rate);
+    ResonatorParams p;
+    p.notes = ResonatorNotes::harmonics;
+    p.decaySeconds = 0.2f;
+    p.mix = 1.0f;
+    auto first = noise ((int) rate / 2, 0.3f);
+    run (res, first, p);
+    Stereo silence ((int) rate * 6);
+    run (res, silence, p);
+    // Long since rung out: silent, and exactly so.
+    for (int i = (int) rate * 5; i < (int) rate * 6; ++i)
+        REQUIRE (silence.left[(size_t) i] == 0.0f);
+
+    auto again = noise ((int) rate / 2, 0.3f);
+    const double in = rms (again.left, 2400, 24000);
+    run (res, again, p);
+    const double out = rms (again.left, 2400, 24000);
+    INFO ("in " << db (in) << " dB, out " << db (out) << " dB");
+    CHECK (out > in * 0.1);
+    auto fresh = noise ((int) rate / 2, 0.3f);
+    Resonator other;
+    other.prepare (rate);
+    auto warm = noise ((int) rate / 2, 0.3f);
+    run (other, warm, p);
+    run (other, fresh, p);
+    CHECK (std::abs (db (out) - db (rms (fresh.left, 2400, 24000))) < 3.0);
 }

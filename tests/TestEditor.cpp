@@ -1074,3 +1074,73 @@ TEST_CASE ("The MOD page draws every kind of modulator")
         CHECK (image.isValid());
     }
 }
+
+// Not run with the suite: it needs a real window on a real screen. `silt-plugin-tests "[frame-rate]"`.
+// Counts what actually gets painted, with no notes playing: nothing here may lean on the
+// grains' own redraw of the screen, or drop to the slow tick.
+TEST_CASE ("Frame rate: pictures that move keep moving with no notes playing", "[.][frame-rate]")
+{
+    juce::ScopedJuceInitialiser_GUI juce;
+
+    struct Probe final : juce::Component
+    {
+        Probe() { setInterceptsMouseClicks (false, false); setOpaque (false); }
+        void paint (juce::Graphics&) override { ++paints; }
+        int paints = 0;
+    };
+
+    SiltProcessor silt;
+    silt.enableAllBuses();
+    silt.prepareToPlay (48000.0, 128);
+    SiltEditor editor (silt);
+    editor.setOpaque (true);
+    editor.addToDesktop (juce::ComponentPeer::windowHasTitleBar);
+    editor.setVisible (true);
+    editor.toFront (false);
+
+    const auto bounds = editor.getLocalBounds();
+    juce::AudioBuffer<float> buffer (juce::jmax (silt.getTotalNumInputChannels(), silt.getTotalNumOutputChannels()), 128);
+    const auto countFor = [&] (Probe& probe, double seconds)
+    {
+        probe.paints = 0;
+        juce::MidiBuffer none;
+        const auto until = juce::Time::getMillisecondCounterHiRes() + seconds * 1000.0;
+        while (juce::Time::getMillisecondCounterHiRes() < until)
+        {
+            buffer.clear();
+            silt.processBlock (buffer, none);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (3);
+        }
+        return (double) probe.paints / seconds;
+    };
+
+    // A sine on modulator 1, quick enough to move every frame, and reaching SLANT and EASE.
+    silt.params.getParameter ("m1Rate")->setValueNotifyingHost (silt.params.getParameter ("m1Rate")->convertTo0to1 (2.0f));
+    silt.setRouteAmount (0, silt.modulationTarget ("slant"), 0.3f);
+    silt.setRouteAmount (0, silt.modulationTarget ("ease"), 0.3f);
+
+    SECTION ("the MOD page's wave")
+    {
+        silt.currentPage.store (silt::layout::mod);
+        Probe probe;
+        editor.addAndMakeVisible (probe);
+        probe.setBounds (bounds.getWidth() * 3 / 5, bounds.getHeight() / 2 - 80, 40, 40);   // over the screen's corner picture
+        countFor (probe, 5.0);   // past where any trails would have faded
+        const double perSecond = countFor (probe, 2.0);
+        INFO (perSecond << " frames a second");
+        CHECK (perSecond > 20.0);
+    }
+
+    SECTION ("the SHAPE page's GRAIN picture follows SLANT and EASE")
+    {
+        silt.currentPage.store (silt::layout::shape);
+        Probe probe;
+        editor.addAndMakeVisible (probe);
+        probe.setBounds (bounds.getWidth() - 90, bounds.getHeight() - 200, 30, 30);   // over the picture
+        countFor (probe, 1.0);
+        const double perSecond = countFor (probe, 2.0);
+        INFO (perSecond << " frames a second");
+        CHECK (perSecond > 20.0);
+    }
+    editor.removeFromDesktop();
+}

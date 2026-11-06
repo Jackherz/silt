@@ -1,5 +1,7 @@
 #pragma once
 
+#include <limits>
+
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PageLayout.h"
@@ -50,7 +52,13 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 10.0; }
+    // How long a host keeps calling after the last sound. Long decays and free-running
+    // modulators (and the pictures that follow them) need it not to stop: VST3 can say
+    // "never"; AU and CLAP take a plain number, so they get more than the longest decay.
+    double getTailLengthSeconds() const override
+    {
+        return wrapperType == wrapperType_VST3 ? std::numeric_limits<double>::infinity() : 60.0;
+    }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }

@@ -72,6 +72,10 @@ public:
         return 1.0f;
     }
 
+    // Where the rise ends and the fall begins, 0…1 of the grain.
+    double getAttackEnd() const noexcept { return attackEnd; }
+    double getReleaseStart() const noexcept { return releaseStart; }
+
 private:
     // Rises 0 → 1 over t in [0, 1].
     float curve (const HannWindow& hann, double t) const noexcept

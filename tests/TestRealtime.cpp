@@ -192,7 +192,7 @@ TEST_CASE ("Realtime: the allocation counter itself sees an allocation")
 // core processBlock takes, typical and worst case, at a few block sizes.
 TEST_CASE ("Benchmark: CPU for typical and worst-case settings", "[.][benchmark]")
 {
-    const auto measure = [] (double rate, int blockSize, bool worst)
+    const auto measure = [] (double rate, int blockSize, bool worst, bool idle = false)
     {
         juce::ScopedJuceInitialiser_GUI juce;
         SiltProcessor silt;
@@ -227,6 +227,8 @@ TEST_CASE ("Benchmark: CPU for typical and worst-case settings", "[.][benchmark]
             silt.setRouteAmount (1, silt.modulationTarget ("pitch"), 0.1f);
         }
         juce::AudioBuffer<float> buffer (juce::jmax (silt.getTotalNumInputChannels(), silt.getTotalNumOutputChannels()), blockSize);
+        if (idle)
+            notes = 0;   // set up as above, with nothing played
         juce::MidiBuffer start;
         for (int n = 0; n < notes; ++n)
             start.addEvent (juce::MidiMessage::noteOn (1, 48 + n * 3, (juce::uint8) 100), 0);
@@ -246,6 +248,8 @@ TEST_CASE ("Benchmark: CPU for typical and worst-case settings", "[.][benchmark]
             std::printf ("  (%d grains sounding at the end)\n", silt.activeGrains.load());
         return 100.0 * seconds / 4.0;
     };
+    for (const bool worst : { false, true })
+        std::printf ("idle    %s: %5.2f%% of one core\n", worst ? "every effect on" : "as it opens     ", measure (48000.0, 128, worst, true));
     for (const bool worst : { false, true })
         for (const double rate : { 48000.0, 96000.0 })
             for (const int block : { 32, 128 })

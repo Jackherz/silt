@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "WindowVisibility.h"
 #include "ChainView.h"
 #include "GrainScreen.h"
 #include "Grip.h"
@@ -1671,6 +1672,22 @@ juce::String SiltEditor::statusText() const
 
 void SiltEditor::timerCallback()
 {
+    // Nobody looking: no drawing at all, just a quiet look four times a second for when
+    // the window comes back. The audio doesn't know or care.
+    if (++seenCheck >= (windowSeen ? 15 : 1))
+    {
+        seenCheck = 0;
+        if (const bool seen = silt::ui::windowIsSeen (*this); seen != windowSeen)
+        {
+            windowSeen = seen;
+            startTimerHz (seen ? 60 : 4);
+            if (seen)
+                repaint();
+        }
+    }
+    if (! windowSeen)
+        return;
+
     // Turn about at 60 Hz, so the things that move never redraw in the same frame: macOS joins
     // what's dirty in one frame into a single rectangle, and the screen at the top with the
     // modulators at the bottom would repaint everything between them. The screen and the
@@ -1858,15 +1875,33 @@ void SiltEditor::timerCallback()
                 }
     }
 
+    // What moves: at the frame rate of what's beside it, not the slow tick below.
+    if (screenTick)
+    {
+        // The screen's corner picture: redrawn when what it shows changes. It can't lean on
+        // the grains' redraw of the whole screen, which stops once their trails have faded.
+        if (auto key = insetKey (page, silt, *rail); key != insetSeen)
+        {
+            insetSeen = std::move (key);
+            screen->repaintInset();
+        }
+    }
+
+    // The SHAPE preview: only its own corner, only when its values change, and with the
+    // modulators' frame (the screen's would join the two into one big repaint).
+    if (page == layout::shape && modulationTick)
+    {
+        const std::array<float, 7> now { heard ("fade"), heard ("slant"), heard ("ease"), heard ("attack"),
+                                         heard ("decay"), heard ("sustain"), heard ("release") };
+        if (now != previewSeen)
+        {
+            previewSeen = now;
+            repaint (shapePreviewArea());
+        }
+    }
+
     if (! slowTick)
         return;
-
-    // The screen's corner picture: redrawn when what it shows changes.
-    if (auto key = insetKey (page, silt, *rail); key != insetSeen)
-    {
-        insetSeen = std::move (key);
-        screen->repaintInset();
-    }
 
     // The bar marks a sound that's moved from its preset, checked a few times a second.
     const bool checkEdited = ++editedCheck % 20 == 0;
@@ -1891,18 +1926,6 @@ void SiltEditor::timerCallback()
     {
         statusSeen = std::move (status);
         repaint (lcdArea);
-    }
-
-    // Redraw the SHAPE preview only when its values change.
-    if (page == layout::shape)
-    {
-        const std::array<float, 7> now { heard ("fade"), heard ("slant"), heard ("ease"), heard ("attack"),
-                                         heard ("decay"), heard ("sustain"), heard ("release") };
-        if (now != previewSeen)
-        {
-            previewSeen = now;
-            repaint (pagePanel);
-        }
     }
 }
 
@@ -2158,6 +2181,11 @@ void SiltEditor::drawSunk (juce::Graphics& g, juce::Rectangle<float> area, juce:
     g.fillRect (area.withHeight (4.0f));
 }
 
+juce::Rectangle<int> SiltEditor::shapePreviewArea() const
+{
+    return slotBounds (slotsPerRow - 1).reduced (10, 8);
+}
+
 void SiltEditor::paintPreview (juce::Graphics& g)
 {
     // A rule between the grain's envelope (slots 0–2) and the note's (3–6).
@@ -2165,7 +2193,7 @@ void SiltEditor::paintPreview (juce::Graphics& g)
     g.drawVerticalLine (slotBounds (3).getX(), (float) controlRow.getY() + 8.0f, (float) controlRow.getBottom() - 8.0f);
 
     // Slot 7: one grain's envelope above, one note's ADSR below.
-    auto cell = slotBounds (slotsPerRow - 1).reduced (10, 8).toFloat();
+    auto cell = shapePreviewArea().toFloat();
     const auto drawCurve = [&g] (juce::Rectangle<float> box, const juce::Path& curve, const char* caption)
     {
         g.setColour (lcdGreen.darker (0.8f));
@@ -2188,15 +2216,19 @@ void SiltEditor::paintPreview (juce::Graphics& g)
         silt::HannWindow hann;
         silt::GrainEnvelope env;
         env.set (heard ("fade") * 0.01, heard ("slant") * 0.01, heard ("ease") * 0.01, 1000, 0.0);
-        for (int i = 0; i <= 100; ++i)
-        {
-            const float t = (float) i / 100.0f;
-            const juce::Point<float> pt (area.getX() + t * area.getWidth(), area.getBottom() - env (hann, t) * area.getHeight());
-            if (i == 0)
-                grainCurve.startNewSubPath (pt);
-            else
-                grainCurve.lineTo (pt);
-        }
+        // Sampled along the rise and the fall themselves, so the peak and the shoulders
+        // glide with SLANT and EASE instead of snapping to fixed points across the box.
+        const auto at = [&] (double t) { return juce::Point<float> (area.getX() + (float) t * area.getWidth(), area.getBottom() - env (hann, t) * area.getHeight()); };
+        const double rise = env.getAttackEnd(), fall = env.getReleaseStart();
+        constexpr int steps = 48;
+        grainCurve.startNewSubPath (at (0.0));
+        for (int i = 1; i <= steps; ++i)
+            grainCurve.lineTo (at (rise * i / steps * (1.0 - 1.0e-9)));
+        // The very top of the rise, and the flat between it and the fall.
+        grainCurve.lineTo (juce::Point<float> (area.getX() + (float) rise * area.getWidth(), area.getY()));
+        grainCurve.lineTo (juce::Point<float> (area.getX() + (float) fall * area.getWidth(), area.getY()));
+        for (int i = 1; i <= steps; ++i)
+            grainCurve.lineTo (at (fall + (1.0 - fall) * i / steps));
     }
 
     juce::Path noteCurve;

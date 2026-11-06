@@ -314,7 +314,6 @@ void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltPr
     // picture rings as the sound does. DRIVE: the input pushed up and
     // flattened along the bottom, sparks rising into the bands it excites.
     // MIX dims it all, never to nothing.
-    const double tilt = 1.0 - p.bright;
     const double rootHz = 440.0 * std::pow (2.0, (p.rootNote - 69.0) / 12.0);
     const auto xFor = [&] (double hz) { return plot.getX() + plot.getWidth() * (float) (std::log10 (juce::jlimit (20.0, 20000.0, hz) / 20.0) / 3.0); };
     const float base = plot.getBottom() - 2.0f, tall = plot.getHeight() - 14.0f;
@@ -367,8 +366,8 @@ void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltPr
         if (hz > 20000.0)
             break;
         const float against = i % 2 == 0 ? std::max (0.0f, oddEven) : std::max (0.0f, -oddEven);
-        const float level = juce::jlimit (0.0f, 1.0f, (float) std::pow (ratio, -0.75 * tilt) * (1.0f - against));
-        const float ring = std::max (0.02f, p.decaySeconds * (float) std::pow (ratio, -0.7 * tilt - 1.5 * damp));
+        const float level = juce::jlimit (0.0f, 1.0f, (float) silt::Resonator::levelAt (ratio, p.bright) * (1.0f - against));
+        const float ring = std::max (0.02f, p.decaySeconds * (float) silt::Resonator::ringAt (ratio, p.bright, damp));
         const float pan = (i % 2 == 0 ? -1.0f : 1.0f) * width * (n > 1 ? 1.0f : 0.0f);
         const auto colour = pan < 0.0f ? screenPale.interpolatedWith (signalTeal, -pan) : screenPale.interpolatedWith (signalMagenta, pan);
 

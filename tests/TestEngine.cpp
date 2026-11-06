@@ -1407,3 +1407,23 @@ TEST_CASE ("CURVE bends an envelope, and at 0 leaves it as it was")
     CHECK (silt::Modulator::bend (0.5f, 0.5f) == Catch::Approx (0.25f));    // 0.5² : a later rise
     CHECK (silt::Modulator::bend (0.5f, -0.5f) == Catch::Approx (0.7071f).margin (1.0e-3));   // earlier
 }
+
+TEST_CASE ("A grain's envelope says where its rise ends and its fall begins, and reaches the top there")
+{
+    HannWindow hann;
+    for (const double slant : { 0.02, 0.21, 0.5, 0.97 })
+        for (const double ease : { 0.0, 0.5, 1.0 })
+        {
+            GrainEnvelope env;
+            env.set (1.0, slant, ease, 1000, 0.0);
+            CHECK (env.getAttackEnd() == Catch::Approx (slant));
+            CHECK (env.getReleaseStart() == Catch::Approx (slant));
+            CHECK (env (hann, slant * 0.999999) == Catch::Approx (1.0f).margin (0.01));
+            CHECK (env (hann, 0.0) == Catch::Approx (0.0f).margin (1.0e-3));
+        }
+    GrainEnvelope flat;
+    flat.set (0.5, 0.5, 0.5, 1000, 0.0);
+    CHECK (flat.getAttackEnd() == Catch::Approx (0.25));
+    CHECK (flat.getReleaseStart() == Catch::Approx (0.75));
+    CHECK (flat (hann, 0.5) == 1.0f);
+}

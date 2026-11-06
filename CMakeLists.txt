@@ -83,6 +83,7 @@ FetchContent_MakeAvailable(juce clap_juce_extensions)
 # plug-in tests.
 set(SILT_PLUGIN_SOURCES
     plugin/ChainView.cpp
+    $<$<PLATFORM_ID:Darwin>:plugin/WindowVisibility.mm>
     plugin/ModPanel.cpp
     plugin/PageLayout.cpp
     plugin/PluginEditor.cpp
