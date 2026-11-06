@@ -7,6 +7,7 @@
 
 #include <tuple>
 
+#include "../plugin/ChainView.h"
 #include "../plugin/PluginProcessor.h"
 #include "../plugin/Presets.h"
 
@@ -1867,7 +1868,7 @@ TEST_CASE ("RANDOM's character keeps to its limits, and on every page leaves tun
 {
     Rig rig;
     const char* const tuning[] { "pitch", "randPitch", "scale", "key", "root", "keyMode", "patternDepth", "patternSteps",
-                                 "resTune", "resNotes", "resFollow", "resSpread", "resDrift", "colorWow" };
+                                 "resTune", "resShift", "resNotes", "resFollow", "resSpread", "resDrift", "colorWow" };
     rig.silt.randomAmount.store (1.0f);
     for (const auto& [character, sizeLow, sizeHigh] : { std::tuple { 1, 80.0f, 800.0f }, std::tuple { 2, 20.0f, 180.0f }, std::tuple { 3, 30.0f, 500.0f } })
     {
@@ -1911,4 +1912,108 @@ TEST_CASE ("The tail outlasts the longest decay, so a host doesn't cut it or sto
 {
     Rig rig;
     CHECK (rig.silt.getTailLengthSeconds() >= 60.0);
+}
+
+TEST_CASE ("RESONATOR: with FOLLOW, SHIFT takes TUNE's slot and moves the bank from the note played, in key")
+{
+    Rig rig;
+    const auto set = [&] (const char* id, float value)
+    {
+        auto* p = dynamic_cast<juce::RangedAudioParameter*> (rig.silt.params.getParameter (id));
+        p->setValueNotifyingHost (p->convertTo0to1 (value));
+    };
+    CHECK (rig.silt.slotParameter (silt::layout::resonator, 0) == "resTune");
+    set ("resFollow", 1.0f);
+    set ("resMix", 100.0f);
+    CHECK (rig.silt.slotParameter (silt::layout::resonator, 0) == "resShift");
+
+    const auto rootAfter = [&] (float shift)
+    {
+        set ("resShift", shift);
+        juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 128);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 36, (juce::uint8) 100), 0);   // a low C
+        for (int i = 0; i < 4; ++i)
+        {
+            buffer.clear();
+            rig.silt.processBlock (buffer, midi);
+            midi.clear();
+        }
+        return rig.silt.resonatorRootNow.load();
+    };
+    CHECK (rootAfter (0.0f) == 36.0f);
+    CHECK (rootAfter (12.0f) == 48.0f);    // up an octave, to be heard clearer
+    CHECK (rootAfter (24.0f) == 60.0f);
+    CHECK (rootAfter (-12.0f) == 24.0f);
+    CHECK (rootAfter (7.0f) == 43.0f);     // no scale: its fifth
+    CHECK (rootAfter (2.0f) == 36.0f);     // and nothing out of tune between
+    set ("scale", 2.0f);                   // C major
+    set ("key", 0.0f);
+    CHECK (rootAfter (1.0f) == 36.0f);     // ties go down
+    CHECK (rootAfter (2.0f) == 38.0f);     // D
+    CHECK (rootAfter (3.0f) == 38.0f);     // no Eb in C major
+    CHECK (rootAfter (4.0f) == 40.0f);     // E
+}
+
+TEST_CASE ("The chain measures what each module really does: on with no mix changes nothing, sound still passes through")
+{
+    Rig rig;
+    const auto set = [&] (const char* id, float value)
+    {
+        auto* p = dynamic_cast<juce::RangedAudioParameter*> (rig.silt.params.getParameter (id));
+        p->setValueNotifyingHost (p->convertTo0to1 (value));
+    };
+    const auto play = [&]
+    {
+        juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 128);
+        for (int i = 0; i < 80; ++i)
+        {
+            buffer.clear();
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                for (int s = 0; s < 128; ++s)
+                    buffer.setSample (ch, s, 0.25f * (float) std::sin (0.05 * (i * 128 + s)));
+            juce::MidiBuffer midi;
+            if (i == 0)
+                midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            rig.silt.processBlock (buffer, midi);
+        }
+    };
+    const auto res = (size_t) SiltProcessor::moduleResonator;
+    const auto take = [&]
+    {
+        for (auto& peak : rig.silt.moduleChangePeak)
+            peak.store (0.0f);
+        for (auto& peak : rig.silt.moduleOutputPeak)
+            peak.store (0.0f);
+        play();
+        return std::pair { rig.silt.moduleChangePeak[res].load(), rig.silt.moduleOutputPeak[res].load() };
+    };
+
+    for (int i = 0; i < 300 && rig.silt.getOverview().minimum.empty(); ++i)
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    set ("resMix", 0.0f);
+    {
+        const auto [changed, leaving] = take();
+        CHECK (changed == 0.0f);    // on, MIX 0: an exact pass-through
+        CHECK (leaving > 0.01f);    // but sound is still going through it
+        CHECK (silt::ui::ChainView::idleReason (rig.silt, SiltProcessor::moduleResonator) == "MIX 0");
+    }
+    set ("resMix", 100.0f);
+    {
+        const auto [changed, leaving] = take();
+        CHECK (changed > 0.01f);
+        CHECK (leaving > 0.0f);
+        CHECK (silt::ui::ChainView::idleReason (rig.silt, SiltProcessor::moduleResonator).isEmpty());
+    }
+    set ("resOn", 0.0f);
+    play();   // past the switch's fade
+    {
+        const auto [changed, leaving] = take();
+        CHECK (changed == 0.0f);    // switched off
+        CHECK (leaving > 0.01f);
+        CHECK (silt::ui::ChainView::idleReason (rig.silt, SiltProcessor::moduleResonator).isEmpty());   // says OFF, no more
+    }
+    CHECK (silt::ui::ChainView::idleReason (rig.silt, SiltProcessor::moduleFilter) == "OPEN");
+    CHECK (silt::ui::ChainView::idleReason (rig.silt, SiltProcessor::moduleColor) == "NEUTRAL");
+    CHECK (silt::ui::ChainView::idleReason (rig.silt, SiltProcessor::moduleSpace) == "LEVELS 0");
 }

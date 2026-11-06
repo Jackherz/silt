@@ -50,7 +50,7 @@ TUNE (the lowest band), NOTES (SCALE: the PITCH page's scale and key, or the roo
 fifths with no scale; HARMONICS; BELL partials), RANGE (1–8 octaves the bands reach, by default to the top of hearing),
 DECAY (how long the bands ring once the sound stops, 50 ms–20 s; while sound comes in
 they stay narrow and pitched, so short decays still colour it), BRIGHT (how much quieter and shorter the high bands
-are), WIDTH (bands alternate left and right), FOLLOW (tune to the last note played),
+are), WIDTH (bands alternate left and right), FOLLOW (tune to the last note played; TUNE's knob becomes SHIFT, which moves the bands up to three octaves either way without leaving the key: onto the PITCH page's scale, or with no scale onto the note's own fifths and octaves),
 MIX (0 is an exact bypass). The rings are held to the input's peaks, so a tone
 right on a band can't run away and a short hit isn't crushed; anything left over saturates softly rather than clips.
 
@@ -224,7 +224,7 @@ along), drag the bar under it or the ZOOM label, double-click the label to see i
 RESET (right-click a page key, or RANDOM's menu) puts a page, or every page, back to its
 defaults, keeping the routes, the sample and ROOT. Both are one undo step.
 
-**CHAIN:** always on the panel, from any page: drag the four effects into any order, click
+**CHAIN:** always on the panel, from any page. Each module's switch says ON or OFF. A module that's on but has nothing to do says why (MIX 0, OPEN, NEUTRAL, LEVELS 0); otherwise a meter shows how much it's changing the sound, measured, modulation included. The arrow after a module lights while sound is leaving it. Drag the four effects into any order, click
 one to open its page. Each has an ON switch that cuts it at once, fading over 5 ms so it
 doesn't click. A controller can still page to CHAIN for ORDER and the four switches.
 

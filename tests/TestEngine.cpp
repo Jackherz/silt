@@ -1427,3 +1427,16 @@ TEST_CASE ("A grain's envelope says where its rise ends and its fall begins, and
     CHECK (flat.getReleaseStart() == Catch::Approx (0.75));
     CHECK (flat (hann, 0.5) == 1.0f);
 }
+
+TEST_CASE ("shiftInKey: a played note moved without leaving the key")
+{
+    CHECK (shiftInKey (37, 0, Scale::major, 0) == 37);     // no move: as played, even off the scale
+    CHECK (shiftInKey (36, 12, Scale::off, 0) == 48);
+    CHECK (shiftInKey (37, 12, Scale::off, 0) == 49);      // an octave of whatever was played
+    CHECK (shiftInKey (37, 7, Scale::off, 0) == 44);
+    CHECK (shiftInKey (36, -5, Scale::off, 0) == 31);      // down a fourth is a fifth below
+    CHECK (shiftInKey (60, 1, Scale::minor, 9) == 60);     // C is in A minor; C# isn't
+    CHECK (shiftInKey (60, 2, Scale::minor, 9) == 62);
+    CHECK (shiftInKey (120, 36, Scale::off, 0) == 127);
+    CHECK (shiftInKey (2, -36, Scale::off, 0) == 0);
+}

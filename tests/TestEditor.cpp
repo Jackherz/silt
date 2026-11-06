@@ -1144,3 +1144,31 @@ TEST_CASE ("Frame rate: pictures that move keep moving with no notes playing", "
     }
     editor.removeFromDesktop();
 }
+
+TEST_CASE ("Every page has its key beside the others, and RES pressed again shows its other half")
+{
+    EditorRig rig;
+    std::vector<juce::TextButton*> keys;
+    for (auto* child : rig.editor->getChildren())
+        if (auto* b = dynamic_cast<juce::TextButton*> (child); b != nullptr && b->getRadioGroupId() == 1 && b->isVisible())
+            keys.push_back (b);
+    REQUIRE (keys.size() == 9);
+    const char* const names[] { "GRAIN", "SHAPE", "PITCH", "PLAY", "RES", "FILTER", "COLOR", "SPACE", "MOD" };
+    std::sort (keys.begin(), keys.end(), [] (auto* a, auto* b) { return a->getX() < b->getX(); });
+    for (size_t i = 0; i < keys.size(); ++i)
+    {
+        CHECK (keys[i]->getButtonText() == names[i]);
+        CHECK (keys[i]->getWidth() > 40);
+    }
+    for (size_t i = 0; i + 1 < keys.size(); ++i)
+        CHECK (keys[i]->getRight() <= keys[i + 1]->getX() + 1);
+
+    rig.silt.resonatorHalf.store (0);
+    keys[4]->triggerClick();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+    CHECK (rig.silt.currentPage.load() == silt::layout::resonator);
+    CHECK (rig.silt.resonatorHalf.load() == 0);
+    keys[4]->triggerClick();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+    CHECK (rig.silt.resonatorHalf.load() == 1);
+}

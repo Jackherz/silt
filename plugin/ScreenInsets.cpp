@@ -277,7 +277,7 @@ void drawFilter (juce::Graphics& g, juce::Rectangle<float> area, const SiltProce
 void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcessor& silt)
 {
     silt::ResonatorParams p;
-    p.rootNote = live (silt, "resTune");
+    p.rootNote = silt.resonatorRootNow.load (std::memory_order_relaxed);   // TUNE, or FOLLOW's note and SHIFT
     p.notes = (silt::ResonatorNotes) juce::jlimit (0, 3, juce::roundToInt (live (silt, "resNotes")));
     p.sampleCount = juce::jlimit (0, (int) p.sampleHz.size(), silt.samplePitchCount.load());
     for (int i = 0; i < p.sampleCount; ++i)
@@ -439,7 +439,7 @@ void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltPr
     g.setColour (screenLime.withAlpha (0.75f));
     g.drawVerticalLine ((int) rootX, plot.getY(), base);
     g.setFont (monoFont (8.5f));
-    g.drawText (text (silt, "resTune", p.rootNote), juce::Rectangle<float> (rootX + 3.0f, plot.getY(), 60.0f, 10.0f), juce::Justification::centredLeft);
+    g.drawText (juce::MidiMessage::getMidiNoteName (juce::roundToInt (p.rootNote), true, true, 3), juce::Rectangle<float> (rootX + 3.0f, plot.getY(), 60.0f, 10.0f), juce::Justification::centredLeft);
     g.setColour (screenPale.withAlpha (0.5f));
     g.drawText (juce::String (juce::roundToInt (rootHz)) + " HZ", juce::Rectangle<float> (rootX + 3.0f, plot.getY() + 10.0f, 60.0f, 10.0f), juce::Justification::centredLeft);
 }
@@ -960,6 +960,7 @@ std::vector<float> insetKey (int page, const SiltProcessor& silt, const ModRail&
             add ({ "resTune", "resNotes", "resRange", "resDecay", "resBright", "resMix", "scale", "key",
                    "resReso", "resBands", "resDrift", "resSpread", "resOddEven", "resDamp" });
             key.push_back ((float) silt.resonatorHalf.load());
+            key.push_back (silt.resonatorRootNow.load (std::memory_order_relaxed));
             add ({ "resWidth", "resDrive" });
             if (const auto& scope = liveScope (silt); scope.sounding)
                 key.push_back ((float) scope.count);   // the lit bands follow the sound

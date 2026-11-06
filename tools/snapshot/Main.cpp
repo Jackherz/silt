@@ -152,7 +152,7 @@ int main (int argc, char* argv[])
     {
         for (auto* child : editor->getChildren())
             if (auto* tab = dynamic_cast<juce::TextButton*> (child);
-                tab != nullptr && tab->getButtonText().upToFirstOccurrenceOf (" ", false, false) == juce::String (name).removeCharacters ("2"))
+                tab != nullptr && tab->getButtonText().upToFirstOccurrenceOf (" ", false, false) == juce::String (name).removeCharacters ("2").replace ("RESONATOR", "RES"))
             {
                 tab->triggerClick();   // RESONATOR2: the tab again, for its second half
                 break;                 // the first match only: MOD, not MOD ROUTES after it

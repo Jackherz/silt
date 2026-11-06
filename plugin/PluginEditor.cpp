@@ -418,7 +418,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     for (size_t i = 0; i < pageTabs.size(); ++i)
     {
         auto& tab = pageTabs[i];
-        tab.setButtonText (layout::pageName ((int) i));
+        tab.setButtonText ((int) i == layout::resonator ? "RES" : layout::pageName ((int) i));   // as the chain says it
         tab.setRadioGroupId (1);
         tab.setClickingTogglesState (true);
         // Right-click (or Ctrl-click): that page's RESET menu. The key itself
@@ -439,14 +439,14 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         {
             if (pageTabs[i].getToggleState())
             {
+                if ((int) i == layout::resonator && page == layout::resonator)
+                    silt.resonatorHalf.store (1 - silt.resonatorHalf.load());   // pressed again: its other half
                 silt.currentPage.store ((int) i);   // the controller's knobs follow the page
                 showPage ((int) i);
             }
         };
         tab.setTooltip ("Right-click: reset this page or all of them");
         tab.getProperties().set ("flat", true);
-        // The chain is always on the panel and its blocks open the effects' pages, so those
-        // need no key; a controller can still page to them.
         if (pageHasKey ((int) i))
             addAndMakeVisible (tab);
         else
@@ -1785,7 +1785,10 @@ void SiltEditor::timerCallback()
     }
     }
     if (screenTick)
+    {
         updateBench();
+        chainView->updateMeters();
+    }
     if (slowTick)
         chainView->update();
 
@@ -2027,11 +2030,11 @@ void SiltEditor::resized()
         keys.removeFromRight (4);
         learnButton.setBounds (keys.removeFromRight (84));
         keys.removeFromRight (12);
-        tray = keys.withWidth (juce::jmin (keys.getWidth(), 5 * 120));
+        tray = keys;
     }
 
-    // The page keys: what makes the grains, then movement. The effects' pages are the
-    // chain's blocks.
+    // The page keys: what makes the grains, the effects, then movement. The chain's blocks
+    // open the effects' pages too.
     {
         const auto keys = tray.reduced (1);
         int count = 0;

@@ -4,8 +4,9 @@
 
 // The chain, always on the panel: the four modules in the order they run, from any
 // page. Drag a module to move it (one undo step); click one to open its page, or its
-// switch to turn it on or off. Modules that aren't doing anything (off, no mix, filter
-// off…) are drawn faint.
+// switch to turn it on or off. The switch only says ON or OFF. A module that's on says in
+// words why it's idle (MIX 0, OPEN…); otherwise a meter shows how much it's changing the
+// sound, measured, and the arrow after it lights while sound is leaving it.
 namespace silt::ui
 {
 class ChainView final : public juce::Component
@@ -21,6 +22,7 @@ public:
     juce::Rectangle<int> moduleBounds (int module) const;
 
     void update();   // the timer: repaints when the order or a module's state changed
+    void updateMeters();   // the timer, each frame: the meters and arrows, from the audio
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
@@ -28,6 +30,8 @@ public:
 
     static bool moduleActive (const SiltProcessor&, int module);
     static bool moduleOn (const SiltProcessor&, int module);
+    // Why a module that's on isn't doing anything, or nothing if it is.
+    static juce::String idleReason (const SiltProcessor&, int module);
     juce::Rectangle<float> switchArea (int position) const;   // a block's ON switch
 
 private:
@@ -38,6 +42,8 @@ private:
     SiltProcessor& silt;
     std::array<int, SiltProcessor::numModules> shownOrder {};
     std::array<bool, SiltProcessor::numModules> shownActive {}, shownOn {};
+    std::array<float, SiltProcessor::numModules> changeShown {}, outputShown {};   // 0…1, as drawn
+    std::array<int, SiltProcessor::numModules> meterPixels {}, arrowLit {};        // what was last drawn
     int dragging = -1;          // the position being dragged, or −1
     float dragOffset = 0.0f;    // pointer x − the block's left edge
     float dragX = 0.0f;         // the dragged block's left edge

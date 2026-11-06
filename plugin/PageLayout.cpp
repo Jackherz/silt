@@ -138,7 +138,8 @@ std::vector<Entry> build (bool instrument)
     // RESONATOR, in two halves (the tab, or the controller's page buttons, step between them).
     const Shown firstHalf = [] (const Context& c) { return c.resonatorHalf == 0; };
     const Shown secondHalf = [] (const Context& c) { return c.resonatorHalf == 1; };
-    knob (resonator, 0, "resTune", "TUNE", firstHalf);
+    knob (resonator, 0, "resTune", "TUNE", both (firstHalf, off ("resFollow")));
+    knob (resonator, 0, "resShift", "SHIFT", both (firstHalf, on ("resFollow")));   // FOLLOW takes its tune from the notes
     menu (resonator, 1, "resNotes", "NOTES", { "SCALE", "HARMONICS", "BELL", "SAMPLE" }, firstHalf);
     knob (resonator, 2, "resRange", "RANGE", firstHalf);
     knob (resonator, 3, "resDecay", "DECAY", firstHalf);

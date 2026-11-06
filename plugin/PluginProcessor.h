@@ -128,6 +128,7 @@ public:
     juce::StringArray pageParameters (int page, bool everyModulator = false) const;
     std::vector<const silt::layout::Entry*> randomisable (int page) const;
     std::atomic<float> randomAmount { 0.5f };
+    mutable std::atomic<float> resonatorRootNow { 48.0f };   // the note the bank rings from, for the picture
     std::atomic<int> randomCharacter { 0 };   // what RANDOM keeps to: 0 anything, 1 tonal, 2 rhythmic, 3 texture
     bool isRandomExcluded (const juce::String& id) const { return randomExcluded.contains (id); }
     void setRandomExcluded (const juce::String& id, bool excluded);
@@ -135,6 +136,8 @@ public:
     // CHAIN: the order RESONATOR, FILTER, COLOR and SPACE run in, as one of
     // the 24 orders ("chainOrder"). chainOrder gives the modules by position.
     enum Module { moduleResonator, moduleFilter, moduleColor, moduleSpace, numModules };
+    // Per module, the loudest since last taken: how much it changed the sound, and what left it.
+    std::array<std::atomic<float>, numModules> moduleChangePeak {}, moduleOutputPeak {};
     static constexpr int numChainOrders = 24;
     static std::array<int, numModules> chainOrder (int index);
     static int chainOrderIndex (const std::array<int, numModules>&);

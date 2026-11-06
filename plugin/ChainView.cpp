@@ -52,6 +52,42 @@ bool ChainView::moduleActive (const SiltProcessor& silt, int module)
     }
 }
 
+juce::String ChainView::idleReason (const SiltProcessor& silt, int module)
+{
+    if (! moduleOn (silt, module) || moduleActive (silt, module))
+        return {};
+    switch (module)
+    {
+        case SiltProcessor::moduleResonator: return "MIX 0";
+        case SiltProcessor::moduleFilter:    return value (silt, "filterMix") <= 0.0f ? "MIX 0" : "OPEN";
+        case SiltProcessor::moduleColor:     return value (silt, "colorMix") <= 0.0f ? "MIX 0" : "NEUTRAL";
+        default:                             return "LEVELS 0";
+    }
+}
+
+void ChainView::updateMeters()
+{
+    const auto toShown = [] (float peak) { return juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (peak, -60.0f) + 60.0f) / 60.0f); };
+    bool changed = false;
+    for (int m = 0; m < SiltProcessor::numModules; ++m)
+    {
+        const auto i = (size_t) m;
+        // Up at once, down at about 30 dB a second at this frame rate.
+        changeShown[i] = juce::jmax (toShown (silt.moduleChangePeak[i].exchange (0.0f, std::memory_order_relaxed)), changeShown[i] - 0.016f);
+        outputShown[i] = juce::jmax (toShown (silt.moduleOutputPeak[i].exchange (0.0f, std::memory_order_relaxed)), outputShown[i] - 0.016f);
+        const int pixels = juce::roundToInt (changeShown[i] * 40.0f);
+        const int lit = outputShown[i] > 0.0f ? 1 : 0;
+        if (pixels != meterPixels[i] || lit != arrowLit[i])
+        {
+            meterPixels[i] = pixels;
+            arrowLit[i] = lit;
+            changed = true;
+        }
+    }
+    if (changed && dragging < 0)
+        repaint();
+}
+
 void ChainView::update()
 {
     std::array<bool, SiltProcessor::numModules> active {}, on {};
@@ -126,32 +162,33 @@ void ChainView::paint (juce::Graphics& g)
         std::copy (rest.begin(), rest.end(), order.begin());
     }
 
-    // The signal runs left to right between the blocks.
-    g.setColour (ink);
+    // The signal runs left to right between the blocks: lit while sound is leaving the one before.
     for (int p = 0; p + 1 < SiltProcessor::numModules; ++p)
     {
         const auto r = blockArea (p);
         const float x = r.getRight() + 2.0f, y = r.getCentreY();
         juce::Path head;
         head.addTriangle (x + 8.0f, y, x + 1.0f, y - 4.0f, x + 1.0f, y + 4.0f);
+        g.setColour (arrowLit[(size_t) order[(size_t) p]] != 0 ? ink : inkSoft.withAlpha (0.35f));
         g.fillPath (head);
     }
 
     const auto block = [&] (juce::Rectangle<float> r, int module, bool lifted)
     {
-        const bool active = shownActive[(size_t) module], on = shownOn[(size_t) module];
-        const bool open = module == openModule;
+        const auto i = (size_t) module;
+        const bool on = shownOn[i], open = module == openModule;
+        const bool working = shownActive[i] || (on && changeShown[i] > 0.0f);   // the meter knows about modulated mixes too
         const auto face = r.withTrimmedRight (2.0f).withTrimmedBottom (2.0f);
         // Standing out is for a block that's doing something: the rest sit back, shadow and frame.
-        if (active || lifted || open)
+        if (working || lifted || open)
         {
             g.setColour (stock().shadow);
             g.fillRect (face.translated (2.0f, 2.0f));
         }
         g.setColour (lifted ? ink : stock().panel);
         g.fillRect (face);
-        g.setColour (active || lifted || open ? ink : inkSoft.withAlpha (0.5f));
-        g.drawRect (face, active || lifted || open ? 1.2f : 1.0f);
+        g.setColour (working || lifted || open ? ink : inkSoft.withAlpha (0.5f));
+        g.drawRect (face, working || lifted || open ? 1.2f : 1.0f);
         // The top half opens its page, so the open page's block shows as a held key.
         const auto top = face.withBottom (face.getY() + face.getHeight() * 0.5f);
         if (open)
@@ -159,20 +196,37 @@ void ChainView::paint (juce::Graphics& g)
             g.setColour (ink);
             g.fillRect (top);
         }
+        const auto onTop = lifted || open ? stock().panel : ink;
+        // Below the name: why it's idle, or how much it's changing the sound.
+        const auto nameArea = top.withTrimmedBottom (top.getHeight() * 0.3f);
+        auto status = top.withTop (nameArea.getBottom()).withTrimmedBottom (4.0f).reduced (6.0f, 0.0f);
         g.setFont (kit::label (16.0f));
-        g.setColour (lifted || open ? stock().panel : active ? ink : inkSoft);
+        g.setColour (working || lifted || open ? onTop : inkSoft);
         const juce::String half = open && module == SiltProcessor::moduleResonator ? (openHalf == 0 ? " 1/2" : " 2/2") : "";
-        g.drawText (shortName (module) + half, top, juce::Justification::centred);
-        // The switch: solid only while the module is changing the sound. On with nothing
-        // to do, it's an outline that still says ON.
+        g.drawText (shortName (module) + half, nameArea, juce::Justification::centredBottom);
+        if (working)
+        {
+            const auto track = status.withSizeKeepingCentre (status.getWidth(), 5.0f);
+            g.setColour (onTop.withAlpha (0.25f));
+            g.fillRect (track);
+            g.setColour (onTop);
+            g.fillRect (track.withWidth (track.getWidth() * changeShown[i]));
+        }
+        else if (on)
+        {
+            g.setFont (kit::label (10.0f));
+            g.setColour (open || lifted ? onTop.withAlpha (0.8f) : inkSoft);
+            g.drawText (idleReason (silt, module), status, juce::Justification::centred);
+        }
+        // The switch says one thing: on or off.
         const auto box = face.withTrimmedTop (face.getHeight() * 0.52f).reduced (5.0f, 4.0f);
-        g.setColour (active ? ink : lifted ? stock().panel : on ? ink : inkSoft);
-        if (active)
+        g.setColour (lifted ? stock().panel : on ? ink : inkSoft);
+        if (on && ! lifted)
             g.fillRect (box);
         else
             g.drawRect (box, 1.0f);
         g.setFont (kit::label (14.0f));
-        g.setColour (active ? stock().panel : lifted ? stock().panel : on ? ink : inkSoft);
+        g.setColour (lifted ? stock().panel : on ? stock().panel : inkSoft);
         g.drawText (on ? "ON" : "OFF", box, juce::Justification::centred);
     };
 

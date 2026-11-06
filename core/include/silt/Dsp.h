@@ -218,6 +218,17 @@ inline double snapToScale (double pitch, Scale scale, int key) noexcept
     return best;
 }
 
+// A played note moved up or down without leaving the key: onto the scale, or with no
+// scale onto its own fifths and octaves. No move leaves it exactly as it was played.
+inline int shiftInKey (int note, int semitones, Scale scale, int key) noexcept
+{
+    if (semitones == 0)
+        return note;
+    const double moved = scale == Scale::off ? snapToScale (note + semitones, Scale::fifths, note % 12)
+                                             : snapToScale (note + semitones, scale, key);
+    return std::clamp ((int) moved, 0, 127);
+}
+
 // The span of buffer frames a grain reads, [lo, hi), before wrapping.
 // A reversed grain starts at the far end of the forward grain's span and
 // reads back to its start, so both directions cover the same audio

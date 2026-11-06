@@ -225,6 +225,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                     return juce::MidiMessage::getMidiNoteName (note, true, true, 3)
                          + (cents == 0 ? juce::String() : (cents > 0 ? " +" : " ") + juce::String (cents) + "c");
                 }),
+                withUnit ("resShift", "Resonator shift", Range (-36.0f, 36.0f, 1.0f), 0.0f, [] (float v, int)
+                {
+                    const int s = juce::roundToInt (v);
+                    if (s == 0)
+                        return juce::String ("0");
+                    return (s > 0 ? "+" : "") + (s % 12 == 0 ? juce::String (s / 12) + " OCT" : juce::String (s) + " ST");
+                }),
                 std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "resNotes", 1 }, "Resonator notes",
                                                               juce::StringArray { "Scale", "Harmonics", "Bell", "Sample" }, 0),
                 withUnit ("resRange", "Resonator range", Range (1.0f, 8.0f, 0.01f), 8.0f,
@@ -459,7 +466,7 @@ struct SiltProcessor::RawParams
         randPitch = p ("randPitch"); scale = p ("scale"); key = p ("key"); patternDepth = p ("patternDepth");
         patternSteps = p ("patternSteps"); patternSeed = p ("patternSeed"); heads = p ("heads"); headSpread = p ("headSpread");
         resTune = p ("resTune"); resNotes = p ("resNotes"); resRange = p ("resRange"); resDecay = p ("resDecay");
-        resBright = p ("resBright"); resWidth = p ("resWidth"); resFollow = p ("resFollow"); resMix = p ("resMix");
+        resBright = p ("resBright"); resWidth = p ("resWidth"); resFollow = p ("resFollow"); resShift = p ("resShift"); resMix = p ("resMix");
         resReso = p ("resReso"); resBands = p ("resBands"); resDrift = p ("resDrift");
         resSpread = p ("resSpread"); resOddEven = p ("resOddEven"); resDrive = p ("resDrive"); resDamp = p ("resDamp");
         filterMode = p ("filterMode"); filterCutoff = p ("filterCutoff"); filterReso = p ("filterReso"); filterMorph = p ("filterMorph");
@@ -482,7 +489,7 @@ struct SiltProcessor::RawParams
     std::atomic<float>* captureBars, *gain, *monitor, *mix, *inputGain, *chainOrder;
     std::atomic<float>* keyMode, *liveDelay, *delaySync, *delayDiv, *feedback, *freeze, *liveRun, *sliceMode, *sliceCount;
     std::atomic<float>* randPitch, *scale, *key, *patternDepth, *patternSteps, *patternSeed, *heads, *headSpread;
-    std::atomic<float>* resTune, *resNotes, *resRange, *resDecay, *resBright, *resWidth, *resFollow, *resMix;
+    std::atomic<float>* resTune, *resNotes, *resRange, *resDecay, *resBright, *resWidth, *resFollow, *resShift, *resMix;
     std::atomic<float>* resReso, *resBands, *resDrift, *resSpread, *resOddEven, *resDrive, *resDamp;
     std::atomic<float>* filterMode, *filterCutoff, *filterReso, *filterMorph, *filterDrive, *filterEnv, *filterKey, *filterMix;
     std::atomic<float>* colorDrive, *colorTone, *colorBits, *colorRate, *colorComp, *colorNoise, *colorWow, *colorMix;
@@ -789,17 +796,23 @@ silt::ResonatorParams SiltProcessor::readResonatorParams (const silt::GrainParam
     const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
     silt::ResonatorParams p;
     const bool follow = v (raw->resFollow) > 0.5f && followRoot >= 0;
-    p.rootNote = follow ? (float) followRoot : v (raw->resTune);
+    // SHIFT: every note FOLLOW is ringing, moved together without leaving the key.
+    const int shiftBy = juce::roundToInt (v (raw->resShift));
+    const auto inKey = [&] (int note) { return silt::shiftInKey (note, shiftBy, grain.scale, grain.key); };
+    const int shiftedRoot = follow ? inKey (followRoot) : 0;
+    p.rootNote = follow ? (float) shiftedRoot : v (raw->resTune);
+    resonatorRootNow.store (p.rootNote, std::memory_order_relaxed);
     p.notes = (silt::ResonatorNotes) juce::jlimit (0, 3, (int) v (raw->resNotes));
     if (follow)
     {
-        p.chord = followChord;
+        for (int c = 0; c < followChordSize; ++c)
+            p.chord[(size_t) c] = (float) (inKey (followRoot + juce::roundToInt (followChord[(size_t) c])) - shiftedRoot);
         p.chordSize = followChordSize;
     }
 
     // SAMPLE: the sample's pitches, moved by TUNE from its default (C2), or
     // with FOLLOW by the note played against ROOT (as the grains are).
-    const float shift = follow ? (float) followRoot - v (raw->root) : v (raw->resTune) - 48.0f;
+    const float shift = follow ? (float) shiftedRoot - v (raw->root) : v (raw->resTune) - 48.0f;
     const float ratio = std::pow (2.0f, shift / 12.0f);
     p.sampleCount = juce::jlimit (0, (int) p.sampleHz.size(), samplePitchCount.load (std::memory_order_relaxed));
     for (int i = 0; i < p.sampleCount; ++i)
@@ -1205,12 +1218,9 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
             level = wantLevel > level ? juce::jmin (wantLevel, level + fadeStep) : juce::jmax (wantLevel, level - fadeStep);
             const bool off = levelFrom <= 0.0f && level <= 0.0f;
             const bool fading = ! off && (levelFrom < 1.0f || level < 1.0f);
-            std::array<float, modulationInterval> dryL {}, dryR {};
-            if (fading)
-            {
-                std::copy (l, l + len, dryL.begin());
-                std::copy (r, r + len, dryR.begin());
-            }
+            std::array<float, modulationInterval> dryL, dryR;
+            std::copy (l, l + len, dryL.begin());
+            std::copy (r, r + len, dryR.begin());
             if (! off)
             switch (module)
             {
@@ -1220,9 +1230,8 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
                 default:
                 {
                     // Measure what SPACE adds: its output less what went in.
-                    std::array<float, modulationInterval> inL {}, inR {};
-                    std::copy (l, l + len, inL.begin());
-                    std::copy (r, r + len, inR.begin());
+                    const auto& inL = dryL;
+                    const auto& inR = dryR;
                     space.process (l, r, len, spaceParams);
                     if (spaceNoteStarted)
                     {
@@ -1263,6 +1272,21 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
                     case moduleColor:     color.reset(); break;
                     default:              space.reset(); break;
                 }
+            }
+            // For the chain's tile and arrow: how much it changed, and what's leaving it.
+            {
+                float changed = 0.0f, leaving = 0.0f;
+                for (int i = 0; i < len; ++i)
+                {
+                    changed = std::max ({ changed, std::abs (l[i] - dryL[(size_t) i]), std::abs (r[i] - dryR[(size_t) i]) });
+                    leaving = std::max ({ leaving, std::abs (l[i]), std::abs (r[i]) });
+                }
+                auto& change = moduleChangePeak[(size_t) module];
+                auto& out = moduleOutputPeak[(size_t) module];
+                if (changed > change.load (std::memory_order_relaxed))
+                    change.store (changed, std::memory_order_relaxed);
+                if (leaving > out.load (std::memory_order_relaxed))
+                    out.store (leaving, std::memory_order_relaxed);
             }
             if (module == tapped)
             {
@@ -1805,7 +1829,7 @@ struct CharacterLimit { const char* id; float low, high; };
 bool setsTuning (const juce::String& id)
 {
     static const juce::StringArray ids { "pitch", "randPitch", "scale", "key", "root", "keyMode", "patternDepth", "patternSteps",
-                                         "resTune", "resNotes", "resFollow", "resSpread", "resDrift", "colorWow" };
+                                         "resTune", "resShift", "resNotes", "resFollow", "resSpread", "resDrift", "colorWow" };
     return ids.contains (id);
 }
 

@@ -68,6 +68,7 @@ inline juce::String helpFor (const juce::String& id)
         { "inputGain", "INPUT: past 0 dB, driven into old tape" },
         // RESONATOR
         { "resTune", "TUNE: the lowest band's note" },
+        { "resShift", "SHIFT: moves the bands, staying in key" },
         { "resNotes", "NOTES: which pitches the bands ring at" },
         { "resRange", "RANGE: how high the bands reach" },
         { "resDecay", "DECAY: how long the bands ring" },

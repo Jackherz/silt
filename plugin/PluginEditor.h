@@ -307,7 +307,7 @@ private:
     SiltProcessor::Layout layoutAtDragStart;
     struct SlotParts { juce::Rectangle<int> label, control, under; };
     SlotParts slotParts (int slot) const;
-    static bool pageHasKey (int p) { return p == silt::layout::grain || p == silt::layout::shape || p == silt::layout::pitch || p == silt::layout::play || p == silt::layout::mod; }
+    static bool pageHasKey (int p) { return p != silt::layout::chain; }   // the chain is on the panel
     SlotParts partsOf (const silt::layout::Entry&) const;
     void makeGrips();
     static void drawSunk (juce::Graphics&, juce::Rectangle<float> area, juce::Colour face);
