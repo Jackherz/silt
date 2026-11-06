@@ -75,7 +75,7 @@ public:
     // A knob takes over a parameter only once it reaches the parameter's value
     // (pickup), so switching pages never makes values jump.
     static constexpr int numPages = silt::layout::numPages, slotsPerPage = 8, modPage = silt::layout::mod;
-    static constexpr int numResonatorHalves = 3;
+    static constexpr int numResonatorHalves = 4;
     std::atomic<int> resonatorHalf { 0 };   // which of RESONATOR's pages of controls is shown
     std::atomic<int> currentPage { 0 };
     std::array<std::atomic<int>, slotsPerPage> knobCCs {};

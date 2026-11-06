@@ -304,11 +304,13 @@ void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltPr
     const int halfShown = silt.resonatorHalf.load();
     const bool secondHalf = halfShown == 1;
     const auto percentOf = [] (float v) { return juce::String (juce::roundToInt (v * 100.0f)) + "%"; };
-    auto plot = frame (g, area, halfShown == 2 ? "RESONATOR 3/3 - STRETCH " + percentOf (p.stretch) + "  SNAP " + percentOf (p.snap)
+    auto plot = frame (g, area, halfShown == 3 ? "RESONATOR 4/4 - STRIKE " + percentOf (live (silt, "resStrike") * 0.01f) + "  PARTICLES " + percentOf (live (silt, "resParticles") * 0.01f)
+                                                     + "  TOP " + percentOf (live (silt, "resTop") * 0.01f)
+                              : halfShown == 2 ? "RESONATOR 3/4 - STRETCH " + percentOf (p.stretch) + "  SNAP " + percentOf (p.snap)
                                                      + (p.rippleDepth > 0.0f ? "  RIPPLE " + juce::String (p.ripple, 1) : juce::String())
-                              : secondHalf ? "RESONATOR 2/3 - " + juce::String (p.bandCount) + " BANDS  Q " + juce::String (juce::roundToInt (8.0 * std::pow (15.0, (double) resonance)))
+                              : secondHalf ? "RESONATOR 2/4 - " + juce::String (p.bandCount) + " BANDS  Q " + juce::String (juce::roundToInt (8.0 * std::pow (15.0, (double) resonance)))
                                                  + (drift > 0.0f ? "  DRIFT " + juce::String (juce::roundToInt (drift * 100.0f)) + "%" : juce::String())
-                                           : "RESONATOR 1/3 - " + juce::String (notes[(int) p.notes]) + " " + juce::String (p.rangeOctaves, 1) + " OCT "
+                                           : "RESONATOR 1/4 - " + juce::String (notes[(int) p.notes]) + " " + juce::String (p.rangeOctaves, 1) + " OCT "
                                                  + text (silt, "resDecay", p.decaySeconds) + "  MIX " + juce::String (juce::roundToInt (mix * 100.0f)) + "%");
 
     std::array<double, silt::Resonator::maxBands> ratios {};
@@ -970,7 +972,8 @@ std::vector<float> insetKey (int page, const SiltProcessor& silt, const ModRail&
         case layout::resonator:
             add ({ "resTune", "resNotes", "resRange", "resDecay", "resBright", "resMix", "scale", "key",
                    "resReso", "resBands", "resDrift", "resSpread", "resOddEven", "resDamp",
-                   "resStretch", "resCurve", "resSnap", "resOffset", "resRipple", "resDepth", "resSweep" });
+                   "resStretch", "resCurve", "resSnap", "resOffset", "resRipple", "resDepth", "resSweep",
+                   "resStrike", "resParticles", "resTop" });
             key.push_back ((float) silt.resonatorHalf.load());
             key.push_back (silt.resonatorRootNow.load (std::memory_order_relaxed));
             add ({ "resWidth", "resDrive" });

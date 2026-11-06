@@ -80,6 +80,9 @@ public:
     int getLiveWritePosition() const noexcept { return liveWrite; }
     int getActiveGrainCount() const noexcept;
     std::uint64_t getGrainsOverLimit() const noexcept;   // ever: cut short or skipped for want of room
+    // The grains that started in the last process(), in order.
+    const GrainStrike* getStrikes() const noexcept { return strikes.data(); }
+    int getStrikeCount() const noexcept { return strikeCount; }
     const GrainVoice& getVoice (int index) const noexcept { return voices[(size_t) index]; }
 
     // Every sounding grain, for the UI. Returns how many were written.
@@ -103,6 +106,8 @@ private:
     VoiceParams* voiceParams = nullptr;
 
     std::array<GrainVoice, numVoices> voices;
+    std::array<GrainStrike, 256> strikes {};
+    int strikeCount = 0;
     std::array<std::uint64_t, numVoices> startedAt {};   // note-on order, for stealing
     std::uint64_t noteCounter = 0;
 

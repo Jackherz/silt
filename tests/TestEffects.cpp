@@ -1213,3 +1213,143 @@ TEST_CASE ("Resonator page 3: everything moving at once stays finite and bounded
         REQUIRE (std::abs (s.left[i]) <= 1.0f);
     }
 }
+
+namespace
+{
+// A bank that has settled, hit once a second in, with no other sound; how loud the ring is soon after.
+double ringAfterHit (float decay, float position, float hardness, float strike = 1.0f)
+{
+    Resonator res;
+    res.prepare (rate);
+    Stereo s ((int) rate * 2);
+    ResonatorParams p;
+    p.notes = ResonatorNotes::harmonics;
+    p.decaySeconds = decay;
+    p.hardness = hardness;
+    p.strike = strike;
+    p.mix = 1.0f;
+    const int at = (int) rate;
+    for (int i = 0; i < (int) s.left.size(); i += 64)
+    {
+        const int len = std::min (64, (int) s.left.size() - i);
+        GrainStrike hit { at - i, 1.0f, position };
+        const bool here = at >= i && at < i + len;
+        res.process (s.left.data() + i, s.right.data() + i, len, p, here ? &hit : nullptr, here ? 1 : 0);
+    }
+    return db (rms (s.left, at + 48, at + 4800));
+}
+} // namespace
+
+TEST_CASE ("STRIKE: a grain's hit rings the bank with nothing else coming in, about as hard at any decay")
+{
+    std::vector<double> levels;
+    for (const float decay : { 0.3f, 1.0f, 3.0f, 10.0f })
+    {
+        levels.push_back (ringAfterHit (decay, 0.3f, 0.6f));
+        INFO ("decay " << decay << ": " << levels.back() << " dB");
+        CHECK (levels.back() > -36.0);
+    }
+    CHECK (std::abs (levels.front() - levels.back()) < 9.0);
+    CHECK (ringAfterHit (3.0f, 0.3f, 0.6f, 0.0f) < -200.0);   // STRIKE at 0: nothing
+    CHECK (ringAfterHit (3.0f, 0.3f, 0.6f, 0.25f) < ringAfterHit (3.0f, 0.3f, 0.6f, 1.0f) - 6.0);
+}
+
+TEST_CASE ("STRIKE: POSITION decides which modes ring, and it can't blow up")
+{
+    // Hit dead centre, the even modes don't move: a harmonic bank plays only its odd ones.
+    const auto oddShare = [] (float position)
+    {
+        Resonator res;
+        res.prepare (rate);
+        Stereo s ((int) rate);
+        ResonatorParams p;
+        p.notes = ResonatorNotes::harmonics;
+        p.rootNote = 57.0f;     // A3: 220 Hz
+        p.rangeOctaves = 2.0f;  // 1, 2, 3, 4
+        p.width = 0.0f;
+        p.hardness = 1.0f;
+        p.strike = 1.0f;
+        p.mix = 1.0f;
+        GrainStrike hit { 0, 1.0f, position };
+        for (int i = 0; i < (int) s.left.size(); i += 64)
+            res.process (s.left.data() + i, s.right.data() + i, 64, p, i == 2048 ? &hit : nullptr, i == 2048 ? 1 : 0);
+        const auto bin = [&] (double hz)
+        {
+            double re = 0.0, im = 0.0;
+            for (int i = 2200; i < 2200 + 12000; ++i)
+            {
+                re += s.left[(size_t) i] * std::cos (6.283185307 * hz * i / rate);
+                im += s.left[(size_t) i] * std::sin (6.283185307 * hz * i / rate);
+            }
+            return std::sqrt (re * re + im * im);
+        };
+        return bin (440.0) / std::max (1.0e-9, bin (220.0));
+    };
+    CHECK (oddShare (0.5f) < 0.03);    // the second mode gone
+    CHECK (oddShare (0.25f) > 0.3);    // and back again off centre
+
+    // A hundred hits a second, hard, on long rings: loud is fine, out of bounds isn't.
+    Resonator res;
+    res.prepare (rate);
+    Stereo s ((int) rate * 2);
+    ResonatorParams p;
+    p.notes = ResonatorNotes::harmonics;
+    p.strike = 1.0f;
+    p.hardness = 1.0f;
+    p.decaySeconds = 20.0f;
+    p.mix = 1.0f;
+    GrainStrike hit { 0, 1.0f, 0.13f };
+    for (int i = 0; i < (int) s.left.size(); i += 64)
+    {
+        const bool now = i % 480 == 0;
+        res.process (s.left.data() + i, s.right.data() + i, 64, p, now ? &hit : nullptr, now ? 1 : 0);
+    }
+    for (const float x : s.left)
+    {
+        REQUIRE (std::isfinite (x));
+        REQUIRE (std::abs (x) <= 1.0f);
+    }
+}
+
+TEST_CASE ("PARTICLES and TOP: off they change nothing, on they ring the higher modes more")
+{
+    const auto render = [] (float particles, float top)
+    {
+        Resonator res;
+        res.prepare (rate);
+        auto s = noise ((int) rate, 0.2f);
+        // A dull input: smoothed noise.
+        float last = 0.0f;
+        for (auto& x : s.left)
+        {
+            last += 0.02f * (x - last);
+            x = last;
+        }
+        s.right = s.left;
+        ResonatorParams p;
+        p.notes = ResonatorNotes::harmonics;
+        p.mix = 1.0f;
+        p.particles = particles;
+        p.top = top;
+        run (res, s, p);
+        return s;
+    };
+    const auto brightness = [] (const Stereo& s)
+    {
+        double energy = 0.0, change = 0.0;
+        for (size_t i = 1 + (size_t) rate / 2; i < s.left.size(); ++i)
+        {
+            energy += (double) s.left[i] * s.left[i];
+            change += std::pow ((double) s.left[i] - s.left[i - 1], 2.0);
+        }
+        return change / std::max (1.0e-12, energy);
+    };
+    const auto plain = render (0.0f, 0.0f);
+    CHECK (brightness (render (0.0f, 1.0f)) > brightness (plain) * 1.5);
+    CHECK (brightness (render (1.0f, 0.0f)) > brightness (plain));
+    for (const float x : render (1.0f, 1.0f).left)
+    {
+        REQUIRE (std::isfinite (x));
+        REQUIRE (std::abs (x) <= 1.0f);
+    }
+}

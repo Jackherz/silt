@@ -491,6 +491,9 @@ void GrainVoice::startGrain (const GrainParams& p, const SampleBuffer& buffer, i
     const float pan = random.nextBipolar() * (float) std::clamp (p.randomPan, 0.0, 1.0);
     const float amp = 1.0f - random.next01() * (float) std::clamp (p.randomAmp, 0.0, 1.0);
 
+    if (strikeCount < (int) strikes.size())
+        strikes[(size_t) strikeCount++] = { sampleInBlock, velocity * amp, (float) p.strikePosition };
+
     grainsInUse = std::max (grainsInUse, (int) (&g - grains.data()) + 1);
     g.source = &buffer;
     g.born = grainsStarted;

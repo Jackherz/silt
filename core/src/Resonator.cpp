@@ -173,6 +173,9 @@ void Resonator::reset() noexcept
     gainRight.fill (0.0f);
     nextLeft.fill (0.0f);
     nextRight.fill (0.0f);
+    strikeShare.fill (0.0f);
+    modeRatio.fill (0.0f);
+    previousIn = 0.0;
     numBands = 0;
     inMean = inPeak = inPower = inSlow = wetPower = choke = 0.0;
     ringGain = 1.0;
@@ -188,6 +191,7 @@ void Resonator::clearBand (int band) noexcept
     bands[i] = Band {};
     re[i] = im[i] = turnCos[i] = turnSin[i] = 0.0f;
     gainLeft[i] = gainRight[i] = nextLeft[i] = nextRight[i] = 0.0f;
+    strikeShare[i] = modeRatio[i] = 0.0f;
 }
 
 void Resonator::updateCoefficients (const ResonatorParams& target, bool snap) noexcept
@@ -243,6 +247,11 @@ void Resonator::updateCoefficients (const ResonatorParams& target, bool snap) no
     glideTo (smoothed.rippleDepth, target.rippleDepth);
     smoothed.ripple = target.ripple;
     glideTo (smoothed.sweep, target.sweep);
+    glideTo (smoothed.hardness, target.hardness);
+    glideTo (smoothed.particles, target.particles);
+    glideTo (smoothed.top, target.top);
+    glideTo (smoothed.strike, target.strike);
+    smoothed.particleDensity = target.particleDensity;
     smoothed.driftRate = target.driftRate;
     smoothed.bandCount = target.bandCount;
     smoothed.rootNote = target.rootNote;   // the band frequencies glide instead
@@ -339,6 +348,9 @@ void Resonator::updateCoefficients (const ResonatorParams& target, bool snap) no
             const double strength = std::pow (2.0 * pi * heldWidth / sampleRate, widthExponent);
             const double against = i % 2 == 0 ? std::max (0.0, oddEven) : std::max (0.0, -oddEven);   // ODD/EVEN turns the other set down
             const double level = perBank * strength * levelAt (ratio, bright) * rippleAt (ratio, top, p) * wander * (1.0 - against);
+            // A hit: the same ring at any width, so the strength cancels, softer up high as HARDNESS falls.
+            strikeShare[m] = (float) (std::pow (ratio, -2.0 * (1.0 - std::clamp ((double) p.hardness, 0.0, 1.0))) / strength);
+            modeRatio[m] = (float) ratio;
             const double pan = (i % 2 == 0 ? -1.0 : 1.0) * width * (n > 1 ? 1.0 : 0.0);
             const double angle = (pan + 1.0) * pi / 4.0;
             targetLeft = level * std::cos (angle) * std::sqrt (2.0);
@@ -371,13 +383,31 @@ void Resonator::updateCoefficients (const ResonatorParams& target, bool snap) no
     settled = ! moving;
 }
 
+// A grain hitting the bank: every mode kicked at once, by how much that point on the object
+// moves in that mode (the sine a string makes), so where it lands decides which ones ring.
+void Resonator::strikeBank (const GrainStrike& hit, float amount) noexcept
+{
+    const float position = std::clamp (hit.position, 0.0f, 1.0f);
+    constexpr float fullStrike = 0.6f;   // STRIKE at 100%: a lone hit at about the soft clip's knee
+    const float kick = fullStrike * amount * std::clamp (hit.level, 0.0f, 1.0f);
+    if (kick <= 0.0f)
+        return;
+    for (int m = 0; m < numBands; ++m)
+        re[(size_t) m] += kick * strikeShare[(size_t) m] * std::sin ((float) pi * modeRatio[(size_t) m] * position);
+    bankSilent = false;
+    // It sets its own ceiling, or the level match would see a loud ring from a quiet input.
+    inPeak = std::max (inPeak, (double) kick * kick);
+    inPower = std::max (inPower, (double) kick * kick * 0.25);
+}
+
 double Resonator::nextRandom() noexcept
 {
     randomState = randomState * 1664525u + 1013904223u;
     return (double) (randomState >> 8) / 16777216.0;
 }
 
-void Resonator::process (float* left, float* right, int numSamples, const ResonatorParams& p) noexcept
+void Resonator::process (float* left, float* right, int numSamples, const ResonatorParams& p,
+                         const GrainStrike* strikes, int numStrikes) noexcept
 {
     const float mixTarget = std::clamp (p.mix, 0.0f, 1.0f);
     if (! active)
@@ -407,6 +437,12 @@ void Resonator::process (float* left, float* right, int numSamples, const Resona
     // harmonics that ring more bands; the level match keeps the result in line.
     const double drive = std::clamp ((double) smoothed.drive, 0.0, 1.0);
     const double driveGain = 1.0 + 9.0 * drive, driveMakeup = 1.0 + 2.0 * drive;
+    const float strikeAmount = strikes != nullptr ? std::clamp (smoothed.strike, 0.0f, 1.0f) : 0.0f;
+    const double topLift = 6.0 * std::clamp ((double) smoothed.top, 0.0, 1.0);
+    const double particles = std::clamp ((double) smoothed.particles, 0.0, 1.0);
+    const double particleChance = std::clamp ((double) smoothed.particleDensity, 1.0, sampleRate) / sampleRate;
+    const double particleSize = particles * std::sqrt (1.0 / particleChance);   // the same energy at any density
+    int nextStrike = strikeAmount > 0.0f ? 0 : numStrikes;
 
     for (int start = 0; start < numSamples; start += controlInterval)
     {
@@ -421,7 +457,7 @@ void Resonator::process (float* left, float* right, int numSamples, const Resona
         const float mixStep = (mixTarget - mixNow) / (float) len;
 
         // Nothing coming in and nothing ringing: nothing to work out.
-        if (bankSilent && mixStep == 0.0f)
+        if (bankSilent && mixStep == 0.0f && nextStrike >= numStrikes)
         {
             bool silentIn = true;
             for (int i = start; i < start + len && silentIn; ++i)
@@ -459,7 +495,18 @@ void Resonator::process (float* left, float* right, int numSamples, const Resona
         {
             const float inLeft = left[i], inRight = right[i];
             const double dry = 0.5 * ((double) inLeft + (double) inRight);
-            const float x = (float) (drive > 0.0 ? std::tanh (dry * driveGain) / driveGain * driveMakeup : dry);
+            double excite = drive > 0.0 ? std::tanh (dry * driveGain) / driveGain * driveMakeup : dry;
+            if (topLift > 0.0)
+            {
+                const double difference = excite - previousIn;
+                previousIn = excite;
+                excite += topLift * difference;
+            }
+            if (particles > 0.0 && nextRandom() < particleChance)
+                excite += (nextRandom() < 0.5 ? -particleSize : particleSize) * std::sqrt (inMean);
+            const float x = (float) excite;
+            while (nextStrike < numStrikes && strikes[nextStrike].offset <= i)
+                strikeBank (strikes[nextStrike++], strikeAmount);
             float sumLeft[4] = {}, sumRight[4] = {};
             for (int m = 0; m < modes; m += 4)
                 for (int k = 0; k < 4; ++k)

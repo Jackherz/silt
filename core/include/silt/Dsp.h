@@ -192,6 +192,15 @@ constexpr std::uint16_t scaleMask (Scale s) noexcept
     return 0xfff;
 }
 
+// A grain starting, as the resonator hears of it: when in this block, how hard, and where
+// on the bank it lands (0…1, like the point along a string).
+struct GrainStrike
+{
+    int offset = 0;
+    float level = 0.0f;
+    float position = 0.3f;
+};
+
 // Snaps a (fractional) MIDI pitch to the nearest note of the scale in the
 // given key (0 = C … 11 = B); ties go down. Scale::off leaves it unchanged.
 inline double snapToScale (double pitch, Scale scale, int key) noexcept

@@ -80,6 +80,13 @@ void applySetting (silt::GrainParams& p, silt::ResonatorParams& r, silt::FilterP
     else if (key == "resrange")  r.rangeOctaves = (float) v;
     else if (key == "resbands")  r.bandCount = (int) v;
     else if (key == "resdamp")   r.damp = (float) v;
+    else if (key == "resstrike") r.strike = (float) v;
+    else if (key == "reshard")   r.hardness = (float) v;
+    else if (key == "resparticles") r.particles = (float) v;
+    else if (key == "resdensity") r.particleDensity = (float) v;
+    else if (key == "restop")    r.top = (float) v;
+    else if (key == "resstretch") r.stretch = (float) v;
+    else if (key == "resposition") p.strikePosition = v;
     else if (key == "resdecay")  r.decaySeconds = (float) v;
     else if (key == "resbright") r.bright = (float) v;
     else if (key == "reswidth")  r.width = (float) v;
@@ -246,7 +253,7 @@ int main (int argc, char* argv[])
 
         engine.process (out.getWritePointer (0, start), out.getWritePointer (1, start), len,
                         blockEvents.data(), (int) blockEvents.size(), o.params);
-        resonator.process (out.getWritePointer (0, start), out.getWritePointer (1, start), len, resonatorParams);
+        resonator.process (out.getWritePointer (0, start), out.getWritePointer (1, start), len, resonatorParams, engine.getStrikes(), engine.getStrikeCount());
         filter.process (out.getWritePointer (0, start), out.getWritePointer (1, start), len, o.filter);
         color.process (out.getWritePointer (0, start), out.getWritePointer (1, start), len, o.color);
         space.process (out.getWritePointer (0, start), out.getWritePointer (1, start), len, o.space);

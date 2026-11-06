@@ -942,10 +942,15 @@ TEST_CASE ("The controller's page buttons step through every page of RESONATOR")
     CHECK (rig.silt.resonatorHalf.load() == 2);
     CHECK (rig.silt.slotParameter (silt::layout::resonator, 0) == "resStretch");
     next();
+    CHECK (rig.silt.resonatorHalf.load() == 3);
+    CHECK (rig.silt.slotParameter (silt::layout::resonator, 0) == "resStrike");
+    next();
     CHECK (rig.silt.currentPage.load() == silt::layout::filter);
     previous();
     CHECK (rig.silt.currentPage.load() == silt::layout::resonator);
-    CHECK (rig.silt.resonatorHalf.load() == 2);   // back in: its last page
+    CHECK (rig.silt.resonatorHalf.load() == 3);   // back in: its last page
+    previous();
+    CHECK (rig.silt.resonatorHalf.load() == 2);
     previous();
     CHECK (rig.silt.resonatorHalf.load() == 1);
     previous();
@@ -1263,7 +1268,7 @@ TEST_CASE ("Every factory preset sounds: notes (C1 up in SLICE) make a sane leve
 TEST_CASE ("RESONATOR: MIX sits in the same slot on every page")
 {
     Rig rig;
-    for (const int half : { 0, 1, 2 })
+    for (const int half : { 0, 1, 2, 3 })
     {
         rig.silt.resonatorHalf.store (half);
         CHECK (rig.silt.slotParameter (silt::layout::resonator, 7) == "resMix");
@@ -2022,4 +2027,36 @@ TEST_CASE ("The chain measures what each module really does: on with no mix chan
     CHECK (silt::ui::ChainView::idleReason (rig.silt, SiltProcessor::moduleFilter) == "OPEN");
     CHECK (silt::ui::ChainView::idleReason (rig.silt, SiltProcessor::moduleColor) == "NEUTRAL");
     CHECK (silt::ui::ChainView::idleReason (rig.silt, SiltProcessor::moduleSpace) == "LEVELS 0");
+}
+
+TEST_CASE ("STRIKE: each grain the engine starts reaches the bank, and PER GRAIN can roll where it lands")
+{
+    Rig rig;
+    CHECK (rig.silt.routeCanWork (0, rig.silt.modulationTarget ("resPosition")));
+    rig.set ("resMix", 1.0f);
+    for (int i = 0; i < 300 && rig.silt.getOverview().minimum.empty(); ++i)
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    const auto peakWith = [&] (float strike)
+    {
+        rig.set ("resStrike", strike);
+        juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 128);
+        float most = 0.0f;
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        for (int i = 0; i < 400; ++i)
+        {
+            buffer.clear();
+            rig.silt.processBlock (buffer, midi);
+            midi.clear();
+            for (int ch = 0; ch < 2; ++ch)
+                most = juce::jmax (most, buffer.getMagnitude (ch, 0, 128));
+        }
+        return most;
+    };
+    const float without = peakWith (0.0f);
+    const float with = peakWith (1.0f);
+    INFO ("without " << without << ", with " << with);
+    CHECK (without > 0.0f);
+    CHECK (with > without);
+    CHECK (with <= 1.0f);
 }

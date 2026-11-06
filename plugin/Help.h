@@ -90,6 +90,12 @@ inline juce::String helpFor (const juce::String& id)
         { "resRipple", "RIPPLE: how many peaks the highlight has" },
         { "resDepth", "DEPTH: how hard the highlight cuts between" },
         { "resSweep", "SWEEP: moves the highlight through the bands" },
+        { "resStrike", "STRIKE: how hard each new grain hits the bands" },
+        { "resPosition", "POSITION: where a hit lands; try PER GRAIN" },
+        { "resHardness", "HARDNESS: how far up the bands a hit rings" },
+        { "resParticles", "PARTICLES: crackle following the grains" },
+        { "resDensity", "DENSITY: how many crackles a second" },
+        { "resTop", "TOP: brightens what goes in, for dull sounds" },
         // FILTER
         { "filterMode", "MODE: a gentle 12 dB or a steep 24 dB slope" },
         { "filterCutoff", "CUTOFF: where the filter acts" },

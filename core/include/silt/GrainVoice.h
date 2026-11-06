@@ -4,6 +4,7 @@
 #include <silt/SampleBuffer.h>
 #include <silt/Snap.h>
 
+#include <algorithm>
 #include <array>
 
 namespace silt
@@ -74,6 +75,7 @@ struct GrainParams
     // time in Live mode) by headSpread; grains take turns between them.
     int heads = 1;
     double headSpread = 0.5;        // 0…1 of the region (Live: of 1 s)
+    double strikePosition = 0.3;    // where this grain strikes the resonator, 0…1
 
     // Grains mode (after Tonverk's Grainer "amount"): when > 0, this many grains
     // sound at once on average and the start interval follows the grain length,
@@ -171,6 +173,18 @@ public:
     int getActiveGrainCount() const noexcept { return activeGrains; }
     std::uint64_t getGrainsStarted() const noexcept { return grainsStarted; }
     std::uint64_t getGrainsOverLimit() const noexcept { return grainsOverLimit; }   // cut short or skipped for want of room
+    // Grains started since last taken, offsets within what was rendered.
+    int takeStrikes (GrainStrike* into, int room, int offsetBy) noexcept
+    {
+        const int n = std::min (strikeCount, std::max (0, room));
+        for (int i = 0; i < n; ++i)
+        {
+            into[i] = strikes[(size_t) i];
+            into[i].offset += offsetBy;
+        }
+        strikeCount = 0;
+        return n;
+    }
     float getLastRoll (int source) const noexcept { return lastRolls[(size_t) source]; }   // a PER GRAIN source's latest, −1…1
     double getLastGrainStart() const noexcept { return lastGrainStart; }   // buffer frames
     double getLastGrainSemitones() const noexcept { return lastGrainSemitones; }   // above the root note
@@ -253,6 +267,8 @@ private:
     int grainsInUse = 0;   // one past the last playing grain: new ones take the lowest free place
     int retiringGrains = 0;
     std::uint64_t grainsOverLimit = 0;
+    std::array<GrainStrike, 32> strikes {};
+    int strikeCount = 0;
     double intervalScale = 1.0;   // a rolled RATE: the gap to the next grain, against the steady one
     std::array<float, GrainScatter::maxSources> lastRolls {};
 

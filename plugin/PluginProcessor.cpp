@@ -274,6 +274,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 percent ("resDepth", "Resonator ripple depth", 0.0f),
                 percent ("resSweep", "Resonator sweep", 0.0f));
 
+    // Resonator, page 4: what sets it ringing.
+    layout.add (percent ("resStrike", "Resonator strike", 0.0f),
+                percent ("resPosition", "Resonator strike position", 30.0f),
+                percent ("resHardness", "Resonator strike hardness", 60.0f),
+                percent ("resParticles", "Resonator particles", 0.0f),
+                withUnit ("resDensity", "Resonator particle density", skewed (2.0f, 5000.0f, 200.0f), 200.0f,
+                          [] (float v, int) { return juce::String (juce::roundToInt (v)) + " /s"; }),
+                percent ("resTop", "Resonator top", 0.0f));
+
     // Filter: after the resonator.
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "filterMode", 1 }, "Filter",
                                                               juce::StringArray { "12 dB", "24 dB" }, 0),
@@ -488,6 +497,8 @@ struct SiltProcessor::RawParams
         resSpread = p ("resSpread"); resOddEven = p ("resOddEven"); resDrive = p ("resDrive"); resDamp = p ("resDamp");
         resStretch = p ("resStretch"); resCurve = p ("resCurve"); resSnap = p ("resSnap"); resOffset = p ("resOffset");
         resRipple = p ("resRipple"); resDepth = p ("resDepth"); resSweep = p ("resSweep");
+        resStrike = p ("resStrike"); resPosition = p ("resPosition"); resHardness = p ("resHardness");
+        resParticles = p ("resParticles"); resDensity = p ("resDensity"); resTop = p ("resTop");
         filterMode = p ("filterMode"); filterCutoff = p ("filterCutoff"); filterReso = p ("filterReso"); filterMorph = p ("filterMorph");
         filterDrive = p ("filterDrive"); filterEnv = p ("filterEnv"); filterKey = p ("filterKey"); filterMix = p ("filterMix");
         colorDrive = p ("colorDrive"); colorTone = p ("colorTone"); colorBits = p ("colorBits"); colorRate = p ("colorRate");
@@ -511,6 +522,7 @@ struct SiltProcessor::RawParams
     std::atomic<float>* resTune, *resNotes, *resRange, *resDecay, *resBright, *resWidth, *resFollow, *resShift, *resMix;
     std::atomic<float>* resReso, *resBands, *resDrift, *resSpread, *resOddEven, *resDrive, *resDamp;
     std::atomic<float>* resStretch, *resCurve, *resSnap, *resOffset, *resRipple, *resDepth, *resSweep;
+    std::atomic<float>* resStrike, *resPosition, *resHardness, *resParticles, *resDensity, *resTop;
     std::atomic<float>* filterMode, *filterCutoff, *filterReso, *filterMorph, *filterDrive, *filterEnv, *filterKey, *filterMix;
     std::atomic<float>* colorDrive, *colorTone, *colorBits, *colorRate, *colorComp, *colorNoise, *colorWow, *colorMix;
     std::atomic<float>* spaceTime, *spaceSync, *spaceDiv, *spaceFeedback, *spaceMode, *spaceDelay, *spaceSize, *spaceDecay;
@@ -587,7 +599,8 @@ SiltProcessor::SiltProcessor()
             { "pitch", &GP::pitchSemitones, 1.0 }, { "size", &GP::sizeMs, 1.0 }, { "grainSize", &GP::sizeMs, 1.0 }, { "rate", &GP::rateHz, 1.0 },
             { "spray", &GP::spray, 0.01 }, { "reverse", &GP::reverseChance, 0.01 }, { "randAmp", &GP::randomAmp, 0.01 }, { "randPan", &GP::randomPan, 0.01 },
             { "fade", &GP::fade, 0.01 }, { "slant", &GP::slant, 0.01 }, { "ease", &GP::ease, 0.01 }, { "randPitch", &GP::randomPitch, 1.0 },
-            { "patternDepth", &GP::patternDepth, 1.0 }, { "headSpread", &GP::headSpread, 0.01 }, { "liveDelay", &GP::liveDelayMs, 1.0 } };
+            { "patternDepth", &GP::patternDepth, 1.0 }, { "headSpread", &GP::headSpread, 0.01 }, { "liveDelay", &GP::liveDelayMs, 1.0 },
+            { "resPosition", &GP::strikePosition, 0.01 } };
         for (const auto& [id, field, scale] : scattered)
             if (const int t = modulationTarget (id); t >= 0)
                 scatterTargets.push_back ({ t, field, scale });
@@ -741,6 +754,7 @@ silt::GrainParams SiltProcessor::readParams (const float* voiceValues) const noe
     p.fade = v (raw->fade) * 0.01;
     p.slant = v (raw->slant) * 0.01;
     p.ease = v (raw->ease) * 0.01;
+    p.strikePosition = v (raw->resPosition) * 0.01;
     p.start = v (raw->start) * 0.01;
     p.length = v (raw->length) * 0.01;
     p.scan = v (raw->scan);
@@ -860,6 +874,11 @@ silt::ResonatorParams SiltProcessor::readResonatorParams (const silt::GrainParam
     p.ripple = v (raw->resRipple);
     p.rippleDepth = v (raw->resDepth) * 0.01f;
     p.sweep = v (raw->resSweep) * 0.01f;
+    p.strike = v (raw->resStrike) * 0.01f;
+    p.hardness = v (raw->resHardness) * 0.01f;
+    p.particles = v (raw->resParticles) * 0.01f;
+    p.particleDensity = v (raw->resDensity);
+    p.top = v (raw->resTop) * 0.01f;
     return p;
 }
 
@@ -1251,7 +1270,7 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
             if (! off)
             switch (module)
             {
-                case moduleResonator: resonator.process (l, r, len, resonatorParams); break;
+                case moduleResonator: resonator.process (l, r, len, resonatorParams, engine.getStrikes(), engine.getStrikeCount()); break;
                 case moduleFilter:    filter.process (l, r, len, filterParams); break;
                 case moduleColor:     color.process (l, r, len, colorParams); break;
                 default:

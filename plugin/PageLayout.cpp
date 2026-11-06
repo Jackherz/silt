@@ -135,10 +135,11 @@ std::vector<Entry> build (bool instrument)
 
     // RESONATOR: a bank of ringing bands on the grains. SCALE notes come from the
     // PITCH page's scale and key; FOLLOW tunes the bank to the note played.
-    // RESONATOR, on three pages (its key, or the controller's page buttons, step between them).
+    // RESONATOR, on four pages (its key, or the controller's page buttons, step between them).
     const Shown firstHalf = [] (const Context& c) { return c.resonatorHalf == 0; };
     const Shown secondHalf = [] (const Context& c) { return c.resonatorHalf == 1; };
     const Shown thirdHalf = [] (const Context& c) { return c.resonatorHalf == 2; };
+    const Shown fourthHalf = [] (const Context& c) { return c.resonatorHalf == 3; };
     knob (resonator, 0, "resTune", "TUNE", both (firstHalf, off ("resFollow")));
     knob (resonator, 0, "resShift", "SHIFT", both (firstHalf, on ("resFollow")));   // FOLLOW takes its tune from the notes
     menu (resonator, 1, "resNotes", "NOTES", { "SCALE", "HARMONICS", "BELL", "SAMPLE" }, firstHalf);
@@ -163,6 +164,13 @@ std::vector<Entry> build (bool instrument)
     knob (resonator, 5, "resDepth", "DEPTH", thirdHalf);
     knob (resonator, 6, "resSweep", "SWEEP", thirdHalf);
     knob (resonator, 7, "resMix", "MIX", thirdHalf);
+    knob (resonator, 0, "resStrike", "STRIKE", fourthHalf);
+    knob (resonator, 1, "resPosition", "POSITION", fourthHalf);
+    knob (resonator, 2, "resHardness", "HARDNESS", fourthHalf);
+    knob (resonator, 3, "resParticles", "PARTICLES", fourthHalf);
+    knob (resonator, 4, "resDensity", "DENSITY", fourthHalf);
+    knob (resonator, 5, "resTop", "TOP", fourthHalf);
+    knob (resonator, 7, "resMix", "MIX", fourthHalf);
     knob (resonator, 7, "resMix", "MIX", secondHalf);   // MIX in the same slot on both halves: no flipping back to hear it
 
     // FILTER: after the resonator. MORPH blends low, band and high pass; ENV lets

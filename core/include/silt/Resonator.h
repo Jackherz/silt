@@ -43,6 +43,13 @@ struct ResonatorParams
     float rippleDepth = 0.0f;       // 0 no highlight … 1 only the very peaks ring
     float sweep = 0.0f;             // 0…1: where the peaks sit; moved, they scan through the modes
 
+    // Page 4: what sets it ringing, beyond the sound coming in.
+    float strike = 0.0f;            // how hard each new grain hits the bank directly
+    float hardness = 0.6f;          // 0: a hit rings only the low modes … 1: all of them
+    float particles = 0.0f;         // noise crackle following the input's level
+    float particleDensity = 200.0f; // crackles a second
+    float top = 0.0f;               // lifts the top of what goes in, so a dull sound rings the high modes
+
     // SAMPLE: the sample's pitches (Hz, low to high), already moved by TUNE
     // or the note FOLLOW plays; RANGE keeps those within its octaves of the lowest.
     std::array<float, 12> sampleHz {};
@@ -73,7 +80,9 @@ public:
     void reset() noexcept;
 
     // In place; left and right may be the same pointer (mono).
-    void process (float* left, float* right, int numSamples, const ResonatorParams&) noexcept;
+    // strikes: grains starting in this block, in order of offset.
+    void process (float* left, float* right, int numSamples, const ResonatorParams&,
+                  const GrainStrike* strikes = nullptr, int numStrikes = 0) noexcept;
 
     int getNumBands() const noexcept { return numBands; }
     double getBandFrequency (int band) const noexcept { return bands[(size_t) band].frequency; }
@@ -98,6 +107,7 @@ private:
 
     void updateCoefficients (const ResonatorParams&, bool snap) noexcept;
     void clearBand (int band) noexcept;
+    void strikeBank (const GrainStrike&, float amount) noexcept;
 
     static constexpr int controlInterval = 32;
     double sampleRate = 44100.0;
@@ -107,6 +117,7 @@ private:
     // at the end of this block. Four at a time, so the compiler can vectorise.
     alignas (32) std::array<float, maxBands> re {}, im {}, turnCos {}, turnSin {};
     alignas (32) std::array<float, maxBands> gainLeft {}, gainRight {}, nextLeft {}, nextRight {};
+    std::array<float, maxBands> strikeShare {}, modeRatio {};   // what a hit gives each mode, before where it lands
 
     int numBands = 0;
     float mixNow = 0.0f;
@@ -118,6 +129,7 @@ private:
     double chokeUsed = -1.0;
     double inMean = 0.0, inPeak = 0.0, inPower = 0.0, wetPower = 0.0, ringGain = 1.0;   // level match
     double inSlow = 0.0, choke = 0.0;   // choke: 1 once the input has dropped away
+    double previousIn = 0.0;            // TOP: the last sample in
     bool active = false;   // false: modes are silent and the input passes through
     unsigned randomState = 0x5117u;
 };

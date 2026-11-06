@@ -404,6 +404,7 @@ void Engine::process (float* left, float* right, int numSamples,
     }
 
     swapInPendingBuffer();
+    strikeCount = 0;
 
     std::fill (left, left + numSamples, 0.0f);
     std::fill (right, right + numSamples, 0.0f);
@@ -463,12 +464,15 @@ void Engine::process (float* left, float* right, int numSamples,
             else
                 for (auto& v : voices)
                     v.render (left + pos, right + pos, end - pos, segment, source);
+            for (auto& v : voices)
+                strikeCount += v.takeStrikes (strikes.data() + strikeCount, (int) strikes.size() - strikeCount, pos);
         }
         pos = end;
 
         if (e < numEvents)
             handleEvent (events[e], segment, source);
     }
+    std::sort (strikes.begin(), strikes.begin() + strikeCount, [] (const GrainStrike& a, const GrainStrike& b) { return a.offset < b.offset; });
 
     // Keep this block's output for next block's feedback.
     lastOutCount = std::min (numSamples, maxBlock);
