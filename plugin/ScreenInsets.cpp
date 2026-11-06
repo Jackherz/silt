@@ -278,10 +278,16 @@ void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltPr
 {
     silt::ResonatorParams p;
     p.rootNote = silt.resonatorRootNow.load (std::memory_order_relaxed);   // TUNE, or FOLLOW's note and SHIFT
+    p.chordSize = juce::jlimit (0, (int) p.chord.size(), silt.resonatorChordSizeNow.load (std::memory_order_relaxed));
+    for (int c = 0; c < p.chordSize; ++c)
+        p.chord[(size_t) c] = silt.resonatorChordNow[(size_t) c].load (std::memory_order_relaxed);
     p.notes = (silt::ResonatorNotes) juce::jlimit (0, 3, juce::roundToInt (live (silt, "resNotes")));
     p.sampleCount = juce::jlimit (0, (int) p.sampleHz.size(), silt.samplePitchCount.load());
     for (int i = 0; i < p.sampleCount; ++i)
+    {
         p.sampleHz[(size_t) i] = silt.samplePitchHz[(size_t) i].load() * std::pow (2.0f, (p.rootNote - 48.0f) / 12.0f);
+        p.sampleLevel[(size_t) i] = silt.samplePitchLevel[(size_t) i].load();
+    }
     p.scale = (silt::Scale) juce::jlimit (0, silt::scaleCount - 1, juce::roundToInt (live (silt, "scale")));
     p.key = juce::roundToInt (live (silt, "key"));
     p.rangeOctaves = live (silt, "resRange");
@@ -306,6 +312,7 @@ void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltPr
     const auto percentOf = [] (float v) { return juce::String (juce::roundToInt (v * 100.0f)) + "%"; };
     auto plot = frame (g, area, halfShown == 3 ? "RESONATOR 4/4 - STRIKE " + percentOf (live (silt, "resStrike") * 0.01f) + "  PARTICLES " + percentOf (live (silt, "resParticles") * 0.01f)
                                                      + "  TOP " + percentOf (live (silt, "resTop") * 0.01f)
+                                                     + (live (silt, "resSaturate") > 0.0f ? "  SAT " + percentOf (live (silt, "resSaturate") * 0.01f) : juce::String())
                               : halfShown == 2 ? "RESONATOR 3/4 - STRETCH " + percentOf (p.stretch) + "  SNAP " + percentOf (p.snap)
                                                      + (p.rippleDepth > 0.0f ? "  RIPPLE " + juce::String (p.ripple, 1) : juce::String())
                               : secondHalf ? "RESONATOR 2/4 - " + juce::String (p.bandCount) + " BANDS  Q " + juce::String (juce::roundToInt (8.0 * std::pow (15.0, (double) resonance)))
@@ -313,8 +320,8 @@ void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltPr
                                            : "RESONATOR 1/4 - " + juce::String (notes[(int) p.notes]) + " " + juce::String (p.rangeOctaves, 1) + " OCT "
                                                  + text (silt, "resDecay", p.decaySeconds) + "  MIX " + juce::String (juce::roundToInt (mix * 100.0f)) + "%");
 
-    std::array<double, silt::Resonator::maxBands> ratios {};
-    const int n = silt::Resonator::bandRatios (p, ratios);
+    std::array<silt::Resonator::BankMode, silt::Resonator::maxBands> modes {};
+    const int n = silt::Resonator::bankModes (p, modes);
     if (n == 0)
         return;
 
@@ -372,16 +379,17 @@ void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltPr
     for (int i = 0; i < n; ++i)
     {
         const double cents = 35.0 * spread * std::sin ((double) i * 2.4 + 0.7);
-        double ratio = ratios[(size_t) i] * std::pow (2.0, cents / 1200.0);
+        const auto& mode = modes[(size_t) i];
+        double ratio = mode.ratio * std::pow (2.0, cents / 1200.0);
         if (drift > 0.0f)   // up to ±48 cents of wander, each band at its own pace
             ratio *= std::pow (2.0, 48.0 * drift * std::sin (6.2831853 * driftHz * now * (0.7 + 0.13 * (i % 5)) + i * 1.7) / 1200.0);
         const double hz = rootHz * ratio;
         if (hz > 20000.0)
             break;
-        const float against = i % 2 == 0 ? std::max (0.0f, oddEven) : std::max (0.0f, -oddEven);
-        const float level = juce::jlimit (0.0f, 1.0f, (float) (silt::Resonator::levelAt (ratio, p.bright) * silt::Resonator::rippleAt (ratio, ratios[(size_t) n - 1], p)) * (1.0f - against));
-        const float ring = std::max (0.02f, p.decaySeconds * (float) silt::Resonator::ringAt (ratio, p.bright, damp));
-        const float pan = (i % 2 == 0 ? -1.0f : 1.0f) * width * (n > 1 ? 1.0f : 0.0f);
+        const float against = mode.partial % 2 == 0 ? std::max (0.0f, oddEven) : std::max (0.0f, -oddEven);
+        const float level = juce::jlimit (0.0f, 1.0f, (float) (mode.weight * silt::Resonator::levelAt (mode.own, p.bright) * silt::Resonator::rippleAt (ratio, modes[(size_t) n - 1].ratio, p)) * (1.0f - against));
+        const float ring = std::max (0.02f, p.decaySeconds * (float) silt::Resonator::ringAt (mode.own, p.bright, damp));
+        const float pan = ((mode.partial + mode.note) % 2 == 0 ? -1.0f : 1.0f) * width * (n > 1 ? 1.0f : 0.0f);
         const auto colour = pan < 0.0f ? screenPale.interpolatedWith (signalTeal, -pan) : screenPale.interpolatedWith (signalMagenta, pan);
 
         // Struck by the sound now, it rings, falling 60 dB over its ring time.
@@ -973,7 +981,10 @@ std::vector<float> insetKey (int page, const SiltProcessor& silt, const ModRail&
             add ({ "resTune", "resNotes", "resRange", "resDecay", "resBright", "resMix", "scale", "key",
                    "resReso", "resBands", "resDrift", "resSpread", "resOddEven", "resDamp",
                    "resStretch", "resCurve", "resSnap", "resOffset", "resRipple", "resDepth", "resSweep",
-                   "resStrike", "resParticles", "resTop" });
+                   "resStrike", "resParticles", "resTop", "resSaturate" });
+            for (int c = 0; c < silt.resonatorChordSizeNow.load (std::memory_order_relaxed); ++c)
+                key.push_back (silt.resonatorChordNow[(size_t) c].load (std::memory_order_relaxed));
+            key.push_back ((float) silt.resonatorChordSizeNow.load (std::memory_order_relaxed));
             key.push_back ((float) silt.resonatorHalf.load());
             key.push_back (silt.resonatorRootNow.load (std::memory_order_relaxed));
             add ({ "resWidth", "resDrive" });

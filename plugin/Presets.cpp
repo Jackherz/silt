@@ -103,7 +103,7 @@ const std::vector<Factory>& allFactories()
             { "m1Rate", 0.1f } },
           { "1:filterCutoff:0.2" }, true },
 
-        // The resonator tuned to the sample's own pitches, drifting and damped.
+        // The resonator rung as the sample's own modes, drifting and damped.
         { "Sample Strings",
           { { "size", 220.0f }, { "spray", 20.0f }, { "release", 1800.0f },
             { "resMix", 65.0f }, { "resNotes", 3.0f }, { "resFollow", 1.0f }, { "resDecay", 4.0f }, { "resBright", 55.0f }, { "resWidth", 70.0f },
@@ -118,6 +118,48 @@ const std::vector<Factory>& allFactories()
             { "colorDrive", 55.0f }, { "colorBits", 10.0f }, { "colorTone", 20.0f },
             { "resMix", 55.0f }, { "resNotes", 2.0f }, { "resDecay", 2.5f }, { "resDamp", 20.0f },
             { "spaceReverb", 30.0f }, { "spaceDecay", 5.0f } },
+          {} },
+
+        // Sparse grains striking a bell for each note held, every hit landing somewhere else on it.
+        { "Struck Glass",
+          { { "size", 60.0f }, { "rate", 6.0f }, { "spray", 15.0f }, { "randPan", 40.0f }, { "release", 1800.0f },
+            { "resMix", 80.0f }, { "resNotes", 2.0f }, { "resFollow", 1.0f }, { "resDecay", 4.0f }, { "resBright", 70.0f }, { "resWidth", 75.0f },
+            { "resStrike", 70.0f }, { "resHardness", 80.0f },
+            { "spaceReverb", 25.0f }, { "spaceDecay", 5.0f },
+            { "m1Type", 6.0f }, { "m1GrainSpread", 1.0f } },
+          { "1:resPosition:0.4" } },
+
+        // A chord on the harmonic series: each note its own strings, the top lifted so they all sing.
+        { "Wire Choir",
+          { { "size", 240.0f }, { "rate", 18.0f }, { "spray", 20.0f }, { "attack", 400.0f }, { "release", 2500.0f },
+            { "resMix", 75.0f }, { "resNotes", 1.0f }, { "resFollow", 1.0f }, { "resDecay", 6.0f }, { "resBright", 60.0f }, { "resWidth", 80.0f },
+            { "resReso", 75.0f }, { "resDrift", 15.0f }, { "resTop", 30.0f },
+            { "spaceReverb", 30.0f }, { "spaceDecay", 6.0f } },
+          {} },
+
+        // A highlight turning slowly through the series, so the partials take turns.
+        { "Slow Prism",
+          { { "size", 320.0f }, { "rate", 16.0f }, { "spray", 25.0f }, { "randPan", 50.0f }, { "attack", 600.0f }, { "release", 3000.0f },
+            { "resMix", 85.0f }, { "resNotes", 1.0f }, { "resFollow", 1.0f }, { "resDecay", 5.0f }, { "resBright", 75.0f }, { "resWidth", 70.0f },
+            { "resRipple", 3.0f }, { "resDepth", 70.0f }, { "resSweep", 50.0f }, { "resTop", 20.0f },
+            { "spaceReverb", 35.0f }, { "spaceDecay", 8.0f },
+            { "m1Rate", 0.07f } },
+          { "1:resSweep:0.5" } },
+
+        // The series squeezed out of true and hit: warped metal, still on the note you play.
+        { "Bent Plate",
+          { { "size", 45.0f }, { "rate", 9.0f }, { "spray", 10.0f }, { "jitter", 50.0f }, { "release", 1200.0f },
+            { "resMix", 80.0f }, { "resNotes", 1.0f }, { "resFollow", 1.0f }, { "resDecay", 2.5f }, { "resBright", 65.0f }, { "resDamp", 25.0f },
+            { "resStretch", -25.0f }, { "resCurve", 30.0f }, { "resStrike", 55.0f }, { "resHardness", 55.0f }, { "resSaturate", 40.0f },
+            { "colorDrive", 20.0f }, { "spaceReverb", 20.0f }, { "spaceDecay", 3.0f } },
+          {} },
+
+        // Long grains with noise crackling along their level, each crackle ringing the strings.
+        { "Ember Reed",
+          { { "size", 500.0f }, { "rate", 12.0f }, { "spray", 15.0f }, { "attack", 300.0f }, { "release", 2000.0f },
+            { "resMix", 70.0f }, { "resNotes", 1.0f }, { "resFollow", 1.0f }, { "resDecay", 3.0f }, { "resBright", 55.0f }, { "resWidth", 60.0f },
+            { "resParticles", 50.0f }, { "resDensity", 60.0f }, { "resTop", 20.0f }, { "resOddEven", -50.0f },
+            { "spaceReverb", 25.0f }, { "spaceDecay", 4.0f } },
           {} },
 
         // Echoes on the dotted eighth that dip while you play and swell after.

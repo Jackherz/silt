@@ -170,6 +170,7 @@ std::vector<Entry> build (bool instrument)
     knob (resonator, 3, "resParticles", "PARTICLES", fourthHalf);
     knob (resonator, 4, "resDensity", "DENSITY", fourthHalf);
     knob (resonator, 5, "resTop", "TOP", fourthHalf);
+    knob (resonator, 6, "resSaturate", "SATURATE", fourthHalf);
     knob (resonator, 7, "resMix", "MIX", fourthHalf);
     knob (resonator, 7, "resMix", "MIX", secondHalf);   // MIX in the same slot on both halves: no flipping back to hear it
 

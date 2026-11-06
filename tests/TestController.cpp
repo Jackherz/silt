@@ -2060,3 +2060,100 @@ TEST_CASE ("STRIKE: each grain the engine starts reaches the bank, and PER GRAIN
     CHECK (with > without);
     CHECK (with <= 1.0f);
 }
+
+TEST_CASE ("Every RESONATOR knob can be modulated, and modulating one moves the sound")
+{
+    Rig rig;
+    for (const auto* id : { "resTune", "resShift", "resRange", "resDecay", "resBright", "resWidth", "resMix",
+                            "resReso", "resBands", "resDrift", "resSpread", "resOddEven", "resDrive", "resDamp",
+                            "resStretch", "resCurve", "resSnap", "resOffset", "resRipple", "resDepth", "resSweep",
+                            "resStrike", "resPosition", "resHardness", "resParticles", "resDensity", "resTop", "resSaturate" })
+    {
+        INFO (id);
+        CHECK (rig.silt.modulationTarget (id) >= 0);
+    }
+
+    loadSine (rig);
+    const auto render = [&] (float amount)
+    {
+        Rig take;
+        loadSine (take);
+        take.set ("resMix", 100.0f);
+        take.set ("resNotes", 1.0f);
+        take.set ("resDepth", 80.0f);
+        take.silt.setRouteAmount (0, take.silt.modulationTarget ("resSweep"), amount);
+        std::vector<float> out;
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        juce::AudioBuffer<float> buffer (juce::jmax (take.silt.getTotalNumInputChannels(), take.silt.getTotalNumOutputChannels()), 512);
+        for (int b = 0; b < 100; ++b)
+        {
+            buffer.clear();
+            take.silt.processBlock (buffer, midi);
+            midi.clear();
+            out.insert (out.end(), buffer.getReadPointer (0), buffer.getReadPointer (0) + 512);
+        }
+        return out;
+    };
+    const auto still = render (0.0f), moved = render (0.5f);
+    double difference = 0.0, level = 0.0;
+    for (size_t i = 0; i < still.size(); ++i)
+    {
+        difference += std::abs (still[i] - moved[i]);
+        level += std::abs (still[i]);
+    }
+    CHECK (level > 0.0);
+    CHECK (difference > 0.05 * level);
+}
+
+TEST_CASE ("FOLLOW: letting go of a chord unevenly leaves it ringing; a note let go on its own leaves it")
+{
+    Rig rig;
+    rig.set ("resFollow", 1.0f);
+    rig.set ("resMix", 100.0f);
+    juce::AudioBuffer<float> buffer (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 512);
+    const auto play = [&] (std::vector<int> on, std::vector<int> off, int blocks = 1)
+    {
+        juce::MidiBuffer midi;
+        for (const int note : on)
+            midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
+        for (const int note : off)
+            midi.addEvent (juce::MidiMessage::noteOff (1, note), 0);
+        for (int b = 0; b < blocks; ++b)
+        {
+            buffer.clear();
+            rig.silt.processBlock (buffer, midi);
+            midi.clear();
+        }
+    };
+    const auto root = [&] { return rig.silt.resonatorRootNow.load(); };
+    const auto chordSize = [&] { return rig.silt.resonatorChordSizeNow.load(); };
+
+    play ({ 45, 52, 57 }, {}, 4);
+    CHECK (root() == Catch::Approx (45.0f));
+    CHECK (chordSize() == 2);
+
+    // Lifted over about 60 ms, the lowest first and the top last: nothing moves, then or after.
+    play ({}, { 45 }, 3);
+    CHECK (root() == Catch::Approx (45.0f));
+    CHECK (chordSize() == 2);
+    play ({}, { 52 }, 3);
+    CHECK (chordSize() == 2);
+    play ({}, { 57 }, 100);
+    CHECK (root() == Catch::Approx (45.0f));
+    CHECK (chordSize() == 2);
+
+    // A note added changes the chord at once.
+    play ({ 48 }, {}, 1);
+    CHECK (root() == Catch::Approx (48.0f));
+    CHECK (chordSize() == 0);
+    play ({ 55 }, {}, 1);
+    CHECK (chordSize() == 1);
+
+    // One let go while another stays down: gone, a moment later.
+    play ({}, { 55 }, 3);
+    CHECK (chordSize() == 1);
+    play ({}, {}, 40);
+    CHECK (root() == Catch::Approx (48.0f));
+    CHECK (chordSize() == 0);
+}

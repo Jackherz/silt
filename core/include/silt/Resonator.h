@@ -49,14 +49,18 @@ struct ResonatorParams
     float particles = 0.0f;         // noise crackle following the input's level
     float particleDensity = 200.0f; // crackles a second
     float top = 0.0f;               // lifts the top of what goes in, so a dull sound rings the high modes
+    float saturate = 0.0f;          // loud modes hold back and spill into the others; quiet ones ring as they were
 
-    // SAMPLE: the sample's pitches (Hz, low to high), already moved by TUNE
-    // or the note FOLLOW plays; RANGE keeps those within its octaves of the lowest.
-    std::array<float, 12> sampleHz {};
+    // SAMPLE: the sample's modes (Hz, low to high), already moved by TUNE or the note
+    // FOLLOW plays, and how strong each is (0: not known, rings like the rest). RANGE
+    // keeps those within its octaves of the lowest.
+    std::array<float, 128> sampleHz {};
+    std::array<float, 128> sampleLevel {};
     int sampleCount = 0;
 
     // FOLLOW with a chord held: each held note above the lowest (rootNote), in
-    // semitones over it. Every note gets its own set of bands, shared out.
+    // semitones over it. BANDS is shared out evenly, so every note keeps its own
+    // fundamental; RANGE and page 3 act on each note from its own fundamental.
     std::array<float, 8> chord {};
     int chordSize = 0;
 };
@@ -87,6 +91,19 @@ public:
     int getNumBands() const noexcept { return numBands; }
     double getBandFrequency (int band) const noexcept { return bands[(size_t) band].frequency; }
 
+    // One mode of the bank, as ratios to the root (where it sits) and to its own note
+    // (how loud and how long it rings, so a chord's upper notes aren't quieter for being higher).
+    struct BankMode
+    {
+        double ratio = 1.0, own = 1.0;
+        int note = 0;      // which of the chord's notes, lowest first
+        int partial = 0;   // its place in that note's series
+        double weight = 1.0;   // SAMPLE: how strong it is in the sample
+    };
+
+    // The bank's modes, ascending. Returns how many.
+    static int bankModes (const ResonatorParams&, std::array<BankMode, maxBands>& modes) noexcept;
+
     // The bands' frequencies as ratios to the root, ascending. Returns how many.
     static int bandRatios (const ResonatorParams&, std::array<double, maxBands>& ratios) noexcept;
 
@@ -100,6 +117,7 @@ private:
     struct Band
     {
         double frequency = 0.0;                // 0: not sounding
+        double nominal = 0.0;                  // where it's meant to be, before SPREAD and DRIFT
         double driftFrom = 1.0, driftTo = 1.0, driftPhase = 1.0;   // DRIFT: wandering between random targets
     };
 
@@ -107,6 +125,7 @@ private:
 
     void updateCoefficients (const ResonatorParams&, bool snap) noexcept;
     void clearBand (int band) noexcept;
+    void keepSharedNotes (const std::array<BankMode, maxBands>&, int count, double rootHz) noexcept;
     void strikeBank (const GrainStrike&, float amount) noexcept;
 
     static constexpr int controlInterval = 32;
@@ -119,6 +138,13 @@ private:
     alignas (32) std::array<float, maxBands> gainLeft {}, gainRight {}, nextLeft {}, nextRight {};
     std::array<float, maxBands> strikeShare {}, modeRatio {};   // what a hit gives each mode, before where it lands
 
+    // Which slot each of the bank's modes rings in. Across a chord change a mode the
+    // new chord still has stays where it is, undisturbed.
+    std::array<short, maxBands> slotOf {};
+    float slottedRoot = 0.0f;
+    std::array<float, 8> slottedChord {};
+    int slottedChordSize = 0;
+
     int numBands = 0;
     float mixNow = 0.0f;
     ResonatorParams smoothed;   // the knobs, gliding
@@ -130,6 +156,7 @@ private:
     double inMean = 0.0, inPeak = 0.0, inPower = 0.0, wetPower = 0.0, ringGain = 1.0;   // level match
     double inSlow = 0.0, choke = 0.0;   // choke: 1 once the input has dropped away
     double previousIn = 0.0;            // TOP: the last sample in
+    double previousWet = 0.0;           // SATURATE: the last sample out
     bool active = false;   // false: modes are silent and the input passes through
     unsigned randomState = 0x5117u;
 };

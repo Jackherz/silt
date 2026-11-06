@@ -281,7 +281,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 percent ("resParticles", "Resonator particles", 0.0f),
                 withUnit ("resDensity", "Resonator particle density", skewed (2.0f, 5000.0f, 200.0f), 200.0f,
                           [] (float v, int) { return juce::String (juce::roundToInt (v)) + " /s"; }),
-                percent ("resTop", "Resonator top", 0.0f));
+                percent ("resTop", "Resonator top", 0.0f),
+                percent ("resSaturate", "Resonator saturate", 0.0f));
 
     // Filter: after the resonator.
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "filterMode", 1 }, "Filter",
@@ -498,7 +499,7 @@ struct SiltProcessor::RawParams
         resStretch = p ("resStretch"); resCurve = p ("resCurve"); resSnap = p ("resSnap"); resOffset = p ("resOffset");
         resRipple = p ("resRipple"); resDepth = p ("resDepth"); resSweep = p ("resSweep");
         resStrike = p ("resStrike"); resPosition = p ("resPosition"); resHardness = p ("resHardness");
-        resParticles = p ("resParticles"); resDensity = p ("resDensity"); resTop = p ("resTop");
+        resParticles = p ("resParticles"); resDensity = p ("resDensity"); resTop = p ("resTop"); resSaturate = p ("resSaturate");
         filterMode = p ("filterMode"); filterCutoff = p ("filterCutoff"); filterReso = p ("filterReso"); filterMorph = p ("filterMorph");
         filterDrive = p ("filterDrive"); filterEnv = p ("filterEnv"); filterKey = p ("filterKey"); filterMix = p ("filterMix");
         colorDrive = p ("colorDrive"); colorTone = p ("colorTone"); colorBits = p ("colorBits"); colorRate = p ("colorRate");
@@ -522,7 +523,7 @@ struct SiltProcessor::RawParams
     std::atomic<float>* resTune, *resNotes, *resRange, *resDecay, *resBright, *resWidth, *resFollow, *resShift, *resMix;
     std::atomic<float>* resReso, *resBands, *resDrift, *resSpread, *resOddEven, *resDrive, *resDamp;
     std::atomic<float>* resStretch, *resCurve, *resSnap, *resOffset, *resRipple, *resDepth, *resSweep;
-    std::atomic<float>* resStrike, *resPosition, *resHardness, *resParticles, *resDensity, *resTop;
+    std::atomic<float>* resStrike, *resPosition, *resHardness, *resParticles, *resDensity, *resTop, *resSaturate;
     std::atomic<float>* filterMode, *filterCutoff, *filterReso, *filterMorph, *filterDrive, *filterEnv, *filterKey, *filterMix;
     std::atomic<float>* colorDrive, *colorTone, *colorBits, *colorRate, *colorComp, *colorNoise, *colorWow, *colorMix;
     std::atomic<float>* spaceTime, *spaceSync, *spaceDiv, *spaceFeedback, *spaceMode, *spaceDelay, *spaceSize, *spaceDecay;
@@ -681,6 +682,7 @@ void SiltProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamples
     lastNote = -1;
     followRoot = -1;
     followChordSize = 0;
+    followLetGoIn = 0;
     liveColumn = -1;
     liveColumnPeak = 0.0f;
     for (auto& c : livePeaks)
@@ -843,6 +845,9 @@ silt::ResonatorParams SiltProcessor::readResonatorParams (const silt::GrainParam
             p.chord[(size_t) c] = (float) (inKey (followRoot + juce::roundToInt (followChord[(size_t) c])) - shiftedRoot);
         p.chordSize = followChordSize;
     }
+    for (int c = 0; c < p.chordSize; ++c)
+        resonatorChordNow[(size_t) c].store (p.chord[(size_t) c], std::memory_order_relaxed);
+    resonatorChordSizeNow.store (p.chordSize, std::memory_order_relaxed);
 
     // SAMPLE: the sample's pitches, moved by TUNE from its default (C2), or
     // with FOLLOW by the note played against ROOT (as the grains are).
@@ -850,7 +855,10 @@ silt::ResonatorParams SiltProcessor::readResonatorParams (const silt::GrainParam
     const float ratio = std::pow (2.0f, shift / 12.0f);
     p.sampleCount = juce::jlimit (0, (int) p.sampleHz.size(), samplePitchCount.load (std::memory_order_relaxed));
     for (int i = 0; i < p.sampleCount; ++i)
+    {
         p.sampleHz[(size_t) i] = samplePitchHz[(size_t) i].load (std::memory_order_relaxed) * ratio;
+        p.sampleLevel[(size_t) i] = samplePitchLevel[(size_t) i].load (std::memory_order_relaxed);
+    }
     p.scale = grain.scale;
     p.key = grain.key;
     p.rangeOctaves = v (raw->resRange);
@@ -879,6 +887,7 @@ silt::ResonatorParams SiltProcessor::readResonatorParams (const silt::GrainParam
     p.particles = v (raw->resParticles) * 0.01f;
     p.particleDensity = v (raw->resDensity);
     p.top = v (raw->resTop) * 0.01f;
+    p.saturate = v (raw->resSaturate) * 0.01f;
     return p;
 }
 
@@ -1125,9 +1134,11 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
                 modContext.heldNotes = juce::jmax (0, modContext.heldNotes - 1);
             }
         }
-        if (first != last && modContext.heldNotes > 0)
+        // FOLLOW's chord: the held notes, lowest first. A new note changes it at once, and it's
+        // kept after release so the bands ring out. Fingers never lift quite together, so a
+        // note let go only leaves the chord if others are still down a moment later.
+        const auto followHeldNotes = [this]
         {
-            // FOLLOW's chord: the held notes, lowest first (kept after release, so the bands ring out).
             followRoot = -1;
             followChordSize = 0;
             for (int note = 0; note < 128; ++note)
@@ -1138,6 +1149,24 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
                     else if (followChordSize < (int) followChord.size())
                         followChord[(size_t) followChordSize++] = (float) (note - followRoot);
                 }
+        };
+        if (first != last)
+        {
+            if (modContext.heldNotes == 0)
+                followLetGoIn = 0;
+            else if (modContext.noteStarted)
+            {
+                followLetGoIn = 0;
+                followHeldNotes();
+            }
+            else
+                followLetGoIn = (int) (followLetGoSeconds * currentSampleRate);
+        }
+        else if (followLetGoIn > 0)
+        {
+            followLetGoIn -= len;
+            if (followLetGoIn <= 0)
+                followHeldNotes();
         }
         float peak = 0.0f;
         for (int ch = 0; ch < capture.getNumChannels(); ++ch)
@@ -2876,10 +2905,13 @@ void SiltProcessor::installBuffer (std::unique_ptr<silt::SampleBuffer> buffer, c
     {
         const juce::ScopedLock sl (sampleLock);
         sampleZeroCrossings = buffer->getZeroCrossings();
-        const auto& pitches = buffer->getPitches();
-        const int count = juce::jmin ((int) pitches.size(), (int) samplePitchHz.size());
+        const auto& modes = buffer->getModes();
+        const int count = juce::jmin ((int) modes.size(), (int) samplePitchHz.size());
         for (int i = 0; i < count; ++i)
-            samplePitchHz[(size_t) i].store ((float) pitches[(size_t) i], std::memory_order_relaxed);
+        {
+            samplePitchHz[(size_t) i].store ((float) modes[(size_t) i].hz, std::memory_order_relaxed);
+            samplePitchLevel[(size_t) i].store (modes[(size_t) i].level, std::memory_order_relaxed);
+        }
         samplePitchCount.store (count, std::memory_order_release);
         sampleTransients = buffer->getTransients();
         sampleCopy.setSize (2, frames);

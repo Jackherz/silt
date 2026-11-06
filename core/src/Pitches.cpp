@@ -7,11 +7,11 @@
 namespace silt
 {
 
-std::vector<double> findPitches (const std::vector<float>& mono, double sampleRate, int maxPitches)
+std::vector<SampleMode> findModes (const std::vector<float>& mono, double sampleRate, int maxModes)
 {
     constexpr int size = 8192, maxFrames = 32;
     const int frames = mono.size() >= (size_t) size ? std::min (maxFrames, 1 + (int) (mono.size() - size) / (size / 2)) : 0;
-    if (frames == 0 || maxPitches <= 0)
+    if (frames == 0 || maxModes <= 0)
         return {};
 
     // The average magnitude spectrum, Hann-windowed frames spread evenly.
@@ -32,33 +32,37 @@ std::vector<double> findPitches (const std::vector<float>& mono, double sampleRa
     }
 
     // Peaks, loudest first.
-    struct Peak { double hz; float level; };
-    std::vector<Peak> peaks;
+    constexpr int reach = 4;   // a Hann window's main lobe and first sidelobe, in bins
+    std::vector<SampleMode> peaks;
     const double binHz = sampleRate / size;
-    const int lo = std::max (2, (int) (55.0 / binHz)), hi = std::min (size / 2 - 2, (int) (4000.0 / binHz));
+    const int lo = std::max (reach + 1, (int) (40.0 / binHz)), hi = std::min (size / 2 - reach - 2, (int) (16000.0 / binHz));
     for (int k = lo; k <= hi; ++k)
     {
-        const float a = magnitude[(size_t) k - 1], b = magnitude[(size_t) k], c = magnitude[(size_t) k + 1];
-        if (b > a && b >= c)
+        const float b = magnitude[(size_t) k];
+        bool highest = b > 0.0f;
+        for (int d = -reach; d <= reach && highest; ++d)
+            highest = d == 0 || magnitude[(size_t) (k + d)] <= b;
+        if (highest)
         {
+            const float a = magnitude[(size_t) k - 1], c = magnitude[(size_t) k + 1];
             const double curve = (double) a - 2.0 * b + c;   // negative at a peak
             const double offset = curve < -1.0e-12 ? 0.5 * (a - c) / curve : 0.0;
             peaks.push_back ({ (k + std::clamp (offset, -0.5, 0.5)) * binHz, b });
         }
     }
-    std::sort (peaks.begin(), peaks.end(), [] (const Peak& x, const Peak& y) { return x.level > y.level; });
+    std::sort (peaks.begin(), peaks.end(), [] (const SampleMode& x, const SampleMode& y) { return x.level > y.level; });
 
-    std::vector<double> kept;
-    const float floor = peaks.empty() ? 0.0f : peaks.front().level * 0.0316f;   // −30 dB
+    std::vector<SampleMode> kept;
+    const float loudest = peaks.empty() ? 1.0f : peaks.front().level;
     for (const auto& p : peaks)
     {
-        if (p.level < floor || (int) kept.size() >= maxPitches)
+        if (p.level < loudest * 0.001f || (int) kept.size() >= maxModes)   // -60 dB
             break;
-        const bool clear = std::none_of (kept.begin(), kept.end(), [&] (double h) { return std::abs (12.0 * std::log2 (p.hz / h)) < 0.6; });
+        const bool clear = std::none_of (kept.begin(), kept.end(), [&] (const SampleMode& m) { return std::abs (12.0 * std::log2 (p.hz / m.hz)) < 0.3; });
         if (clear)
-            kept.push_back (p.hz);
+            kept.push_back ({ p.hz, p.level / loudest });
     }
-    std::sort (kept.begin(), kept.end());
+    std::sort (kept.begin(), kept.end(), [] (const SampleMode& x, const SampleMode& y) { return x.hz < y.hz; });
     return kept;
 }
 

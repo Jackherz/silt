@@ -969,27 +969,43 @@ TEST_CASE ("Resonator: DRIFT makes each band's level wander over time")
 
 TEST_CASE ("Resonator: NOTES SAMPLE rings the sample's pitches; FOLLOW with a chord rings each note")
 {
-    // The pitch finder hears a three-note chord.
+    // The mode finder hears a three-note chord, and only that: no window sidelobes.
     std::vector<float> chord ((size_t) rate * 2);
     for (size_t i = 0; i < chord.size(); ++i)
-        for (const double hz : { 220.0, 277.18, 329.63 })
-            chord[i] += 0.2f * (float) std::sin (2.0 * 3.141592653589793 * hz * (double) i / rate);
-    const auto found = findPitches (chord, rate, 12);
+    {
+        chord[i] += 0.2f * (float) std::sin (2.0 * 3.141592653589793 * 220.0 * (double) i / rate);
+        chord[i] += 0.1f * (float) std::sin (2.0 * 3.141592653589793 * 277.18 * (double) i / rate);
+        chord[i] += 0.05f * (float) std::sin (2.0 * 3.141592653589793 * 329.63 * (double) i / rate);
+    }
+    const auto found = findModes (chord, rate, 128);
     REQUIRE (found.size() == 3);
-    CHECK (std::abs (found[0] - 220.0) < 1.5);
-    CHECK (std::abs (found[1] - 277.18) < 1.5);
-    CHECK (std::abs (found[2] - 329.63) < 1.5);
+    CHECK (std::abs (found[0].hz - 220.0) < 1.5);
+    CHECK (std::abs (found[1].hz - 277.18) < 1.5);
+    CHECK (std::abs (found[2].hz - 329.63) < 1.5);
+    CHECK (found[0].level == Catch::Approx (1.0f));
+    CHECK (found[1].level == Catch::Approx (0.5f).margin (0.05f));
+    CHECK (found[2].level == Catch::Approx (0.25f).margin (0.05f));
 
-    // SAMPLE: bands at those pitches, over the root.
+    // SAMPLE: bands at those pitches, over the root, as strong as they are in the sample.
     ResonatorParams p;
     p.notes = ResonatorNotes::sample;
     p.rootNote = 57.0f;   // A3, 220 Hz
     p.sampleCount = 3;
     for (size_t i = 0; i < 3; ++i)
-        p.sampleHz[i] = (float) found[i];
+    {
+        p.sampleHz[i] = (float) found[i].hz;
+        p.sampleLevel[i] = found[i].level;
+    }
     std::array<double, Resonator::maxBands> r {};
     REQUIRE (Resonator::bandRatios (p, r) == 3);
     CHECK (std::abs (r[1] * 220.0 - 277.18) < 2.0);
+    std::array<Resonator::BankMode, Resonator::maxBands> sampleModes {};
+    REQUIRE (Resonator::bankModes (p, sampleModes) == 3);
+    CHECK (sampleModes[0].weight == Catch::Approx (1.0).margin (0.01));
+    CHECK (sampleModes[2].weight == Catch::Approx (0.25).margin (0.05));
+    p.sampleLevel.fill (0.0f);   // not known: rings like the rest
+    Resonator::bankModes (p, sampleModes);
+    CHECK (sampleModes[2].weight == 1.0);
 
     // A chord under FOLLOW (SCALE notes): the chord's notes, in octaves.
     ResonatorParams c;
@@ -1001,6 +1017,166 @@ TEST_CASE ("Resonator: NOTES SAMPLE rings the sample's pitches; FOLLOW with a ch
     REQUIRE (n == 6);   // C, E, G and each an octave up: every note gets RANGE above itself
     CHECK (std::abs (r[1] - std::pow (2.0, 4.0 / 12.0)) < 1.0e-6);
     CHECK (std::abs (r[2] - std::pow (2.0, 7.0 / 12.0)) < 1.0e-6);
+}
+
+TEST_CASE ("Resonator: a chord shares the bank, and every note keeps its own fundamental")
+{
+    const auto hasRatio = [] (const std::array<double, Resonator::maxBands>& r, int n, double ratio)
+    {
+        for (int i = 0; i < n; ++i)
+            if (std::abs (r[(size_t) i] / ratio - 1.0) < 0.003)
+                return true;
+        return false;
+    };
+    const std::array<float, 8> offsets { 4.0f, 7.0f, 11.0f, 14.0f, 17.0f };
+
+    for (const auto notes : { ResonatorNotes::harmonics, ResonatorNotes::bell, ResonatorNotes::scale })
+        for (const int bandCount : { 128, 32, 6 })
+        {
+            ResonatorParams p;
+            p.notes = notes;
+            p.rootNote = 48.0f;
+            p.bandCount = bandCount;
+            p.chord = offsets;
+            p.chordSize = 5;
+            std::array<double, Resonator::maxBands> r {};
+            const int n = Resonator::bandRatios (p, r);
+            CHECK (n <= bandCount);
+            CHECK (hasRatio (r, n, 1.0));
+            for (int c = 0; c < p.chordSize; ++c)
+                CHECK (hasRatio (r, n, std::pow (2.0, (double) offsets[(size_t) c] / 12.0)));
+        }
+
+    // No note takes more than its share: a share of 128 between six is 21 or 22, less any
+    // it has in common with the others.
+    ResonatorParams p;
+    p.notes = ResonatorNotes::harmonics;
+    p.rootNote = 48.0f;
+    p.chord = offsets;
+    p.chordSize = 5;
+    std::array<Resonator::BankMode, Resonator::maxBands> modes {};
+    const int n = Resonator::bankModes (p, modes);
+    std::array<int, 6> owned {};
+    for (int i = 0; i < n; ++i)
+        ++owned[(size_t) modes[(size_t) i].note];
+    for (const int count : owned)
+    {
+        CHECK (count >= 12);
+        CHECK (count <= 22);
+    }
+
+    // Reshaping acts on each note from its own fundamental, so the chord stays a chord.
+    p.bandCount = 128;
+    p.stretch = 0.5f;
+    std::array<double, Resonator::maxBands> r {};
+    int stretched = Resonator::bandRatios (p, r);
+    for (const float offset : { 4.0f, 7.0f, 17.0f })
+        CHECK (hasRatio (r, stretched, std::pow (2.0, (double) offset / 12.0)));
+    p.stretch = 0.0f;
+    p.snap = 1.0f;
+    stretched = Resonator::bandRatios (p, r);
+    CHECK (hasRatio (r, stretched, std::pow (2.0, 4.0 / 12.0)));   // not pulled onto the root's series
+
+    // One note on its own is as it always was: every harmonic, in order.
+    ResonatorParams one;
+    one.notes = ResonatorNotes::harmonics;
+    one.rootNote = 48.0f;
+    REQUIRE (Resonator::bandRatios (one, r) == Resonator::maxBands);
+    for (int i = 0; i < Resonator::maxBands; ++i)
+        CHECK (r[(size_t) i] == Catch::Approx (i + 1.0));
+}
+
+TEST_CASE ("Resonator: a chord's notes ring about as loud as each other, stay on their notes as the chord changes")
+{
+    // How much of each note's fundamental comes out of noise going in.
+    const auto levelAt = [] (const std::vector<float>& x, double hz)
+    {
+        double re = 0.0, im = 0.0;
+        for (size_t i = 0; i < x.size(); ++i)
+        {
+            const double phase = 2.0 * 3.141592653589793 * hz * (double) i / rate;
+            re += x[i] * std::cos (phase);
+            im += x[i] * std::sin (phase);
+        }
+        return std::sqrt (re * re + im * im) / (double) x.size();
+    };
+    Resonator res;
+    res.prepare (rate);
+    ResonatorParams p;
+    p.notes = ResonatorNotes::harmonics;
+    p.rootNote = 48.0f;
+    p.chord = { 7.0f, 16.0f, 24.0f };
+    p.chordSize = 3;
+    p.mix = 1.0f;
+    p.decaySeconds = 4.0f;
+    p.width = 0.0f;
+    Random noise (7);
+    std::vector<float> out;
+    const int seconds = 6;
+    std::array<float, 128> left {}, right {};
+    for (int b = 0; b < seconds * (int) rate / 128; ++b)
+    {
+        for (size_t i = 0; i < 128; ++i)
+            left[i] = right[i] = 0.1f * noise.nextBipolar();
+        res.process (left.data(), right.data(), 128, p);
+        if (b * 128 > (int) rate)
+            out.insert (out.end(), left.begin(), left.end());
+    }
+    const double rootHz = 440.0 * std::pow (2.0, (48.0 - 69.0) / 12.0);
+    // Averaged across the ring's width: at one exact frequency, noise is too uneven to compare.
+    const auto noteLevel = [&] (double hz)
+    {
+        double power = 0.0;
+        for (int d = -10; d <= 10; ++d)
+        {
+            const double level = levelAt (out, hz + d * 0.2);
+            power += level * level;
+        }
+        return std::sqrt (power);
+    };
+    const double low = noteLevel (rootHz);
+    for (const double offset : { 7.0, 16.0, 24.0 })
+    {
+        const double ratio = noteLevel (rootHz * std::pow (2.0, offset / 12.0)) / low;
+        INFO ("offset " << offset << ": " << ratio << " of the root");
+        CHECK (ratio > 0.6);
+        CHECK (ratio < 1.67);
+    }
+
+    // A note the next chord still has stays in its slot, on its pitch, without a wobble.
+    const auto slotOn = [&res] (double hz)
+    {
+        for (int m = 0; m < res.getNumBands(); ++m)
+            if (std::abs (res.getBandFrequency (m) / hz - 1.0) < 0.001)
+                return m;
+        return -1;
+    };
+    const double held = rootHz * std::pow (2.0, 7.0 / 12.0);
+    const int slot = slotOn (held);
+    REQUIRE (slot >= 0);
+    p.chord = { 7.0f, 12.0f, 19.0f };
+    for (int b = 0; b < 50; ++b)
+    {
+        for (size_t i = 0; i < 128; ++i)
+            left[i] = right[i] = 0.1f * noise.nextBipolar();
+        res.process (left.data(), right.data(), 128, p);
+        CHECK (std::abs (res.getBandFrequency (slot) / held - 1.0) < 1.0e-6);
+    }
+    CHECK (slotOn (rootHz * 2.0) >= 0);   // and the new note has arrived
+
+    // A lower note under it moves the root, and the note still stays put.
+    p.rootNote = 43.0f;
+    p.chord = { 5.0f, 12.0f, 17.0f };    // G under C, G and C: the same C4 as before, now over a lower root
+    const double same = rootHz * std::pow (2.0, 12.0 / 12.0);
+    const int sameSlot = slotOn (same);
+    REQUIRE (sameSlot >= 0);
+    for (int b = 0; b < 50; ++b)
+    {
+        for (size_t i = 0; i < 128; ++i)
+            left[i] = right[i] = 0.1f * noise.nextBipolar();
+        res.process (left.data(), right.data(), 128, p);
+        CHECK (std::abs (res.getBandFrequency (sameSlot) / same - 1.0) < 1.0e-6);
+    }
 }
 
 TEST_CASE ("Resonator: a single hit rings out, about as loud at any decay")
@@ -1351,5 +1527,127 @@ TEST_CASE ("PARTICLES and TOP: off they change nothing, on they ring the higher 
     {
         REQUIRE (std::isfinite (x));
         REQUIRE (std::abs (x) <= 1.0f);
+    }
+}
+
+TEST_CASE ("SATURATE: off it changes nothing; on, loud modes spill into others, quiet ones ring as they were, and it can't run away")
+{
+    // A tone on the root: how much comes out on the harmonics above it.
+    const auto upperAgainstRoot = [] (float saturate, float amplitude)
+    {
+        Resonator res;
+        res.prepare (rate);
+        ResonatorParams p;
+        p.notes = ResonatorNotes::harmonics;
+        p.rootNote = 48.0f;
+        p.mix = 1.0f;
+        p.decaySeconds = 4.0f;
+        p.bright = 0.7f;
+        p.saturate = saturate;
+        const double hz = 440.0 * std::pow (2.0, (48.0 - 69.0) / 12.0);
+        std::array<float, 128> left {}, right {};
+        std::vector<float> out;
+        double phase = 0.0;
+        for (int b = 0; b < 3 * (int) rate / 128; ++b)
+        {
+            for (size_t i = 0; i < 128; ++i)
+            {
+                phase += 2.0 * 3.141592653589793 * hz / rate;
+                left[i] = right[i] = amplitude * (float) std::sin (phase);
+            }
+            res.process (left.data(), right.data(), 128, p);
+            if (b * 128 > (int) rate)
+                out.insert (out.end(), left.begin(), left.end());
+        }
+        const auto at = [&] (double f)
+        {
+            double re = 0.0, im = 0.0;
+            for (size_t i = 0; i < out.size(); ++i)
+            {
+                const double angle = 2.0 * 3.141592653589793 * f * (double) i / rate;
+                re += out[i] * std::cos (angle);
+                im += out[i] * std::sin (angle);
+            }
+            return (re * re + im * im) / ((double) out.size() * (double) out.size());
+        };
+        double upper = 0.0;
+        for (int h = 2; h <= 16; ++h)
+            upper += at (hz * h);
+        return 10.0 * std::log10 (upper / at (hz));
+    };
+    const double clean = upperAgainstRoot (0.0f, 0.5f);
+    CHECK (upperAgainstRoot (0.5f, 0.5f) > clean + 20.0);    // loud: new partials
+    CHECK (upperAgainstRoot (0.5f, 0.05f) < upperAgainstRoot (0.5f, 0.5f) - 10.0);   // the same setting, quiet: far fewer
+
+    // At 0 it's the bank as it was, sample for sample: nothing else in the path moves.
+    {
+        Resonator a, b;
+        a.prepare (rate);
+        b.prepare (rate);
+        ResonatorParams p;
+        p.notes = ResonatorNotes::harmonics;
+        p.mix = 1.0f;
+        std::array<float, 128> la {}, lb {};
+        Random noise (3);
+        bool same = true;
+        for (int block = 0; block < 200; ++block)
+        {
+            for (size_t i = 0; i < 128; ++i)
+                la[i] = lb[i] = 0.2f * noise.nextBipolar();
+            a.process (la.data(), la.data(), 128, p);
+            b.process (lb.data(), lb.data(), 128, p);
+            same = same && la == lb;
+        }
+        CHECK (same);
+    }
+
+    // Everything at its worst, moved about at random: always finite, always in range, and
+    // when the sound stops it dies away rather than holding itself up.
+    Random pick (11);
+    for (int trial = 0; trial < 12; ++trial)
+    {
+        Resonator res;
+        res.prepare (rate);
+        ResonatorParams p;
+        p.notes = trial % 2 == 0 ? ResonatorNotes::harmonics : ResonatorNotes::bell;
+        p.rootNote = 24.0f + 48.0f * pick.next01();
+        p.mix = 1.0f;
+        p.saturate = trial < 2 ? 1.0f : pick.next01();
+        p.decaySeconds = 20.0f;
+        p.resonance = 1.0f;
+        p.drive = pick.next01();
+        p.top = pick.next01();
+        p.particles = pick.next01();
+        p.stretch = pick.nextBipolar();
+        p.bright = 1.0f;
+        std::array<float, 128> left {}, right {};
+        Random noise (100 + (std::uint64_t) trial);
+        bool finite = true;
+        float peak = 0.0f;
+        for (int b = 0; b < 4 * (int) rate / 128; ++b)
+        {
+            for (size_t i = 0; i < 128; ++i)
+                left[i] = right[i] = noise.nextBipolar();
+            res.process (left.data(), right.data(), 128, p);
+            for (const float x : left)
+            {
+                finite = finite && std::isfinite (x);
+                peak = std::max (peak, std::abs (x));
+            }
+        }
+        CHECK (finite);
+        CHECK (peak <= 1.0f);
+        p.decaySeconds = 0.5f;
+        float tail = 1.0f;
+        for (int b = 0; b < 12 * (int) rate / 128; ++b)
+        {
+            left.fill (0.0f);
+            right.fill (0.0f);
+            res.process (left.data(), right.data(), 128, p);
+            tail = 0.0f;
+            for (const float x : left)
+                tail = std::max (tail, std::abs (x));
+        }
+        CHECK (tail < 1.0e-3f);
     }
 }

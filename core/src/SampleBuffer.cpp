@@ -29,7 +29,7 @@ void SampleBuffer::analyse()
             zeroCrossings.push_back (i);
 
     transients = findOnsets (mono, sampleRate);
-    pitches = findPitches (mono, sampleRate, 12);
+    modes = findModes (mono, sampleRate, 128);
 }
 
 } // namespace silt

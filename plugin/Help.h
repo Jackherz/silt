@@ -94,6 +94,7 @@ inline juce::String helpFor (const juce::String& id)
         { "resPosition", "POSITION: where a hit lands; try PER GRAIN" },
         { "resHardness", "HARDNESS: how far up the bands a hit rings" },
         { "resParticles", "PARTICLES: crackle following the grains" },
+        { "resSaturate", "SATURATE: loud modes spill into the others" },
         { "resDensity", "DENSITY: how many crackles a second" },
         { "resTop", "TOP: brightens what goes in, for dull sounds" },
         // FILTER

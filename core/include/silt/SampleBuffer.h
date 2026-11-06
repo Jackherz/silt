@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <silt/Pitches.h>
+
 #include <vector>
 
 namespace silt
@@ -21,19 +23,19 @@ public:
     const float* getReadPointer (int channel) const noexcept { return data[(size_t) channel].data(); }
 
     // Finds zero crossings and transients, for snapping region edges, and the
-    // strongest pitches, for the resonator's NOTES: SAMPLE. Runs off
+    // modes, for the resonator's NOTES: SAMPLE. Runs off
     // the audio thread, after the audio is in and before the engine gets it.
     void analyse();
     const std::vector<int>& getZeroCrossings() const noexcept { return zeroCrossings; }
     const std::vector<int>& getTransients() const noexcept { return transients; }
-    const std::vector<double>& getPitches() const noexcept { return pitches; }   // Hz, low to high (silt::findPitches)
+    const std::vector<SampleMode>& getModes() const noexcept { return modes; }   // low to high (silt::findModes)
 
 private:
     int numFrames;
     double sampleRate;
     std::vector<float> data[2];
     std::vector<int> zeroCrossings, transients;   // sorted frame positions
-    std::vector<double> pitches;
+    std::vector<SampleMode> modes;
 };
 
 } // namespace silt

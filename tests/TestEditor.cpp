@@ -642,7 +642,7 @@ TEST_CASE ("Preset browser: clicking plays a preset; CANCEL puts the sound back,
     const float before = spray();
 
     browser->open();
-    browser->setSearch ("glass");
+    browser->setSearch ("glass cl");
     REQUIRE (browser->numShown() == 1);
     browser->choose (0);
     CHECK (rig.silt.presetName == "Glass Cloud");

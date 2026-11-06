@@ -130,6 +130,8 @@ public:
     std::vector<const silt::layout::Entry*> randomisable (int page) const;
     std::atomic<float> randomAmount { 0.5f };
     mutable std::atomic<float> resonatorRootNow { 48.0f };   // the note the bank rings from, for the picture
+    mutable std::array<std::atomic<float>, 8> resonatorChordNow {};   // and the chord over it
+    mutable std::atomic<int> resonatorChordSizeNow { 0 };
     std::atomic<int> randomCharacter { 0 };   // what RANDOM keeps to: 0 anything, 1 tonal, 2 rhythmic, 3 texture
     bool isRandomExcluded (const juce::String& id) const { return randomExcluded.contains (id); }
     void setRandomExcluded (const juce::String& id, bool excluded);
@@ -162,8 +164,8 @@ public:
     static constexpr int spaceTraceSize = 8192, spaceTraceStep = 64;
     std::atomic<unsigned> spaceTraceCount { 0 };
 
-    // The sample's strongest pitches (Hz, low to high), for the resonator's NOTES: SAMPLE.
-    std::array<std::atomic<float>, 12> samplePitchHz {};
+    // The sample's modes (Hz, low to high) and their strengths, for the resonator's NOTES: SAMPLE.
+    std::array<std::atomic<float>, 128> samplePitchHz {}, samplePitchLevel {};
     std::atomic<int> samplePitchCount { 0 };
     float spaceTraceAt (unsigned index) const noexcept { return spaceTrace[index & (spaceTraceSize - 1)].load (std::memory_order_relaxed); }
 
@@ -401,6 +403,8 @@ private:
     int followRoot = -1;   // audio thread: FOLLOW's lowest held note and the chord above it
     std::array<float, 8> followChord {};
     int followChordSize = 0;
+    static constexpr double followLetGoSeconds = 0.25;
+    int followLetGoIn = 0;   // samples until a note let go leaves the chord, if others stay down
     bool spaceNoteStarted = false;
     std::array<std::atomic<float>, 128> sliceTable {};   // MANUAL slices, written before sliceCountManual
     std::atomic<int> sliceCountManual { 0 };
