@@ -1,5 +1,8 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
+
 #include <silt/Dsp.h>
 
 namespace silt
@@ -70,6 +73,13 @@ class Modulator
 {
 public:
     static bool isBipolar (const ModulatorParams&) noexcept;
+    // CURVE bends a value, keeping its sign and its peaks: |y|^(4^curve).
+    static float bend (float y, float curve) noexcept
+    {
+        if (curve == 0.0f)
+            return y;
+        return std::copysign (std::pow (std::abs (y), std::pow (4.0f, std::clamp (curve, -1.0f, 1.0f))), y);
+    }
 
     void reset (std::uint64_t seed = 1) noexcept;
     float advance (const ModulatorParams&, const ModContext&) noexcept;

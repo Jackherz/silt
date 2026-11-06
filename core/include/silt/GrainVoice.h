@@ -10,7 +10,7 @@ namespace silt
 {
 
 // What a playhead does when it reaches either end of its region.
-enum class EndMode { loop, hold, stop };
+enum class EndMode { loop, hold, stop, bounce };
 
 // Live mode with no keys held: nothing plays (off), a voice at the root note
 // plays constantly (always), or the input plays that voice's envelope (follow):
@@ -121,6 +121,7 @@ struct GrainParams
     double start = 0.0;            // 0…1: region start, where a note starts its playhead
     double length = 1.0;           // 0…1: region length as a share of the sample
     double scan = 1.0;             // playhead speed, −4…+4 (1 = real time, 0 = frozen)
+    double scanPassSeconds = 0.0;  // above 0: SCAN synced, one pass of the region takes this long instead
     EndMode endMode = EndMode::loop;
     Snap snap = Snap::off;         // where the region's edges snap to
 
@@ -259,6 +260,7 @@ private:
     double noteRatio = 1.0;
     float velocity = 1.0f, heardVelocity = 1.0f, velocitySmoothing = 0.0f;
     double playhead = 0.0;          // buffer frames
+    double scanDirection = 1.0;     // BOUNCE: which way it's heading
     float playheadPosition = 0.0f;
     double samplesToNextGrain = 0.0;
     bool spawning = false;

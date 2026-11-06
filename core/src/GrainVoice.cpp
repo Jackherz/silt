@@ -130,7 +130,8 @@ void GrainVoice::noteOn (int note, float vel, const SampleBuffer& buffer, const 
     currentNote = note;
     velocity = vel;
     noteRatio = slice >= 0 ? 1.0 : semitonesToRatio (note - p.rootNote);   // slices play at the sample's pitch
-    playhead = p.scan < 0.0 ? region.end - 1.0 : region.begin;   // reverse scans start at the end
+    playhead = p.scan < 0.0 && p.scanPassSeconds <= 0.0 ? region.end - 1.0 : region.begin;   // reverse scans start at the end
+    scanDirection = 1.0;
     samplesToNextGrain = 0.0;      // first grain on the note itself
     patternStep = 0;
     headCounter = 0;
@@ -323,8 +324,13 @@ double GrainVoice::scatterWithin (const Region& region, double spanFrames, doubl
 // runs out of its region.
 bool GrainVoice::advancePlayhead (const GrainParams& p, const SampleBuffer& buffer) noexcept
 {
+    if (p.freeze)   // FREEZE, on a sample: the playhead stands still, grains keep coming
+        return true;
     const auto region = regionOf (p, buffer);
-    playhead += p.scan * (buffer.getSampleRate() / sampleRate);
+    const double span = region.end - region.begin;
+    const double speed = p.scanPassSeconds > 0.0 ? span / (p.scanPassSeconds * sampleRate)
+                                                 : p.scan * (buffer.getSampleRate() / sampleRate);
+    playhead += speed * scanDirection;
 
     if (playhead >= region.begin && playhead < region.end)
         return true;
@@ -332,11 +338,14 @@ bool GrainVoice::advancePlayhead (const GrainParams& p, const SampleBuffer& buff
     switch (p.endMode)
     {
         case EndMode::loop:
-        {
-            const double span = region.end - region.begin;
             playhead = region.begin + wrapFrames (playhead - region.begin, (int) std::max (1.0, span));
             return true;
-        }
+        case EndMode::bounce:
+            // Off the edge and back by as much, the other way.
+            scanDirection = -scanDirection;
+            playhead = playhead < region.begin ? 2.0 * region.begin - playhead : 2.0 * (region.end - 1.0) - playhead;
+            playhead = std::clamp (playhead, region.begin, region.end - 1.0);
+            return true;
         case EndMode::hold: playhead = std::clamp (playhead, region.begin, region.end - 1.0); return true;
         case EndMode::stop: break;
     }

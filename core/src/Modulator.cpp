@@ -106,11 +106,7 @@ float Modulator::wave (const ModulatorParams& p, const ModContext& c) noexcept
     const float a = shapeAt (read, lower);
     const float y = blend > 0.0f ? a + (shapeAt (read, lower + 1) - a) * blend : a;
 
-    // CURVE bends the output, keeping its sign and its peaks: |y|^(4^curve).
-    if (p.curve == 0.0f)
-        return y;
-    const float exponent = std::pow (4.0f, std::clamp (p.curve, -1.0f, 1.0f));
-    return std::copysign (std::pow (std::abs (y), exponent), y);
+    return Modulator::bend (y, p.curve);
 }
 
 // A new random value each step; SMOOTH glides to it (cosine), JITTER spreads
@@ -210,7 +206,7 @@ float Modulator::envelope (const ModulatorParams& p, const ModContext& c) noexce
         stageMs = stage == before ? ms : 0.0f;
     else
         stageMs += ms;
-    return level;
+    return bend (level, p.curve);
 }
 
 // The input's peak level, smoothed, read on a 60 dB scale (plus GAIN).

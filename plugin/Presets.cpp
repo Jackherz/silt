@@ -214,6 +214,46 @@ const std::vector<Factory>& allFactories()
         { "Under Ice",
           { { "size", 700.0f }, { "rate", 22.0f }, { "spray", 40.0f }, { "pitch", -12.0f }, { "filterMode", 1.0f }, { "filterCutoff", 420.0f }, { "filterReso", 25.0f }, { "spaceReverb", 45.0f }, { "spaceDecay", 11.0f }, { "spaceTone", 15.0f }, { "m1Rate", 0.05f } },
           { "1:filterCutoff:0.2" } },
+
+        // Every grain its own length and pitch, mostly close to what's set.
+        { "Murmur",
+          { { "size", 240.0f }, { "rate", 28.0f }, { "spray", 8.0f }, { "randPan", 60.0f }, { "fade", 85.0f },
+            { "scale", 3.0f }, { "attack", 200.0f }, { "release", 1200.0f },
+            { "spaceReverb", 35.0f }, { "spaceDecay", 5.0f },
+            { "m1Type", 6.0f }, { "m1GrainSpread", 1.0f } },
+          { "1:size:0.35", "1:pitch:0.1" } },
+
+        // Only the extremes: tiny ticks and long smears, forwards and back.
+        { "Hard Edges",
+          { { "size", 150.0f }, { "rate", 14.0f }, { "randPan", 80.0f }, { "fade", 40.0f }, { "colorDrive", 20.0f },
+            { "m1Type", 6.0f }, { "m1GrainSpread", 2.0f } },
+          { "1:size:0.5", "1:reverse:0.5", "1:rate:0.2" } },
+
+        // There and back through the sample, never meeting the seam.
+        { "Tide Line",
+          { { "endMode", 3.0f }, { "scan", 0.25f }, { "size", 400.0f }, { "rate", 22.0f }, { "spray", 5.0f }, { "randPan", 50.0f },
+            { "attack", 300.0f }, { "release", 1800.0f }, { "spaceReverb", 40.0f }, { "spaceDecay", 7.0f }, { "spaceSize", 80.0f } },
+          {}, true },
+
+        // The whole sample walked across four bars, whatever the tempo.
+        { "Four Bar Walk",
+          { { "scanSync", 1.0f }, { "scanDiv", 4.0f }, { "sizeSync", 1.0f }, { "sizeDiv", 6.0f }, { "rateMode", 1.0f }, { "rateDiv", 3.0f },
+            { "fade", 60.0f }, { "spaceDelay", 25.0f }, { "spaceSync", 1.0f }, { "spaceFeedback", 35.0f } },
+          {}, true },
+
+        // One moment held still, the grains wandering round it.
+        { "Held Still",
+          { { "freeze", 1.0f }, { "start", 35.0f }, { "size", 500.0f }, { "rate", 18.0f }, { "spray", 6.0f }, { "randPan", 70.0f }, { "fade", 90.0f },
+            { "attack", 800.0f }, { "release", 2500.0f }, { "spaceReverb", 45.0f }, { "spaceDecay", 9.0f },
+            { "m1Type", 6.0f }, { "m1GrainSpread", 1.0f } },
+          { "1:spray:0.15", "1:slant:0.3" }, true },
+
+        // A filter that opens late, on a bent envelope.
+        { "Late Bloom",
+          { { "size", 300.0f }, { "rate", 20.0f }, { "spray", 10.0f }, { "filterMode", 1.0f }, { "filterCutoff", 500.0f }, { "filterReso", 25.0f },
+            { "attack", 40.0f }, { "release", 1000.0f },
+            { "m1Type", 2.0f }, { "m1Attack", 2500.0f }, { "m1Decay", 1500.0f }, { "m1Sustain", 60.0f }, { "m1Release", 1500.0f }, { "m1Curve", 60.0f } },
+          { "1:filterCutoff:0.45" } },
     };
     return list;
 }
@@ -222,6 +262,8 @@ const std::vector<Factory>& allFactories()
 juce::String categoryOfFactory (const juce::String& name)
 {
     static const std::map<juce::String, const char*> categoryOf {
+        { "Murmur", "TONAL" }, { "Hard Edges", "RHYTHMIC" }, { "Tide Line", "PADS" }, { "Four Bar Walk", "RHYTHMIC" },
+        { "Held Still", "DRONES" }, { "Late Bloom", "PADS" },
         { "Init", "TONAL" },          { "Glass Cloud", "PADS" },     { "Tape Choir", "TEXTURES" },  { "Rust Rhythm", "RHYTHMIC" },
         { "Bell Garden", "TONAL" },   { "Wander", "TEXTURES" },      { "Dark Drone", "DRONES" },    { "Shimmer Pad", "PADS" },
         { "Hit Chop", "SLICES" },     { "Stutter Grid", "SLICES" },  { "Feed Bloom", "TEXTURES" },  { "Sample Strings", "TONAL" },

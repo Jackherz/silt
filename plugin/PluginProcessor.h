@@ -120,6 +120,7 @@ public:
     juce::StringArray pageParameters (int page, bool everyModulator = false) const;
     std::vector<const silt::layout::Entry*> randomisable (int page) const;
     std::atomic<float> randomAmount { 0.5f };
+    std::atomic<int> randomCharacter { 0 };   // what RANDOM keeps to: 0 anything, 1 tonal, 2 rhythmic, 3 texture
     bool isRandomExcluded (const juce::String& id) const { return randomExcluded.contains (id); }
     void setRandomExcluded (const juce::String& id, bool excluded);
 
@@ -284,10 +285,16 @@ public:
     // or window. Message thread.
     std::unique_ptr<juce::XmlElement> capturePreset (const juce::String& name) const;
     void applyPreset (const juce::XmlElement&, const juce::String& name);   // one undo step
+    void applyPresetEffects (const juce::XmlElement&);   // only the effects chain; one undo step
+    bool presetIsEdited();                               // message thread
+    void markPresetClean();
     void applyPresetValues (const juce::XmlElement&, const juce::String& name);   // the same, not recorded
     // After auditioning (applyPresetValues), one undo step from the sound before.
     void commitPresetChange (std::unique_ptr<juce::XmlElement> before, const juce::String& beforeName);
     juce::String presetName { "Init" };
+    std::unique_ptr<juce::XmlElement> comparablePreset() const;
+    std::unique_ptr<juce::XmlElement> presetAsLoaded;
+    std::atomic<bool> presetRestored { false };   // the host may restore off the message thread
 
     // The editor's size, saved with the set.
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };

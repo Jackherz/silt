@@ -5,7 +5,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <tuple>
+
 #include "../plugin/PluginProcessor.h"
+#include "../plugin/Presets.h"
 
 using Catch::Matchers::WithinAbs;
 
@@ -1822,4 +1825,68 @@ TEST_CASE ("PER GRAIN reaches grain settings, each grain its own, and nothing el
     const float pitchKnob = rig.silt.targetParameter (pitch).getValue();
     runBlocks (rig, 4);
     CHECK (rig.silt.modulatedValue01 (pitch) == Catch::Approx (pitchKnob).margin (1.0e-4));
+}
+
+TEST_CASE ("A preset reads as edited once the sound moves, and not for looking at another modulator")
+{
+    Rig rig;
+    const auto library = PresetManager::factoryPreset (0);
+    rig.silt.applyPresetValues (*library, "Init");
+    CHECK_FALSE (rig.silt.presetIsEdited());
+    rig.silt.modShown.store (2);
+    CHECK_FALSE (rig.silt.presetIsEdited());
+    auto* size = rig.silt.params.getParameter ("size");
+    const float was = size->getValue();
+    size->setValueNotifyingHost (was * 0.5f);
+    CHECK (rig.silt.presetIsEdited());
+    size->setValueNotifyingHost (was);
+    CHECK_FALSE (rig.silt.presetIsEdited());
+    rig.silt.setRouteAmount (0, rig.silt.modulationTarget ("spray"), 0.3f);
+    CHECK (rig.silt.presetIsEdited());
+}
+
+TEST_CASE ("Loading only a preset's effects leaves the grains, the routes and the name alone")
+{
+    Rig rig;
+    auto* size = rig.silt.params.getParameter ("size");
+    size->setValueNotifyingHost (0.123f);
+    rig.silt.setRouteAmount (0, rig.silt.modulationTarget ("spray"), 0.3f);
+    rig.silt.presetName = "Mine";
+    juce::XmlElement preset ("SiltPreset");
+    auto* values = preset.createNewChildElement ("PARAMS");
+    values->setAttribute ("spaceReverb", 77.0);
+    values->setAttribute ("size", 999.0);
+    rig.silt.applyPresetEffects (preset);
+    CHECK (rig.silt.params.getRawParameterValue ("spaceReverb")->load() == Catch::Approx (77.0f));
+    CHECK (size->getValue() == Catch::Approx (0.123f));
+    CHECK (rig.silt.routeAmount (0, rig.silt.modulationTarget ("spray")) == Catch::Approx (0.3f));
+    CHECK (rig.silt.presetName == "Mine");
+}
+
+TEST_CASE ("RANDOM's character keeps to its limits and leaves pitch alone")
+{
+    Rig rig;
+    auto* pitch = rig.silt.params.getParameter ("pitch");
+    const float pitchWas = pitch->getValue();
+    rig.silt.randomAmount.store (1.0f);
+    for (const auto& [character, sizeLow, sizeHigh] : { std::tuple { 1, 80.0f, 800.0f }, std::tuple { 2, 20.0f, 180.0f }, std::tuple { 3, 30.0f, 500.0f } })
+    {
+        rig.silt.randomCharacter.store (character);
+        for (int i = 0; i < 40; ++i)
+        {
+            rig.silt.randomisePage (silt::layout::grain);
+            const float size = rig.silt.params.getRawParameterValue ("size")->load();
+            CHECK (size >= sizeLow - 0.5f);
+            CHECK (size <= sizeHigh + 0.5f);
+            CHECK (pitch->getValue() == pitchWas);
+        }
+    }
+    rig.silt.randomCharacter.store (0);
+    bool moved = false;
+    for (int i = 0; i < 40 && ! moved; ++i)
+    {
+        rig.silt.randomisePage (silt::layout::grain);
+        moved = ! juce::exactlyEqual (pitch->getValue(), pitchWas);
+    }
+    CHECK (moved);   // ANYTHING still moves pitch
 }

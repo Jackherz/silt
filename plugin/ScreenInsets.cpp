@@ -842,11 +842,20 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
         {
             return juce::Point<float> (plot.getX() + plot.getWidth() * ms / total, plot.getBottom() - level * plot.getHeight());
         };
+        // Each stage drawn through CURVE, the way it runs.
         line.startNewSubPath (at (0.0f, 0.0f));
-        line.lineTo (at (a, 1.0f));
-        line.lineTo (at (a + d, s));
-        line.lineTo (at (a + d + hold, s));
-        line.lineTo (at (total, 0.0f));
+        const auto drawStage = [&] (float fromMs, float toMs, float fromLevel, float toLevel)
+        {
+            for (int i = 1; i <= 24; ++i)
+            {
+                const float t = (float) i / 24.0f;
+                line.lineTo (at (fromMs + (toMs - fromMs) * t, silt::Modulator::bend (fromLevel + (toLevel - fromLevel) * t, p.curve)));
+            }
+        };
+        drawStage (0.0f, a, 0.0f, 1.0f);
+        drawStage (a, a + d, 1.0f, s);
+        drawStage (a + d, a + d + hold, s, s);
+        drawStage (a + d + hold, total, s, 0.0f);
 
         // Where it is now: along its stage by the time since the stage began,
         // on the drawn line (the output itself lags the stage changes, so its
@@ -857,7 +866,7 @@ void drawMod (juce::Graphics& g, juce::Rectangle<float> area, const SiltProcesso
                               : ms < a + d ? 1.0f - (1.0f - s) * (ms - a) / std::max (d, 1.0e-3f)
                               : ms < a + d + hold ? s
                                                   : s * (1.0f - (ms - a - d - hold) / std::max (rel, 1.0e-3f));
-            return at (ms, juce::jlimit (0.0f, 1.0f, level));
+            return at (ms, silt::Modulator::bend (juce::jlimit (0.0f, 1.0f, level), p.curve));
         };
         // The envelope says how long it's been in its stage, so the dot can't
         // drift from it (a REPEAT cycle shorter than a frame included).

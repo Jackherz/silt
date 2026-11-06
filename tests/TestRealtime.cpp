@@ -144,6 +144,17 @@ TEST_CASE ("Realtime: processBlock allocates nothing, across modes and effects")
         CHECK (rig.run (200) == 0);
     }
 
+    SECTION ("BOUNCE, synced SCAN and FREEZE on a sample")
+    {
+        rig.set ("endMode", 3.0f);
+        rig.set ("scan", 2.0f);
+        CHECK (rig.run (100) == 0);
+        rig.set ("scanSync", 1.0f);
+        CHECK (rig.run (100, false) == 0);
+        rig.set ("freeze", 1.0f);
+        CHECK (rig.run (50, false) == 0);
+    }
+
     SECTION ("LIVE, FEED and SLICE")
     {
         rig.set ("keyMode", 1.0f);
@@ -264,15 +275,21 @@ TEST_CASE ("Factory presets against the grain budget", "[.][factory-density]")
         for (const int note : { 48, 55, 60, 64, 67, 71 })
             midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
         int most = 0;
-        for (int b = 0; b < (int) (6.0 * 48000.0 / 128.0); ++b)
+        float peak = 0.0f;
+        double energy = 0.0;
+        const int blocks = (int) (6.0 * 48000.0 / 128.0);
+        for (int b = 0; b < blocks; ++b)
         {
             buffer.clear();
             silt.processBlock (buffer, midi);
             midi.clear();
             std::array<silt::GrainView, SiltProcessor::maxGrainViews> views;
             most = juce::jmax (most, silt.readGrainViews (views));
+            peak = juce::jmax (peak, buffer.getMagnitude (0, 128));
+            energy += (double) buffer.getRMSLevel (0, 0, 128) * buffer.getRMSLevel (0, 0, 128);
         }
-        std::cout << (silt.grainsOverLimit.load() > 0 ? "OVER  " : "ok    ") << library.factoryName (i) << "  " << most << " grains  over " << (long long) silt.grainsOverLimit.load() << "\n";
+        std::cout << (silt.grainsOverLimit.load() > 0 ? "OVER  " : "ok    ") << library.factoryName (i) << "  " << most << " grains  over " << (long long) silt.grainsOverLimit.load()
+ << "  peak " << juce::String (juce::Decibels::gainToDecibels (peak), 1) << " dB  rms " << juce::String (juce::Decibels::gainToDecibels ((float) std::sqrt (energy / blocks)), 1) << " dB\n";
     }
 }
 

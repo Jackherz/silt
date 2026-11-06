@@ -579,8 +579,8 @@ TEST_CASE ("Presets: every factory preset has a category; favourites, views and 
     };
     CHECK (count ("ALL", {}) == PresetManager::numFactoryPresets());
     CHECK (count ("SLICES", {}) == 2);
-    CHECK (count ("ALL", "bloom") == 1);         // any case
-    CHECK (count ("ALL", "rhythmic") == 6);      // a category matches too
+    CHECK (count ("ALL", "bloom") == 2);         // any case
+    CHECK (count ("ALL", "rhythmic") == 8);      // a category matches too
     CHECK (count ("FAVOURITES", {}) == 0);
     presets.setFavourite ("Glass Cloud", true);
     presets.setFavourite ("Dark Drone", true);

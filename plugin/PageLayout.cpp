@@ -110,12 +110,14 @@ std::vector<Entry> build (bool instrument)
         menu (play, 0, "keyMode", "MODE", { "PITCH", "LIVE", "FEED", "SLICE" });
         knob (play, 1, "start", "START", sampleMode);
         knob (play, 2, "length", "LENGTH", sampleMode);
-        knob (play, 3, "scan", "SCAN", pitchMode);
+        knob (play, 3, "scan", "SCAN", both (pitchMode, off ("scanSync")));
+        knob (play, 3, "scanDiv", "SCAN", both (pitchMode, on ("scanSync")));
+        under (Kind::underButton, play, 3, "scanSync", 60, {}, "SYNC", pitchMode);
         knob (play, 3, "sliceCount", "SLICES", both (sliceMode, is ("sliceMode", 0)));
         const Shown notEqual = [] (const Context& c) { return juce::roundToInt (c.v ("sliceMode")) != 0; };
         knob (play, 3, "scan", "SCAN", both (sliceMode, notEqual));   // at hits or by hand, the count isn't a knob
         under (Kind::underMenu, play, 3, "sliceMode", 92, { "EQUAL", "AT HITS", "MANUAL" }, {}, sliceMode);
-        menu (play, 4, "endMode", "AT THE END", { "LOOP", "HOLD", "STOP" }, sampleMode);
+        menu (play, 4, "endMode", "AT THE END", { "LOOP", "HOLD", "STOP", "BOUNCE" }, sampleMode);
         under (Kind::underMenu, play, 1, "snap", 104, { "SNAP OFF", "SNAP ZERO", "SNAP TRANS" }, {}, sampleMode);
         knob (play, 1, "liveDelay", "DELAY", both (liveMode, off ("delaySync")));
         e.back().dimmed = [] (const Context& c) { return c.delayForced; };
@@ -128,6 +130,7 @@ std::vector<Entry> build (bool instrument)
         knob (play, 5, "root", "ROOT");
         knob (play, 6, "gain", "OUTPUT");
         knob (play, 7, "mix", "DRY/GRAIN", liveMode);
+        button (play, 7, "freeze", "FREEZE", "FREEZE", sampleMode);
     }
 
     // RESONATOR: a bank of ringing bands on the grains. SCALE notes come from the
@@ -230,7 +233,8 @@ std::vector<Entry> build (bool instrument)
         knob (mod, 3, id ("Decay"), "DECAY", envelope);
         knob (mod, 4, id ("Sustain"), "SUSTAIN", envelope);
         knob (mod, 5, id ("Release"), "RELEASE", envelope);
-        button (mod, 6, id ("Repeat"), "LOOP", "REPEAT", envelope);
+        under (Kind::underButton, mod, 5, id ("Repeat"), 64, {}, "REPEAT", envelope);
+        knob (mod, 6, id ("Curve"), "CURVE", envelope);
 
         knob (mod, 2, id ("FAttack"), "ATTACK", follow);
         knob (mod, 3, id ("FRelease"), "RELEASE", follow);

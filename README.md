@@ -86,7 +86,7 @@ is STOP, so another modulator on RATE can slow it, hold it and reverse it; synce
 REV runs it backwards against the bar; phase, SYM (where the cycle turns round: 50% as drawn, the ends make
 saws and pulse widths), CURVE (bulging and lazy to spiked and snappy; greyed on a
 square, which it can't bend), retrigger on notes), RANDOM (smooth to stepped, jitter, free or
-synced), ENVELOPE (ADSR from the notes played; REPEAT loops it while held), FOLLOW
+synced), ENVELOPE (ADSR from the notes played; REPEAT loops it while held; CURVE bends all of it, sustain level included, so stages run late or early), FOLLOW
 (the input's level), MIDI (velocity, note, mod wheel, aftertouch, pitch bend),
 MACRO (a knob, automatable and controller-mappable, that moves everything it's
 routed to) or PER GRAIN (a fresh roll for each grain and each route, SPREAD even,
@@ -181,12 +181,11 @@ while a note sounds.
 masthead with a catalogue number, numbered panels, a readout, hard frames and flat knobs,
 in VT323 with Glyph Grotesque, a renamed Terminal Grotesque, for the wordmark (SIL Open Font License, `kit/fonts/`).
 
+**Playing through a sample** (PLAY page): AT THE END is LOOP, HOLD, STOP or BOUNCE (back and forth, never crossing the seam). SYNC under SCAN sets one pass of the region in bars, 1/4 to 32, from the host's tempo and time signature: the speed follows the host, the position isn't locked to its bar. FREEZE stops the playhead while grains keep coming. Shift-drag any knob for fine control.
+
 **Presets** (header: ◀ name ▶, SAVE): a preset is the sound (every parameter, the
 modulation routes, the shown modulator), not the sample, the controller mapping or
-the window. Sixteen factory presets are built in (Init, Glass Cloud, Tape Choir, Rust
-Rhythm, Bell Garden, Wander, Dark Drone, Shimmer Pad, Hit Chop, Stutter Grid, Feed Bloom,
-Sample Strings, Grit Bells, Ducked Echoes, Spread Chorus, Head Patterns; the three played
-from notes in SLICE or FEED are left out of Silt FX). Loading one is a single undo step. User presets are
+the window. Factory presets are built in; those that need a sample or notes (SLICE, FEED, BOUNCE, synced SCAN, FREEZE on a sample) are left out of Silt FX. A * after the name means the sound has moved from its preset. Right-click a preset in the browser for "Load only its effects": RES, FILTER, COLOR, SPACE and their order, keeping your grains, routes and name. Loading one is a single undo step. User presets are
 `.siltpreset` XML files in `~/Library/Audio/Presets/Glyph Audio/<plug-in>/` on macOS
 (`%APPDATA%/Glyph Audio/<plug-in>/Presets` on Windows). SAVE updates a user preset,
 or asks for a name and a category. Click the name for the **browser**: search, category
@@ -218,7 +217,7 @@ copying the slices first); each drag, add or remove is one undo step, and MANUAL
 saved with the set. Scroll on the waveform to zoom (to 32×; Shift or a sideways swipe moves
 along), drag the bar under it or the ZOOM label, double-click the label to see it all.
 
-**RANDOM and RESET:** RANDOM moves the open page's controls by the amount beside it
+**RANDOM and RESET:** RANDOM's menu (right-click) sets a CHARACTER: ANYTHING, TONAL (stays in tune), RHYTHMIC (short and regular) or TEXTURE (dense and scattered); the last three leave PITCH where it is. RANDOM moves the open page's controls by the amount beside it
 (right-click: amounts, which controls to leave out; right-click a knob to leave it out).
 RESET (right-click a page key, or RANDOM's menu) puts a page, or every page, back to its
 defaults, keeping the routes, the sample and ROOT. Both are one undo step.

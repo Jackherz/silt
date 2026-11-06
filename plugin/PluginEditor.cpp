@@ -1252,6 +1252,10 @@ void SiltEditor::showRandomMenu()
     leaveOut.addSeparator();
     leaveOut.addItem (10, "Leave all out");
     leaveOut.addItem (11, "Include all");
+    menu.addSectionHeader ("CHARACTER");
+    static const char* const characters[] { "Anything", "Tonal: stays in tune", "Rhythmic: short, regular", "Texture: dense, scattered" };
+    for (int i = 0; i < 4; ++i)
+        menu.addItem (30 + i, characters[i], true, silt.randomCharacter.load() == i);
     menu.addSeparator();
     menu.addSubMenu ("Leave out on " + juce::String (layout::pageName (page)), leaveOut, ! entries.empty());
     menu.addSeparator();
@@ -1261,7 +1265,9 @@ void SiltEditor::showRandomMenu()
     juce::PopupMenu::dismissAllActiveMenus();
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&randomButton), [this, entries] (int chosen)
     {
-        if (chosen == 20 || chosen == 21)
+        if (chosen >= 30 && chosen < 34)
+            silt.randomCharacter.store (chosen - 30);
+        else if (chosen == 20 || chosen == 21)
             resetPages (chosen == 21 ? -1 : page);
         else if (chosen >= 1 && chosen <= (int) std::size (amounts))
             randomAmountBox->set ((float) amounts[chosen - 1] / 100.0f);
@@ -1862,7 +1868,9 @@ void SiltEditor::timerCallback()
         screen->repaintInset();
     }
 
-    if (silt.presetName != presetShown)
+    // The bar marks a sound that's moved from its preset, checked a few times a second.
+    const bool checkEdited = ++editedCheck % 20 == 0;
+    if (silt.presetName != presetShown || checkEdited)
     {
         presetShown = silt.presetName;
         presetBar->refresh();

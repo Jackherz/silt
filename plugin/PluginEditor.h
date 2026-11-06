@@ -276,6 +276,7 @@ private:
     HelpWatcher helpWatcher;
     juce::String hoverHelp;
     std::uint64_t overLimitSeen = 0;
+    int editedCheck = 0;
     juce::uint32 fullUntil = 0;
     bool hoverHelpOn = true;
     int grainView = -1;   // the ? menu's GRAIN VIEW: −1 matches the theme, else a GrainScreen::FieldLook

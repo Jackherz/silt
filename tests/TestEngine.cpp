@@ -1,3 +1,4 @@
+#include <silt/Modulator.h>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
@@ -1337,4 +1338,72 @@ TEST_CASE ("PER GRAIN SIZE makes grains of different lengths")
     }
     CHECK (highest > lowest);   // a steady SIZE and RATE would hold the count steady
     CHECK (engine.getGrainsOverLimit() == 0);
+}
+
+namespace
+{
+// Where the playhead is, as a share of the buffer, every 512 samples for a number of seconds.
+std::vector<float> playheadOver (GrainParams p, double seconds)
+{
+    TestEngine engine (makeSine (240.0, 2.0));
+    p.sizeMs = 50.0;
+    p.rateHz = 20.0;
+    std::vector<float> l (512), r (512), out;
+    NoteEvent on { 0, 60, 1.0f, true };
+    for (int done = 0; done < (int) (seconds * sampleRate); done += 512)
+    {
+        engine.process (l.data(), r.data(), 512, done == 0 ? &on : nullptr, done == 0 ? 1 : 0, p);
+        out.push_back (engine.getVoice (0).getPlayheadPosition());
+    }
+    return out;
+}
+} // namespace
+
+TEST_CASE ("BOUNCE turns round at both ends and never jumps")
+{
+    GrainParams p;
+    p.endMode = EndMode::bounce;
+    p.scan = 1.0;
+    const auto at = playheadOver (p, 8.0);
+    float lowest = 1.0f, highest = 0.0f, biggest = 0.0f;
+    int turns = 0;
+    for (size_t i = 2; i < at.size(); ++i)
+    {
+        lowest = std::min (lowest, at[i]);
+        highest = std::max (highest, at[i]);
+        biggest = std::max (biggest, std::abs (at[i] - at[i - 1]));
+        turns += (at[i] - at[i - 1]) * (at[i - 1] - at[i - 2]) < 0.0f ? 1 : 0;
+    }
+    CHECK (turns >= 2);
+    CHECK (biggest < 0.1f);   // a 2 s buffer moves about 0.005 a block; LOOP would jump by nearly 1
+    CHECK (highest > 0.9f);
+    CHECK (lowest < 0.1f);
+}
+
+TEST_CASE ("SCAN synced takes the pass it's told to, and FREEZE holds the playhead with grains still coming")
+{
+    {
+        GrainParams p;
+        p.scanPassSeconds = 1.0;   // the 2 s buffer in 1 s: twice real time
+        const auto at = playheadOver (p, 0.5);
+        CHECK (at.back() == Catch::Approx (0.5f).margin (0.04f));
+    }
+    {
+        GrainParams p;
+        p.freeze = true;
+        p.start = 0.25;
+        p.length = 0.5;
+        const auto at = playheadOver (p, 1.0);
+        for (const float x : at)
+            CHECK (x == Catch::Approx (at.front()).margin (0.001f));
+    }
+}
+
+TEST_CASE ("CURVE bends an envelope, and at 0 leaves it as it was")
+{
+    CHECK (silt::Modulator::bend (0.5f, 0.0f) == 0.5f);
+    CHECK (silt::Modulator::bend (1.0f, 0.7f) == Catch::Approx (1.0f));
+    CHECK (silt::Modulator::bend (0.0f, 0.7f) == Catch::Approx (0.0f));
+    CHECK (silt::Modulator::bend (0.5f, 0.5f) == Catch::Approx (0.25f));    // 0.5² : a later rise
+    CHECK (silt::Modulator::bend (0.5f, -0.5f) == Catch::Approx (0.7071f).margin (1.0e-3));   // earlier
 }

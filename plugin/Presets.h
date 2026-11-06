@@ -34,7 +34,10 @@ public:
     void applyQuietly (const juce::XmlElement& xml, const juce::String& name) override { silt.applyPresetValues (xml, name); }
     void commit (std::unique_ptr<juce::XmlElement> before, const juce::String& beforeName) override { silt.commitPresetChange (std::move (before), beforeName); }
     juce::String currentName() const override { return silt.presetName; }
-    void setCurrentName (const juce::String& name) override { silt.presetName = name; }
+    void setCurrentName (const juce::String& name) override { silt.presetName = name; silt.markPresetClean(); }
+    bool isEdited() const override { return silt.presetIsEdited(); }
+    juce::String partName() const override { return "effects"; }
+    void applyPart (const juce::XmlElement& xml) override { silt.applyPresetEffects (xml); }
 
 private:
     SiltProcessor& silt;

@@ -53,6 +53,10 @@ using Range = juce::NormalisableRange<float>;
 constexpr int stateMagic = 0x544c4953;   // "SILT"
 
 // Synced Size and Rate: note values, in quarter notes (T = triplet, D = dotted).
+// SCAN synced: how long one pass of the region takes.
+const juce::StringArray scanBarNames { "1/4 BAR", "1/2 BAR", "1 BAR", "2 BARS", "4 BARS", "8 BARS", "16 BARS", "32 BARS" };
+constexpr double scanBars[] { 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0 };
+
 const juce::StringArray divisionNames { "1/64", "1/32", "1/16T", "1/16", "1/8T", "1/16D", "1/8", "1/4T",
                                         "1/8D", "1/4", "1/2T", "1/4D", "1/2", "1/2D", "1 bar", "2 bars", "4 bars" };
 constexpr double divisionQuarters[] { 1.0 / 16, 1.0 / 8, 1.0 / 6, 1.0 / 4, 1.0 / 3, 3.0 / 8, 1.0 / 2, 2.0 / 3,
@@ -157,8 +161,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
                 std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "snap", 1 }, "Snap",
                                                               juce::StringArray { "Off", "Zero crossing", "Transient" }, 0),
                 withUnit ("scan", "Scan", Range (-4.0f, 4.0f, 0.01f), 1.0f, formatTimes),
+                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "scanSync", 1 }, "Scan sync", false),
+                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "scanDiv", 1 }, "Scan (bars a pass)",
+                                                              scanBarNames, 4),
                 std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "endMode", 1 }, "End",
-                                                              juce::StringArray { "Loop", "Hold", "Stop" }, 0));
+                                                              juce::StringArray { "Loop", "Hold", "Stop", "Bounce" }, 0));
 
     // Voice
     layout.add (withUnit ("attack", "Attack", skewed (0.0f, 5000.0f, 100.0f), 5.0f, formatMs),
@@ -443,7 +450,7 @@ struct SiltProcessor::RawParams
         pitch = p ("pitch"); size = p ("size"); rate = p ("rate"); spray = p ("spray"); jitter = p ("jitter");
         reverse = p ("reverse"); randAmp = p ("randAmp"); randPan = p ("randPan"); fade = p ("fade"); slant = p ("slant"); ease = p ("ease");
         sizeSync = p ("sizeSync"); sizeDiv = p ("sizeDiv"); rateMode = p ("rateMode"); rateDiv = p ("rateDiv"); grains = p ("grains"); grainSize = p ("grainSize");
-        start = p ("start"); length = p ("length"); scan = p ("scan"); endMode = p ("endMode"); snap = p ("snap");
+        start = p ("start"); length = p ("length"); scan = p ("scan"); scanSync = p ("scanSync"); scanDiv = p ("scanDiv"); endMode = p ("endMode"); snap = p ("snap");
         attack = p ("attack"); decay = p ("decay"); sustain = p ("sustain"); release = p ("release"); root = p ("root");
         captureBars = p ("captureBars"); gain = p ("gain");
         sliceMode = p ("sliceMode"); sliceCount = p ("sliceCount");
@@ -470,7 +477,7 @@ struct SiltProcessor::RawParams
 
     std::atomic<float>* pitch, *size, *rate, *spray, *jitter, *reverse, *randAmp, *randPan, *fade, *slant, *ease;
     std::atomic<float>* sizeSync, *sizeDiv, *rateMode, *rateDiv, *grains, *grainSize;
-    std::atomic<float>* start, *length, *scan, *endMode, *snap;
+    std::atomic<float>* start, *length, *scan, *scanSync, *scanDiv, *endMode, *snap;
     std::atomic<float>* attack, *decay, *sustain, *release, *root;
     std::atomic<float>* captureBars, *gain, *monitor, *mix, *inputGain, *chainOrder;
     std::atomic<float>* keyMode, *liveDelay, *delaySync, *delayDiv, *feedback, *freeze, *liveRun, *sliceMode, *sliceCount;
@@ -525,7 +532,7 @@ SiltProcessor::SiltProcessor()
             const bool switchLike = dynamic_cast<juce::AudioParameterChoice*> (ranged) != nullptr
                                  || dynamic_cast<juce::AudioParameterBool*> (ranged) != nullptr;
             // A division is a stepped choice, drawn as a knob: it can be modulated like one.
-            const bool division = id == "sizeDiv" || id == "rateDiv" || id == "delayDiv" || id == "spaceDiv";
+            const bool division = id == "sizeDiv" || id == "rateDiv" || id == "delayDiv" || id == "spaceDiv" || id == "scanDiv";
             if ((switchLike && ! division) || macro || id == "patternSeed" || id == "sampleGain")
                 continue;
             if (targets.size() >= (size_t) maxTargets)
@@ -710,7 +717,7 @@ silt::GrainParams SiltProcessor::readParams (const float* voiceValues) const noe
     p.start = v (raw->start) * 0.01;
     p.length = v (raw->length) * 0.01;
     p.scan = v (raw->scan);
-    p.endMode = (silt::EndMode) juce::jlimit (0, 2, (int) v (raw->endMode));
+    p.endMode = (silt::EndMode) juce::jlimit (0, 3, (int) v (raw->endMode));
     p.snap = (silt::Snap) juce::jlimit (0, 2, (int) v (raw->snap));
     p.attackMs = v (raw->attack);
     p.decayMs = v (raw->decay);
@@ -764,6 +771,12 @@ silt::GrainParams SiltProcessor::readParams (const float* voiceValues) const noe
             break;
         default:
             break;
+    }
+    if (v (raw->scanSync) > 0.5 && ! p.slice && ! p.live)
+    {
+        const double quartersPerBar = timeSigNumerator.load (std::memory_order_relaxed) * 4.0 / juce::jmax (1, timeSigDenominator.load (std::memory_order_relaxed));
+        const double perQuarter = 60.0 / juce::jlimit (20.0, 400.0, hostBpm.load (std::memory_order_relaxed));
+        p.scanPassSeconds = scanBars[(size_t) juce::jlimit (0, (int) std::size (scanBars) - 1, juce::roundToInt (v (raw->scanDiv)))] * quartersPerBar * perQuarter;
     }
     p.scatter = grainScatter.count > 0 ? &grainScatter : nullptr;
     return p;
@@ -1784,6 +1797,36 @@ int SiltProcessor::resetAllPages()
     return changed;
 }
 
+namespace
+{
+struct CharacterLimit { const char* id; float low, high; bool leave; };
+
+// What RANDOM keeps to, in each parameter's own units. Anything unlisted roams as usual.
+const CharacterLimit* characterLimit (int character, const juce::String& id)
+{
+    static const std::vector<CharacterLimit> limits[] {
+        {},
+        // TONAL: stays in tune, long enough to hear a pitch.
+        { { "pitch", 0, 0, true }, { "randPitch", 0.0f, 0.15f, false }, { "reverse", 0.0f, 10.0f, false }, { "spray", 0.0f, 25.0f, false },
+          { "size", 80.0f, 800.0f, false }, { "rate", 10.0f, 50.0f, false }, { "jitter", 20.0f, 100.0f, false }, { "patternDepth", 0, 0, true },
+          { "fade", 50.0f, 100.0f, false }, { "colorBits", 12.0f, 16.0f, false } },
+        // RHYTHMIC: short, regular grains that stay put.
+        { { "pitch", 0, 0, true }, { "randPitch", 0.0f, 0.0f, false }, { "size", 20.0f, 180.0f, false }, { "rate", 4.0f, 30.0f, false },
+          { "jitter", 0.0f, 10.0f, false }, { "spray", 0.0f, 8.0f, false }, { "fade", 20.0f, 70.0f, false }, { "reverse", 0.0f, 30.0f, false } },
+        // TEXTURE: dense, scattered and wide.
+        { { "pitch", 0, 0, true }, { "randPitch", 0.0f, 2.0f, false }, { "size", 30.0f, 500.0f, false }, { "rate", 15.0f, 80.0f, false },
+          { "spray", 30.0f, 100.0f, false }, { "jitter", 50.0f, 100.0f, false }, { "randPan", 40.0f, 100.0f, false }, { "randAmp", 20.0f, 80.0f, false },
+          { "fade", 60.0f, 100.0f, false } },
+    };
+    if (character <= 0 || character >= (int) std::size (limits))
+        return nullptr;
+    for (const auto& limit : limits[character])
+        if (id == limit.id)
+            return &limit;
+    return nullptr;
+}
+} // namespace
+
 int SiltProcessor::randomisePage (int page)
 {
     const float amount = juce::jlimit (0.0f, 1.0f, randomAmount.load());
@@ -1803,6 +1846,14 @@ int SiltProcessor::randomisePage (int page)
         {
             const int steps = juce::jmax (2, parameter->getNumSteps());
             after = (float) randomiser.nextInt (steps) / (float) (steps - 1);
+        }
+        // A CHARACTER keeps what it names within reason, and leaves pitch where you put it.
+        if (const auto* limit = characterLimit (randomCharacter.load(), e->id))
+        {
+            if (limit->leave)
+                continue;
+            auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter);
+            after = juce::jlimit (ranged->convertTo0to1 (limit->low), ranged->convertTo0to1 (limit->high), after);
         }
         after = parameter->convertTo0to1 (parameter->convertFrom0to1 (after));   // onto the parameter's steps
         if (juce::exactlyEqual (before, after))
@@ -2094,6 +2145,50 @@ void SiltProcessor::applyPresetValues (const juce::XmlElement& xml, const juce::
     routesFromString (xml.getStringAttribute ("routes"));
     modShown.store (juce::jlimit (0, numModulators - 1, xml.getIntAttribute ("modShown", 0)));
     presetName = name;
+    markPresetClean();
+}
+
+// The sound as a preset would keep it, without what's only about the view.
+std::unique_ptr<juce::XmlElement> SiltProcessor::comparablePreset() const
+{
+    auto xml = capturePreset ({});
+    xml->removeAttribute ("modShown");
+    return xml;
+}
+
+void SiltProcessor::markPresetClean()
+{
+    presetAsLoaded = comparablePreset();
+}
+
+bool SiltProcessor::presetIsEdited()
+{
+    if (presetAsLoaded == nullptr || presetRestored.exchange (false))   // a set just opened: edited from here on
+        markPresetClean();
+    return ! comparablePreset()->isEquivalentTo (presetAsLoaded.get(), false);
+}
+
+// The effects chain out of a preset: its four blocks and their order, one undo step. The rest of
+// the sound stays, under its own name, which now reads as edited.
+void SiltProcessor::applyPresetEffects (const juce::XmlElement& xml)
+{
+    auto before = capturePreset (presetName);
+    const auto keepName = presetName;
+    {
+        const juce::ScopedValueSetter<bool> quiet (replaying, true);
+        const auto* values = xml.getChildByName ("PARAMS");
+        for (auto* parameter : getParameters())
+            if (auto* p = dynamic_cast<juce::RangedAudioParameter*> (parameter))
+            {
+                const auto id = p->getParameterID();
+                if (! (id.startsWith ("res") || id.startsWith ("filter") || id.startsWith ("color") || id.startsWith ("space") || id == "chainOrder"))
+                    continue;
+                p->beginChangeGesture();
+                p->setValueNotifyingHost (values != nullptr && values->hasAttribute (id) ? p->convertTo0to1 ((float) values->getDoubleAttribute (id)) : p->getDefaultValue());
+                p->endChangeGesture();
+            }
+    }
+    commitPresetChange (std::move (before), keepName);
 }
 
 juce::AudioProcessorEditor* SiltProcessor::createEditor()
@@ -3021,6 +3116,7 @@ void SiltProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("modShown", modShown.load(), nullptr);
     state.setProperty ("presetName", presetName, nullptr);
     state.setProperty ("randomAmount", randomAmount.load(), nullptr);
+    state.setProperty ("randomCharacter", randomCharacter.load(), nullptr);
     {
         juce::StringArray marks;
         for (const float m : manualSlices())
@@ -3123,7 +3219,9 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
     modShown.store (juce::jlimit (0, numModulators - 1, (int) tree.getProperty ("modShown", 0)));
     routeUndo.clearUndoHistory();   // a loaded set starts its own history
     presetName = tree.getProperty ("presetName", "Init").toString();
+    presetRestored.store (true);
     randomAmount.store (juce::jlimit (0.0f, 1.0f, (float) tree.getProperty ("randomAmount", 0.5f)));
+    randomCharacter.store (juce::jlimit (0, 3, (int) tree.getProperty ("randomCharacter", 0)));
     {
         std::vector<float> marks;
         for (const auto& m : juce::StringArray::fromTokens (tree.getProperty ("slices").toString(), ",", ""))
