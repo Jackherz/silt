@@ -17,7 +17,7 @@ public:
     std::function<void (int module)> onOpen;   // a module was clicked
     std::function<void (int module)> onMenu;   // a module was right-clicked
 
-    // The module whose page is open (−1: none) and, for RES, which of its two halves.
+    // The module whose page is open (−1: none) and, for RES, which of its pages of controls.
     void setOpen (int module, int half);
     juce::Rectangle<int> moduleBounds (int module) const;
 

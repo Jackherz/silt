@@ -288,16 +288,27 @@ void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltPr
     p.decaySeconds = live (silt, "resDecay");
     p.bright = live (silt, "resBright") * 0.01f;
     p.bandCount = juce::roundToInt (live (silt, "resBands"));
+    p.stretch = live (silt, "resStretch") * 0.01f;
+    p.stretchCurve = live (silt, "resCurve") * 0.01f;
+    p.snap = live (silt, "resSnap") * 0.01f;
+    p.offset = live (silt, "resOffset");
+    p.ripple = live (silt, "resRipple");
+    p.rippleDepth = live (silt, "resDepth") * 0.01f;
+    p.sweep = live (silt, "resSweep") * 0.01f;
     const float mix = live (silt, "resMix") * 0.01f;
     const float spread = live (silt, "resSpread") * 0.01f, oddEven = live (silt, "resOddEven") * 0.01f;
     const float drift = live (silt, "resDrift") * 0.01f, damp = live (silt, "resDamp") * 0.01f;
     const float resonance = live (silt, "resReso") * 0.01f, width = live (silt, "resWidth") * 0.01f;
     const float drive = live (silt, "resDrive") * 0.01f;
     const char* notes[] { "SCALE", "HARMONICS", "BELL", "SAMPLE" };
-    const bool secondHalf = silt.resonatorHalf.load() == 1;
-    auto plot = frame (g, area, secondHalf ? "RESONATOR 2/2 - " + juce::String (p.bandCount) + " BANDS  Q " + juce::String (juce::roundToInt (8.0 * std::pow (15.0, (double) resonance)))
+    const int halfShown = silt.resonatorHalf.load();
+    const bool secondHalf = halfShown == 1;
+    const auto percentOf = [] (float v) { return juce::String (juce::roundToInt (v * 100.0f)) + "%"; };
+    auto plot = frame (g, area, halfShown == 2 ? "RESONATOR 3/3 - STRETCH " + percentOf (p.stretch) + "  SNAP " + percentOf (p.snap)
+                                                     + (p.rippleDepth > 0.0f ? "  RIPPLE " + juce::String (p.ripple, 1) : juce::String())
+                              : secondHalf ? "RESONATOR 2/3 - " + juce::String (p.bandCount) + " BANDS  Q " + juce::String (juce::roundToInt (8.0 * std::pow (15.0, (double) resonance)))
                                                  + (drift > 0.0f ? "  DRIFT " + juce::String (juce::roundToInt (drift * 100.0f)) + "%" : juce::String())
-                                           : "RESONATOR - " + juce::String (notes[(int) p.notes]) + " " + juce::String (p.rangeOctaves, 1) + " OCT "
+                                           : "RESONATOR 1/3 - " + juce::String (notes[(int) p.notes]) + " " + juce::String (p.rangeOctaves, 1) + " OCT "
                                                  + text (silt, "resDecay", p.decaySeconds) + "  MIX " + juce::String (juce::roundToInt (mix * 100.0f)) + "%");
 
     std::array<double, silt::Resonator::maxBands> ratios {};
@@ -366,7 +377,7 @@ void drawResonator (juce::Graphics& g, juce::Rectangle<float> area, const SiltPr
         if (hz > 20000.0)
             break;
         const float against = i % 2 == 0 ? std::max (0.0f, oddEven) : std::max (0.0f, -oddEven);
-        const float level = juce::jlimit (0.0f, 1.0f, (float) silt::Resonator::levelAt (ratio, p.bright) * (1.0f - against));
+        const float level = juce::jlimit (0.0f, 1.0f, (float) (silt::Resonator::levelAt (ratio, p.bright) * silt::Resonator::rippleAt (ratio, ratios[(size_t) n - 1], p)) * (1.0f - against));
         const float ring = std::max (0.02f, p.decaySeconds * (float) silt::Resonator::ringAt (ratio, p.bright, damp));
         const float pan = (i % 2 == 0 ? -1.0f : 1.0f) * width * (n > 1 ? 1.0f : 0.0f);
         const auto colour = pan < 0.0f ? screenPale.interpolatedWith (signalTeal, -pan) : screenPale.interpolatedWith (signalMagenta, pan);
@@ -958,7 +969,8 @@ std::vector<float> insetKey (int page, const SiltProcessor& silt, const ModRail&
         case layout::filter:    add ({ "filterMode", "filterCutoff", "filterReso", "filterMorph", "filterMix", "filterEnv" }); break;
         case layout::resonator:
             add ({ "resTune", "resNotes", "resRange", "resDecay", "resBright", "resMix", "scale", "key",
-                   "resReso", "resBands", "resDrift", "resSpread", "resOddEven", "resDamp" });
+                   "resReso", "resBands", "resDrift", "resSpread", "resOddEven", "resDamp",
+                   "resStretch", "resCurve", "resSnap", "resOffset", "resRipple", "resDepth", "resSweep" });
             key.push_back ((float) silt.resonatorHalf.load());
             key.push_back (silt.resonatorRootNow.load (std::memory_order_relaxed));
             add ({ "resWidth", "resDrive" });

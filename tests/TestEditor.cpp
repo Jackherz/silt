@@ -78,6 +78,8 @@ TEST_CASE ("Every slot's shown control is the one the controller moves, in every
     rig.checkAgreement ("space sync");
     rig.silt.resonatorHalf.store (1);
     rig.checkAgreement ("resonator, second half");
+    rig.silt.resonatorHalf.store (2);
+    rig.checkAgreement ("resonator, third page");
     rig.silt.resonatorHalf.store (0);
 
     for (int m = 0; m < SiltProcessor::numModulators; ++m)
@@ -1179,4 +1181,10 @@ TEST_CASE ("Every page has its key beside the others, and RES pressed again show
     keys[4]->triggerClick();
     juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
     CHECK (rig.silt.resonatorHalf.load() == 1);
+    keys[4]->triggerClick();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+    CHECK (rig.silt.resonatorHalf.load() == 2);
+    keys[4]->triggerClick();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+    CHECK (rig.silt.resonatorHalf.load() == 0);
 }

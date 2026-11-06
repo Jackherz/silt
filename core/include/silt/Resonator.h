@@ -34,6 +34,15 @@ struct ResonatorParams
     float drive = 0.0f;             // saturates the sound going in, so it excites more of the bank
     float damp = 0.0f;              // high bands ring shorter (on top of BRIGHT)
 
+    // Page 3: reshaping the series. All at 0 leaves the notes as NOTES set them.
+    float stretch = 0.0f;           // −1…+1: squeezes the top of the bank down (metallic) or pulls it up (sparse), up to 3 octaves
+    float stretchCurve = 0.0f;      // −1…+1: STRETCH acts more on the low modes, or only the high ones
+    float snap = 0.0f;              // pulls every mode towards a whole-number ratio of the root
+    float offset = 0.0f;            // semitones, ±12: every other mode, on top of it all
+    float ripple = 2.0f;            // how many peaks a highlight across the bank has
+    float rippleDepth = 0.0f;       // 0 no highlight … 1 only the very peaks ring
+    float sweep = 0.0f;             // 0…1: where the peaks sit; moved, they scan through the modes
+
     // SAMPLE: the sample's pitches (Hz, low to high), already moved by TUNE
     // or the note FOLLOW plays; RANGE keeps those within its octaves of the lowest.
     std::array<float, 12> sampleHz {};
@@ -75,6 +84,8 @@ public:
     // A mode at this ratio to the root: how loud, and how much of DECAY it rings for.
     static double levelAt (double ratio, double bright) noexcept;
     static double ringAt (double ratio, double bright, double damp) noexcept;
+    // RIPPLE's share of that level, for a mode this far up a bank reaching `top`.
+    static double rippleAt (double ratio, double top, const ResonatorParams&) noexcept;
 
 private:
     struct Band

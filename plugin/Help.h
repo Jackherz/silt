@@ -83,6 +83,13 @@ inline juce::String helpFor (const juce::String& id)
         { "resOddEven", "ODD/EVEN: favours alternate bands" },
         { "resDrive", "DRIVE: grit going in, so more bands ring" },
         { "resDamp", "DAMP: high bands die sooner" },
+        { "resStretch", "STRETCH: squeezes or spreads the high bands" },
+        { "resCurve", "CURVE: where along the bands STRETCH acts" },
+        { "resSnap", "SNAP: pulls bands back to whole-number tuning" },
+        { "resOffset", "OFFSET: retunes every other band" },
+        { "resRipple", "RIPPLE: how many peaks the highlight has" },
+        { "resDepth", "DEPTH: how hard the highlight cuts between" },
+        { "resSweep", "SWEEP: moves the highlight through the bands" },
         // FILTER
         { "filterMode", "MODE: a gentle 12 dB or a steep 24 dB slope" },
         { "filterCutoff", "CUTOFF: where the filter acts" },

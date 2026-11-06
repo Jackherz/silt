@@ -380,7 +380,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
         static constexpr int pages[] { layout::resonator, layout::filter, layout::color, layout::space };
         const int target = pages[juce::jlimit (0, 3, module)];
         if (target == layout::resonator && page == layout::resonator)
-            silt.resonatorHalf.store (1 - silt.resonatorHalf.load());   // RES again: its other half
+            silt.resonatorHalf.store ((silt.resonatorHalf.load() + 1) % SiltProcessor::numResonatorHalves);   // RES again: its next page
         pageTabs[(size_t) target].setToggleState (true, juce::dontSendNotification);
         silt.currentPage.store (target);
         showPage (target);
@@ -440,7 +440,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
             if (pageTabs[i].getToggleState())
             {
                 if ((int) i == layout::resonator && page == layout::resonator)
-                    silt.resonatorHalf.store (1 - silt.resonatorHalf.load());   // pressed again: its other half
+                    silt.resonatorHalf.store ((silt.resonatorHalf.load() + 1) % SiltProcessor::numResonatorHalves);   // pressed again: its next page
                 silt.currentPage.store ((int) i);   // the controller's knobs follow the page
                 showPage ((int) i);
             }

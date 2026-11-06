@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -1080,4 +1081,135 @@ TEST_CASE ("Resonator: once it has rung out it rests, and wakes on the first sou
     run (other, warm, p);
     run (other, fresh, p);
     CHECK (std::abs (db (out) - db (rms (fresh.left, 2400, 24000))) < 3.0);
+}
+
+TEST_CASE ("Resonator page 3: STRETCH, SNAP and OFFSET reshape the series")
+{
+    std::array<double, Resonator::maxBands> plain {}, r {};
+    ResonatorParams p;
+    p.notes = ResonatorNotes::harmonics;
+    const int n = Resonator::bandRatios (p, plain);
+    REQUIRE (n == 128);
+
+    // At their defaults, nothing moves.
+    REQUIRE (Resonator::bandRatios (p, r) == n);
+    for (int i = 0; i < n; ++i)
+        CHECK (r[(size_t) i] == plain[(size_t) i]);
+
+    // Up: the root stays, the top climbs by up to three octaves, still in order.
+    p.stretch = 1.0f;
+    Resonator::bandRatios (p, r);
+    CHECK_THAT (r[0], Catch::Matchers::WithinAbs (1.0, 1e-9));
+    CHECK_THAT (r[127], Catch::Matchers::WithinAbs (128.0 * 8.0, 1e-6));
+    // Down: a denser, inharmonic bank.
+    p.stretch = -0.3f;
+    Resonator::bandRatios (p, r);
+    int notWhole = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        notWhole += std::abs (r[(size_t) i] - std::round (r[(size_t) i])) > 0.02 ? 1 : 0;
+        if (i > 0)
+            REQUIRE (r[(size_t) i] >= r[(size_t) i - 1]);
+    }
+    CHECK (notWhole > 60);
+    CHECK (r[127] < 128.0);
+
+    // CURVE: the middle of the bank left alone more, or moved more.
+    p.stretchCurve = 1.0f;
+    std::array<double, Resonator::maxBands> late {};
+    Resonator::bandRatios (p, late);
+    p.stretchCurve = -1.0f;
+    std::array<double, Resonator::maxBands> early {};
+    Resonator::bandRatios (p, early);
+    CHECK (std::abs (late[40] - plain[40]) < std::abs (early[40] - plain[40]));
+
+    // SNAP at full: every mode on a whole number again, however stretched.
+    p.stretchCurve = 0.0f;
+    p.snap = 1.0f;
+    Resonator::bandRatios (p, r);
+    for (int i = 0; i < n; ++i)
+        REQUIRE (r[(size_t) i] == std::round (r[(size_t) i]));
+
+    // OFFSET: every other mode, an octave.
+    p = ResonatorParams {};
+    p.notes = ResonatorNotes::harmonics;
+    p.rangeOctaves = 2.0f;
+    p.offset = 12.0f;
+    REQUIRE (Resonator::bandRatios (p, r) == 4);
+    CHECK_THAT (r[0], Catch::Matchers::WithinAbs (1.0, 1e-9));
+    CHECK_THAT (r[1], Catch::Matchers::WithinAbs (3.0, 1e-9));   // 3, the untouched third mode
+    CHECK_THAT (r[2], Catch::Matchers::WithinAbs (4.0, 1e-9));   // 2 an octave up
+    CHECK_THAT (r[3], Catch::Matchers::WithinAbs (8.0, 1e-9));   // 4 an octave up
+}
+
+TEST_CASE ("Resonator page 3: SWEEP moves RIPPLE's peak through the bank without retuning it")
+{
+    ResonatorParams p;
+    p.ripple = 1.0f;
+    p.rippleDepth = 1.0f;
+    CHECK (Resonator::rippleAt (1.0, 256.0, p) == Catch::Approx (1.0));          // sweep 0: the peak on the root
+    CHECK (Resonator::rippleAt (16.0, 256.0, p) < 1.0e-6);                       // half way up the octaves: a valley
+    p.sweep = 0.5f;
+    CHECK (Resonator::rippleAt (16.0, 256.0, p) == Catch::Approx (1.0));
+    CHECK (Resonator::rippleAt (1.0, 256.0, p) < 1.0e-6);
+    p.rippleDepth = 0.0f;
+    CHECK (Resonator::rippleAt (16.0, 256.0, p) == 1.0);                         // no depth: no change
+
+    // Tuning stays put with the highlight moved; the bank keeps its level as it thins out.
+    std::array<double, Resonator::maxBands> before {}, after {};
+    p.rippleDepth = 1.0f;
+    p.notes = ResonatorNotes::harmonics;
+    Resonator::bandRatios (p, before);
+    p.sweep = 0.1f;
+    Resonator::bandRatios (p, after);
+    CHECK (before == after);
+
+    const auto level = [] (float depth, float sweep)
+    {
+        Resonator res;
+        res.prepare (rate);
+        auto s = noise ((int) rate * 2, 0.2f);
+        ResonatorParams q;
+        q.notes = ResonatorNotes::harmonics;
+        q.mix = 1.0f;
+        q.rippleDepth = depth;
+        q.sweep = sweep;
+        run (res, s, q);
+        return db (rms (s.left, (int) rate, (int) rate * 2));
+    };
+    const double none = level (0.0f, 0.0f);
+    for (const float sweep : { 0.2f, 0.6f })
+    {
+        const double highlighted = level (0.6f, sweep);
+        INFO ("sweep " << sweep << ": " << highlighted << " dB against " << none);
+        CHECK (std::abs (highlighted - none) < 9.0);
+    }
+}
+
+TEST_CASE ("Resonator page 3: everything moving at once stays finite and bounded")
+{
+    Resonator res;
+    res.prepare (rate);
+    auto s = noise ((int) rate * 2, 0.5f);
+    ResonatorParams p;
+    p.notes = ResonatorNotes::harmonics;
+    p.mix = 1.0f;
+    p.decaySeconds = 8.0f;
+    p.rippleDepth = 0.7f;
+    const int total = (int) s.left.size();
+    for (int i = 0; i < total; i += 64)
+    {
+        const float t = (float) i / (float) total;
+        p.stretch = -1.0f + 2.0f * t;
+        p.stretchCurve = std::sin (t * 20.0f);
+        p.snap = t;
+        p.offset = 12.0f * std::sin (t * 9.0f);
+        p.sweep = t * 3.0f;
+        res.process (s.left.data() + i, s.right.data() + i, std::min (64, total - i), p);
+    }
+    for (size_t i = 0; i < s.left.size(); ++i)
+    {
+        REQUIRE (std::isfinite (s.left[i]));
+        REQUIRE (std::abs (s.left[i]) <= 1.0f);
+    }
 }

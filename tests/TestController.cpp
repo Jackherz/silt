@@ -924,7 +924,7 @@ TEST_CASE ("RANDOM on the MOD page leaves the modulator types alone by default")
     CHECK (rig.value ("m1Type") == 0.0f);
 }
 
-TEST_CASE ("The controller's page buttons step through both halves of RESONATOR")
+TEST_CASE ("The controller's page buttons step through every page of RESONATOR")
 {
     Rig rig;
     rig.silt.currentPage.store (silt::layout::play);
@@ -939,10 +939,15 @@ TEST_CASE ("The controller's page buttons step through both halves of RESONATOR"
     CHECK (rig.silt.resonatorHalf.load() == 1);
     CHECK (rig.silt.slotParameter (silt::layout::resonator, 0) == "resReso");
     next();
+    CHECK (rig.silt.resonatorHalf.load() == 2);
+    CHECK (rig.silt.slotParameter (silt::layout::resonator, 0) == "resStretch");
+    next();
     CHECK (rig.silt.currentPage.load() == silt::layout::filter);
     previous();
     CHECK (rig.silt.currentPage.load() == silt::layout::resonator);
-    CHECK (rig.silt.resonatorHalf.load() == 1);   // back in: its second half
+    CHECK (rig.silt.resonatorHalf.load() == 2);   // back in: its last page
+    previous();
+    CHECK (rig.silt.resonatorHalf.load() == 1);
     previous();
     CHECK (rig.silt.resonatorHalf.load() == 0);
 }
@@ -1255,10 +1260,10 @@ TEST_CASE ("Every factory preset sounds: notes (C1 up in SLICE) make a sane leve
     }
 }
 
-TEST_CASE ("RESONATOR: MIX sits in the same slot on both halves")
+TEST_CASE ("RESONATOR: MIX sits in the same slot on every page")
 {
     Rig rig;
-    for (const int half : { 0, 1 })
+    for (const int half : { 0, 1, 2 })
     {
         rig.silt.resonatorHalf.store (half);
         CHECK (rig.silt.slotParameter (silt::layout::resonator, 7) == "resMix");
@@ -1868,7 +1873,8 @@ TEST_CASE ("RANDOM's character keeps to its limits, and on every page leaves tun
 {
     Rig rig;
     const char* const tuning[] { "pitch", "randPitch", "scale", "key", "root", "keyMode", "patternDepth", "patternSteps",
-                                 "resTune", "resShift", "resNotes", "resFollow", "resSpread", "resDrift", "colorWow" };
+                                 "resTune", "resShift", "resNotes", "resFollow", "resSpread", "resDrift", "colorWow",
+                                 "resStretch", "resCurve", "resSnap", "resOffset" };
     rig.silt.randomAmount.store (1.0f);
     for (const auto& [character, sizeLow, sizeHigh] : { std::tuple { 1, 80.0f, 800.0f }, std::tuple { 2, 20.0f, 180.0f }, std::tuple { 3, 30.0f, 500.0f } })
     {

@@ -202,7 +202,7 @@ void ChainView::paint (juce::Graphics& g)
         auto status = top.withTop (nameArea.getBottom()).withTrimmedBottom (4.0f).reduced (6.0f, 0.0f);
         g.setFont (kit::label (16.0f));
         g.setColour (working || lifted || open ? onTop : inkSoft);
-        const juce::String half = open && module == SiltProcessor::moduleResonator ? (openHalf == 0 ? " 1/2" : " 2/2") : "";
+        const juce::String half = open && module == SiltProcessor::moduleResonator ? " " + juce::String (openHalf + 1) + "/" + juce::String (SiltProcessor::numResonatorHalves) : "";
         g.drawText (shortName (module) + half, nameArea, juce::Justification::centredBottom);
         if (working)
         {

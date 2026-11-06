@@ -51,7 +51,7 @@ fifths with no scale; HARMONICS; BELL partials), RANGE (1–8 octaves the bands 
 DECAY (how long the bands ring once the sound stops, 50 ms–20 s; while sound comes in
 they stay narrow and pitched, so short decays still colour it), BRIGHT (how much quieter and shorter the high bands
 are), WIDTH (bands alternate left and right), FOLLOW (tune to the last note played; TUNE's knob becomes SHIFT, which moves the bands up to three octaves either way without leaving the key: onto the PITCH page's scale, or with no scale onto the note's own fifths and octaves),
-MIX (0 is an exact bypass). The rings are held to the input's peaks, so a tone
+MIX (0 is an exact bypass). A third page (press RES again) reshapes the series: STRETCH squeezes the top of the bank down towards metal or pulls it up, CURVE sets where along the bank that acts, SNAP pulls every mode back to whole-number tuning, OFFSET retunes every other mode by up to an octave; RIPPLE, DEPTH and SWEEP lay a moving highlight over the bank, picking out peaks without changing their tuning. The rings are held to the input's peaks, so a tone
 right on a band can't run away and a short hit isn't crushed; anything left over saturates softly rather than clips.
 
 **FILTER page** (after the resonator): MODE (OFF, an exact bypass; 12 or 24 dB/oct),

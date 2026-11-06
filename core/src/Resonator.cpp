@@ -28,6 +28,17 @@ double Resonator::levelAt (double ratio, double bright) noexcept
     return std::pow (ratio, -1.5 * (1.0 - std::clamp (bright, 0.0, 1.0)));
 }
 
+double Resonator::rippleAt (double ratio, double top, const ResonatorParams& p) noexcept
+{
+    const double depth = std::clamp ((double) p.rippleDepth, 0.0, 1.0);
+    if (depth <= 0.0)
+        return 1.0;
+    // Evenly up the octaves, so a peak spends as long on the low modes as the high ones.
+    const double along = top > 1.0 ? std::log2 (std::max (ratio, 1.0)) / std::log2 (top) : 0.0;
+    const double wave = 0.5 + 0.5 * std::cos (2.0 * pi * ((double) p.ripple * along - (double) p.sweep));
+    return std::pow (wave, depth * 8.0);
+}
+
 double Resonator::ringAt (double ratio, double bright, double damp) noexcept
 {
     return std::pow (ratio, -0.7 * (1.0 - std::clamp (bright, 0.0, 1.0)) - 1.5 * damp);
@@ -119,6 +130,27 @@ int Resonator::bandRatios (const ResonatorParams& p, std::array<double, maxBands
         const int from = n < 2 ? 0 : (int) std::lround ((double) i * (count - 1) / (n - 1));
         ratios[(size_t) i] = candidates[(size_t) from];
     }
+
+    // Page 3: the series reshaped, from the root up.
+    const double stretch = std::clamp ((double) p.stretch, -1.0, 1.0);
+    const double snap = std::clamp ((double) p.snap, 0.0, 1.0);
+    const double offset = std::clamp ((double) p.offset, -12.0, 12.0);
+    if (stretch != 0.0 || snap > 0.0 || offset != 0.0)
+    {
+        const double power = std::pow (4.0, std::clamp ((double) p.stretchCurve, -1.0, 1.0));
+        const double offsetRatio = std::pow (2.0, offset / 12.0);
+        for (int i = 0; i < n; ++i)
+        {
+            auto& r = ratios[(size_t) i];
+            if (stretch != 0.0 && n > 1)
+                r *= std::pow (2.0, 3.0 * stretch * std::pow ((double) i / (n - 1), power));
+            if (snap > 0.0)
+                r += (std::max (1.0, std::round (r)) - r) * snap;
+            if (i % 2 == 1)
+                r *= offsetRatio;
+        }
+        std::sort (ratios.begin(), ratios.begin() + n);   // squeezed hard, they can cross
+    }
     return n;
 }
 
@@ -204,6 +236,13 @@ void Resonator::updateCoefficients (const ResonatorParams& target, bool snap) no
     glideTo (smoothed.oddEven, target.oddEven);
     glideTo (smoothed.drive, target.drive);
     glideTo (smoothed.damp, target.damp);
+    glideTo (smoothed.stretch, target.stretch);
+    glideTo (smoothed.stretchCurve, target.stretchCurve);
+    glideTo (smoothed.snap, target.snap);
+    glideTo (smoothed.offset, target.offset);
+    glideTo (smoothed.rippleDepth, target.rippleDepth);
+    smoothed.ripple = target.ripple;
+    glideTo (smoothed.sweep, target.sweep);
     smoothed.driftRate = target.driftRate;
     smoothed.bandCount = target.bandCount;
     smoothed.rootNote = target.rootNote;   // the band frequencies glide instead
@@ -237,10 +276,11 @@ void Resonator::updateCoefficients (const ResonatorParams& target, bool snap) no
         ++n;
 
     // Shared across the bank, so the level doesn't change with how many modes there are.
+    const double top = n > 0 ? ratios[(size_t) n - 1] : 1.0;
     double levelSum = 0.0;
     for (int i = 0; i < n; ++i)
     {
-        const double level = levelAt (ratios[(size_t) i], bright);
+        const double level = levelAt (ratios[(size_t) i], bright) * rippleAt (ratios[(size_t) i], top, p);
         levelSum += level * level;
     }
     const double perBank = bankLevel / std::sqrt (std::max (levelSum, 1.0e-12));
@@ -298,7 +338,7 @@ void Resonator::updateCoefficients (const ResonatorParams& target, bool snap) no
             // Levels by the held width, so the choke doesn't jump the level as sound stops.
             const double strength = std::pow (2.0 * pi * heldWidth / sampleRate, widthExponent);
             const double against = i % 2 == 0 ? std::max (0.0, oddEven) : std::max (0.0, -oddEven);   // ODD/EVEN turns the other set down
-            const double level = perBank * strength * levelAt (ratio, bright) * wander * (1.0 - against);
+            const double level = perBank * strength * levelAt (ratio, bright) * rippleAt (ratio, top, p) * wander * (1.0 - against);
             const double pan = (i % 2 == 0 ? -1.0 : 1.0) * width * (n > 1 ? 1.0 : 0.0);
             const double angle = (pan + 1.0) * pi / 4.0;
             targetLeft = level * std::cos (angle) * std::sqrt (2.0);
