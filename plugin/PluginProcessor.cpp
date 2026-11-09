@@ -3239,7 +3239,7 @@ void SiltProcessor::getStateInformation (juce::MemoryBlock& destData)
     {
         state.setProperty ("editorWidth", editorWidth.load(), nullptr);
         state.setProperty ("editorHeight", editorHeight.load(), nullptr);
-        state.setProperty ("layout", juce::String (layoutWell.load()) + "," + juce::String (layoutSide.load()), nullptr);
+        state.setProperty ("layout", juce::String (layoutWell.load()), nullptr);
     }
 
     juce::MemoryBlock flac;
@@ -3343,11 +3343,8 @@ void SiltProcessor::setStateInformation (const void* data, int sizeInBytes)
         randomExcluded = juce::StringArray::fromTokens (tree.getProperty ("randomExcluded").toString(), ",", "");
     editorWidth.store ((int) tree.getProperty ("editorWidth", 0));
     editorHeight.store ((int) tree.getProperty ("editorHeight", 0));
-    if (const auto layout = juce::StringArray::fromTokens (tree.getProperty ("layout").toString(), ",", ""); layout.size() == 2)
-    {
+    if (const auto layout = juce::StringArray::fromTokens (tree.getProperty ("layout").toString(), ",", ""); ! layout.isEmpty())
         layoutWell.store (juce::jlimit (0.1f, 0.9f, layout[0].getFloatValue()));
-        layoutSide.store (juce::jlimit (0.1f, 0.5f, layout[1].getFloatValue()));
-    }
 
     if constexpr (! isInstrument)
         return;   // Silt FX has no sample (a state from before it went LIVE only may carry one)

@@ -67,7 +67,6 @@ public:
     juce::String displayText() const { return statusText(); }     // for tests: what the LCD says
     void showHelpFor (const juce::String& id);                     // hover help for a part (empty: none)
     juce::Slider* findKnob (const juce::String& parameterId);     // for tests
-    void dragSideColumn (int pixels);                              // the divider's drag; also for tests
     void dragScreenEdge (int pixels);                              // the same, between the screen and the knobs
     void sendMoment();                                             // the Bench's SEND: bars of the output, or the sample
     void updateBench();                                            // from the timer; also for tests
@@ -304,15 +303,15 @@ private:
     juce::Rectangle<int> header, lcdArea, pagePanel, controlRow, railArea, tray, wellArea, sourcePanel, levelsPanel, chainPanel, benchArea;
     int flexibleHeight = 0, contentWidth = 0;          // what the tiled sections share
     juce::Image backdrop;                              // the panel's still parts, drawn once per size and theme
-    std::unique_ptr<silt::ui::Divider> sideDivider, screenDivider;
-    SiltProcessor::Layout layoutAtDragStart;
+    std::unique_ptr<silt::ui::Divider> screenDivider;
+    float layoutAtDragStart = 0.0f;
     struct SlotParts { juce::Rectangle<int> label, control, under; };
     SlotParts slotParts (int slot) const;
     static bool pageHasKey (int p) { return p != silt::layout::chain; }   // the chain is on the panel
     SlotParts partsOf (const silt::layout::Entry&) const;
     void makeGrips();
     static void drawSunk (juce::Graphics&, juce::Rectangle<float> area, juce::Colour face);
-    void resetLayout (int grip);   // 0 the screen's, 1 the side column's, 2 the corner picture's
+    void resetLayout();
     int seenGeneration = -1;
     bool dragHover = false, screenWasLive = false;
     int learnSeen = -1, armedSeen = -2, modShownSeen = -1, tabTintSeen = -2;

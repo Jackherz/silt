@@ -7,6 +7,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "../plugin/PageColours.h"
+#include "../plugin/WindowVisibility.h"
 #include "../plugin/Palette.h"
 #include "../plugin/PluginEditor.h"
 #include "../plugin/Grip.h"
@@ -425,7 +427,7 @@ TEST_CASE ("The screen's grip trades height with the knobs, is kept with the ses
     CHECK_THAT (restored.layoutWell.load(), WithinAbs (rig.silt.layoutWell.load(), 1.0e-4));
 
     grip->onReset();
-    CHECK_THAT (rig.silt.layoutWell.load(), WithinAbs (SiltProcessor::defaultLayout().well, 1.0e-6));
+    CHECK_THAT (rig.silt.layoutWell.load(), WithinAbs (SiltProcessor::defaultLayoutWell, 1.0e-6));
 }
 
 TEST_CASE ("Every control on every page has a line of hover help, short enough for the display")
@@ -907,40 +909,52 @@ TEST_CASE ("The Bench: a moment an effect sent becomes the sample, and the sampl
     folderFile.getFile().deleteRecursively();
 }
 
-TEST_CASE ("The right column resizes from the gutter: dragging left widens it, and it stops at its limits")
+TEST_CASE ("The chain sits in a strip above the screen, and the screen runs the full width")
 {
     EditorRig rig;
     silt::ui::ChainView* chain = nullptr;
-    silt::ui::Divider* divider = nullptr;
+    silt::ui::GrainScreen* screen = nullptr;
     for (auto* child : rig.editor->getChildren())
     {
         if (auto* c = dynamic_cast<silt::ui::ChainView*> (child))
             chain = c;
-        if (auto* d = dynamic_cast<silt::ui::Divider*> (child); d != nullptr && d->getMouseCursor() == juce::MouseCursor::LeftRightResizeCursor)
-            if (divider == nullptr || d->getX() > divider->getX())
-                divider = d;   // the right column's, not the modulators'
+        if (auto* g = dynamic_cast<silt::ui::GrainScreen*> (child))
+            screen = g;
     }
     REQUIRE (chain != nullptr);
-    REQUIRE (divider != nullptr);
-    const int before = chain->getWidth();
+    REQUIRE (screen != nullptr);
+    for (const auto& size : { std::pair (1000, 780), std::pair (1200, 820), std::pair (1800, 1200) })
+    {
+        rig.editor->setSize (size.first, size.second);
+        CHECK (chain->getBottom() < screen->getY());
+        CHECK (screen->getX() == 24);
+        CHECK (screen->getRight() == size.first - 24);
+        CHECK (screen->getHeight() >= 280);
+    }
+}
 
-    divider->onStart();
-    rig.editor->dragSideColumn (-120);
-    CHECK (chain->getWidth() == before + 120);
-    CHECK (divider->getRight() < chain->getX());
-
-    divider->onStart();
-    rig.editor->dragSideColumn (5000);
-    const int narrowest = chain->getWidth();
-    CHECK (narrowest > 180);
-    divider->onStart();
-    rig.editor->dragSideColumn (-5000);
-    CHECK (chain->getWidth() > before);
-    CHECK (rig.editor->getWidth() / 2 >= chain->getWidth());
-
-    // Back to where it opens; a saved width comes back with the set.
-    divider->onReset();
-    CHECK (chain->getWidth() == before);
+TEST_CASE ("Every page's colour reads on the panel in every theme, and the pages' colours differ")
+{
+    const auto luminance = [] (juce::Colour c)
+    {
+        const auto channel = [] (float v) { return v <= 0.03928f ? v / 12.92f : std::pow ((v + 0.055f) / 1.055f, 2.4f); };
+        return 0.2126f * channel (c.getFloatRed()) + 0.7152f * channel (c.getFloatGreen()) + 0.0722f * channel (c.getFloatBlue());
+    };
+    const int before = silt::ui::currentThemeIndex();
+    for (int theme = 0; theme < (int) silt::ui::themes().size(); ++theme)
+    {
+        silt::ui::applyTheme (theme);
+        for (int page = 0; page < silt::layout::numPages; ++page)
+        {
+            const float a = luminance (silt::ui::pageColour (page)), b = luminance (silt::ui::stock().panel);
+            CAPTURE (theme, page);
+            CHECK ((juce::jmax (a, b) + 0.05f) / (juce::jmin (a, b) + 0.05f) >= 3.0f);
+        }
+        for (int page = 0; page < silt::layout::mod; ++page)
+            for (int other = page + 1; other < silt::layout::mod; ++other)
+                CHECK (silt::ui::pageColour (page) != silt::ui::pageColour (other));
+    }
+    silt::ui::applyTheme (before);
 }
 
 TEST_CASE ("The Bench: SEND records bars of the exact output and sends them when they're in")
@@ -1100,7 +1114,11 @@ TEST_CASE ("Frame rate: pictures that move keep moving with no notes playing", "
     editor.setOpaque (true);
     editor.addToDesktop (juce::ComponentPeer::windowHasTitleBar);
     editor.setVisible (true);
-    editor.toFront (false);
+    juce::Process::makeForegroundProcess();
+    editor.toFront (true);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (500);
+    // Behind another window the panel pauses on purpose, so nothing here would mean anything.
+    REQUIRE (silt::ui::windowIsSeen (editor));
 
     const auto bounds = editor.getLocalBounds();
     juce::AudioBuffer<float> buffer (juce::jmax (silt.getTotalNumInputChannels(), silt.getTotalNumOutputChannels()), 128);
@@ -1128,7 +1146,7 @@ TEST_CASE ("Frame rate: pictures that move keep moving with no notes playing", "
         silt.currentPage.store (silt::layout::mod);
         Probe probe;
         editor.addAndMakeVisible (probe);
-        probe.setBounds (bounds.getWidth() * 3 / 5, bounds.getHeight() / 2 - 80, 40, 40);   // over the screen's corner picture
+        probe.setBounds (bounds.getWidth() * 4 / 5, bounds.getHeight() / 2 - 20, 40, 40);   // over the screen's corner picture
         countFor (probe, 5.0);   // past where any trails would have faded
         const double perSecond = countFor (probe, 2.0);
         INFO (perSecond << " frames a second");

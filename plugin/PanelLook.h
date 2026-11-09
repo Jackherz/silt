@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PageColours.h"
 #include "Palette.h"
 
 #include <functional>
@@ -22,6 +23,21 @@ public:
             const auto box = juce::Rectangle<int> (x, y, w, h).toFloat();
             drawModulation (g, slider, box.getCentre(), kit::Look::knobOuterRadius (box) + 2.0f, pos);
         }
+    }
+
+    // A page's key wears its colour: a strip along the top, and the whole key while it's open.
+    void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour& background, bool hover, bool down) override
+    {
+        kit::Look::drawButtonBackground (g, b, background, hover, down);
+        const auto& properties = b.getProperties();
+        if (! properties.contains ("page"))
+            return;
+        const auto colour = pageColour ((int) properties["page"]);
+        if (b.getToggleState())
+            g.setColour (colour);
+        else
+            g.setColour (colour.withAlpha (0.85f));
+        g.fillRect (b.getToggleState() ? b.getLocalBounds().withTrimmedRight (1) : b.getLocalBounds().withTrimmedRight (1).removeFromTop (3));
     }
 
     // Draws a knob's modulation over it (the editor knows the routes).

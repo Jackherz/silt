@@ -1,7 +1,10 @@
 #include "ChainView.h"
+#include "PageColours.h"
+#include "PageLayout.h"
 #include "Palette.h"
 
 using namespace silt::ui;
+namespace layout = silt::layout;
 
 namespace
 {
@@ -13,6 +16,21 @@ const char* shortName (int module)
 {
     static const char* names[] { "RES", "FILTER", "COLOR", "SPACE" };
     return names[juce::jlimit (0, 3, module)];
+}
+
+// A module wears its page's colour.
+juce::Colour moduleColour (int module)
+{
+    static constexpr int pages[] { layout::resonator, layout::filter, layout::color, layout::space };
+    return pageColour (pages[juce::jlimit (0, 3, module)]);
+}
+
+// The switch takes the right of a block, the rest opens its page.
+constexpr float switchShare = 0.36f;
+
+juce::Rectangle<float> switchIn (juce::Rectangle<float> block)
+{
+    return block.withTrimmedLeft (block.getWidth() * (1.0f - switchShare)).reduced (3.0f, 4.0f);
 }
 } // namespace
 
@@ -133,8 +151,7 @@ juce::Rectangle<float> ChainView::blockArea (int position) const
 
 juce::Rectangle<float> ChainView::switchArea (int position) const
 {
-    const auto r = blockArea (position);
-    return r.withTrimmedTop (r.getHeight() * 0.52f).reduced (5.0f, 4.0f);
+    return switchIn (blockArea (position).withTrimmedRight (2.0f).withTrimmedBottom (2.0f));
 }
 
 int ChainView::positionAt (float x) const
@@ -189,37 +206,43 @@ void ChainView::paint (juce::Graphics& g)
         g.fillRect (face);
         g.setColour (working || lifted || open ? ink : inkSoft.withAlpha (0.5f));
         g.drawRect (face, working || lifted || open ? 1.2f : 1.0f);
-        // The top half opens its page, so the open page's block shows as a held key.
-        const auto top = face.withBottom (face.getY() + face.getHeight() * 0.5f);
+        // The left of it opens its page, so the open page's block shows as a held key, in its colour.
+        const auto colour = moduleColour (module);
+        const auto openArea = face.withTrimmedRight (face.getWidth() * switchShare);
         if (open)
         {
-            g.setColour (ink);
-            g.fillRect (top);
+            g.setColour (colour);
+            g.fillRect (openArea);
+        }
+        else if (on)
+        {
+            g.setColour (working ? colour : colour.withAlpha (0.45f));
+            g.fillRect (face.withWidth (3.0f));
         }
         const auto onTop = lifted || open ? stock().panel : ink;
         // Below the name: why it's idle, or how much it's changing the sound.
-        const auto nameArea = top.withTrimmedBottom (top.getHeight() * 0.3f);
-        auto status = top.withTop (nameArea.getBottom()).withTrimmedBottom (4.0f).reduced (6.0f, 0.0f);
+        auto text = openArea.withTrimmedLeft (5.0f).withTrimmedRight (2.0f);
+        const auto nameArea = text.removeFromTop (text.getHeight() * 0.56f);
         g.setFont (kit::label (16.0f));
         g.setColour (working || lifted || open ? onTop : inkSoft);
         const juce::String half = open && module == SiltProcessor::moduleResonator ? " " + juce::String (openHalf + 1) + "/" + juce::String (SiltProcessor::numResonatorHalves) : "";
-        g.drawText (shortName (module) + half, nameArea, juce::Justification::centredBottom);
+        g.drawFittedText (shortName (module) + half, nameArea.toNearestInt(), juce::Justification::centredBottom, 1, 0.8f);
         if (working)
         {
-            const auto track = status.withSizeKeepingCentre (status.getWidth(), 5.0f);
+            const auto track = text.withSizeKeepingCentre (text.getWidth() - 4.0f, 5.0f);
             g.setColour (onTop.withAlpha (0.25f));
             g.fillRect (track);
-            g.setColour (onTop);
+            g.setColour (open || lifted ? onTop : colour);
             g.fillRect (track.withWidth (track.getWidth() * changeShown[i]));
         }
         else if (on)
         {
-            g.setFont (kit::label (10.0f));
+            g.setFont (kit::label (11.0f));
             g.setColour (open || lifted ? onTop.withAlpha (0.8f) : inkSoft);
-            g.drawText (idleReason (silt, module), status, juce::Justification::centred);
+            g.drawFittedText (idleReason (silt, module), text.toNearestInt(), juce::Justification::centred, 1, 0.8f);
         }
         // The switch says one thing: on or off.
-        const auto box = face.withTrimmedTop (face.getHeight() * 0.52f).reduced (5.0f, 4.0f);
+        const auto box = switchIn (face);
         g.setColour (lifted ? stock().panel : on ? ink : inkSoft);
         if (on && ! lifted)
             g.fillRect (box);

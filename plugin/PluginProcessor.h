@@ -318,9 +318,8 @@ public:
     // takes, how much of the width the mod rail takes, and within the screen
     // how much of its height the grain field (and the corner picture) takes
     // and how much of its width the corner picture takes.
-    struct Layout { float well = 0.36f, side = 0.27f; };
-    static Layout defaultLayout() { return {}; }
-    std::atomic<float> layoutWell { 0.36f }, layoutSide { 0.27f };
+    static constexpr float defaultLayoutWell = 0.36f;
+    std::atomic<float> layoutWell { defaultLayoutWell };
     std::atomic<bool> delayForced { false };   // SIZE (and pitch) reach further back than DELAY asks: DELAY has no say
 
     // Read by the editor on the message thread.
