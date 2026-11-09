@@ -28,7 +28,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          token: ${{ secrets.KIT_TOKEN }}   # the kit is a private repository
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSILT_CORE_ONLY=ON
       - name: Build
@@ -48,7 +47,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          token: ${{ secrets.KIT_TOKEN }}   # the kit is a private repository
 
       # JUCE, clap-juce-extensions and Catch2, fetched once per CMakeLists.txt change.
       - uses: actions/cache@v4
