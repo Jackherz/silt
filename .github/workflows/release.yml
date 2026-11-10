@@ -1,0 +1,57 @@
+name: release
+
+# Builds the macOS installer package for Silt and Silt FX (Universal: VST3, Audio Unit,
+# CLAP, standalone). A tag like v0.2.0 makes a draft release with the package attached,
+# to check and publish by hand. Run it from the Actions tab to get the package as an
+# artifact only.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - uses: actions/cache@v4
+        with:
+          path: .deps
+          key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ccache-release-${{ runner.os }}
+          max-size: 1G
+
+      - name: Version
+        id: version
+        run: echo "version=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
+
+      - name: Build the installer package
+        env:
+          SILT_CMAKE_ARGS: >-
+            -DFETCHCONTENT_BASE_DIR=${{ github.workspace }}/.deps
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+            -DCMAKE_OBJC_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+        run: bash scripts/package-macos.sh "${{ steps.version.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Silt-macOS
+          path: release/*.pkg
+
+      - name: Draft a release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/*.pkg --draft --title "Silt $GITHUB_REF_NAME" --generate-notes

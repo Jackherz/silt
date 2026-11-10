@@ -7,7 +7,7 @@
 #
 # Plan and decisions: ../granular-sampler-vst-research/09-implementation-plan.md
 cmake_minimum_required(VERSION 3.22)
-project(Silt VERSION 0.0.1 LANGUAGES C CXX)
+project(Silt VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

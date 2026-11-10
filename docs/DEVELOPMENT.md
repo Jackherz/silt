@@ -56,6 +56,16 @@ JUCE-free core and its tests.
 
 A host keeps the plug-in it first loaded until it quits: restart it after a rebuild.
 
+## Release
+
+`bash scripts/package-macos.sh [VERSION]` builds Silt and Silt FX Universal in
+`build-release/`, signs every bundle ad hoc and makes `release/Silt-VERSION-macOS.pkg`
+(VST3, AU, CLAP and standalone for both). The release workflow
+([release.yml](../.github/workflows/release.yml)) runs it on GitHub: pushing a tag such as
+`v0.2.0` makes a draft release with the package attached, to check and publish by hand.
+Bump `project(Silt VERSION ...)` in `CMakeLists.txt` first: hosts and the installer read
+the bundles' version from it.
+
 ## Test
 
 ```bash
