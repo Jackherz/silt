@@ -38,11 +38,26 @@ Everything is described control by control in the [manual](docs/MANUAL.md).
 
 ## Status
 
-Pre-release (0.0.1). It's developed and tested in Ableton Live 12 on macOS; other hosts
-are untested and a Windows build is in progress. There are no downloadable builds yet:
-build it from source.
+Version 0.1.0. It's developed and tested in Ableton Live 12 on macOS; other hosts
+are untested and a Windows build is in progress.
 
-## Build
+## Install
+
+Download `Silt-<version>-macOS.pkg` from the
+[latest release](https://github.com/Jackherz/silt/releases/latest). It works on Apple
+Silicon and Intel Macs, and installs Silt and Silt FX as VST3, Audio Unit and CLAP
+plug-ins and as standalone apps. It's free, and not notarised by Apple, so macOS asks
+you to allow it once:
+
+1. Open the package. macOS says it can't verify it: click **Done**.
+2. Open **System Settings > Privacy & Security**, scroll to *Security*, and click
+   **Open Anyway** beside the message about Silt. Confirm with your password.
+3. The installer opens. Install, then restart your DAW and rescan its plug-ins.
+
+Silt takes its recording input from a sidechain: in Live, pick the source track in the
+device's sidechain section.
+
+## Build from source
 
 Needs macOS with the Xcode command line tools, CMake 3.22+ and Ninja. JUCE 8 and the
 other dependencies are fetched when you configure.
@@ -55,10 +70,7 @@ cmake --build build
 ```
 
 The build copies Silt and Silt FX into `~/Library/Audio/Plug-Ins/`. Restart your DAW
-and rescan. Silt takes its recording input from a sidechain: in Live, pick the source
-track in the device's sidechain section.
-
-Tests, validation and the code layout are in [DEVELOPMENT.md](docs/DEVELOPMENT.md).
+and rescan. `bash scripts/package-macos.sh` makes the installer package instead. Tests, validation and the code layout are in [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Part of Glyph Audio
 
@@ -68,6 +80,6 @@ Silt is the instrument of a small family of plug-ins drawn on one shared panel k
 
 ## Licence
 
-No licence has been chosen yet, so the code is all rights reserved for now. The fonts
-in `kit/fonts/` are under the SIL Open Font License. Silt builds with
-[JUCE](https://juce.com), which is licensed separately (AGPLv3 or commercial).
+Silt is free software under the GNU GPL v3 ([LICENSE](LICENSE)), factory samples included.
+It uses [JUCE](https://juce.com) under the AGPLv3; that and the other components'
+licences are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
