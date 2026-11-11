@@ -196,16 +196,13 @@ void ChainView::paint (juce::Graphics& g)
         const bool on = shownOn[i], open = module == openModule;
         const bool working = shownActive[i] || (on && changeShown[i] > 0.0f);   // the meter knows about modulated mixes too
         const auto face = r.withTrimmedRight (2.0f).withTrimmedBottom (2.0f);
-        // Standing out is for a block that's doing something: the rest sit back, shadow and frame.
-        if (working || lifted || open)
-        {
-            g.setColour (stock().shadow);
-            g.fillRect (face.translated (2.0f, 2.0f));
-        }
-        g.setColour (lifted ? ink : stock().panel);
+        // Standing out is for a block that's doing something: the rest sit back, fainter.
+        const juce::Graphics::ScopedSaveState saved (g);
+        juce::Path shape;
+        shape.addRoundedRectangle (face, 5.0f);
+        g.reduceClipRegion (shape);
+        g.setColour (lifted ? ink : ink.withAlpha (working || open ? 0.14f : 0.06f));
         g.fillRect (face);
-        g.setColour (working || lifted || open ? ink : inkSoft.withAlpha (0.5f));
-        g.drawRect (face, working || lifted || open ? 1.2f : 1.0f);
         // The left of it opens its page, so the open page's block shows as a held key, in its colour.
         const auto colour = moduleColour (module);
         const auto openArea = face.withTrimmedRight (face.getWidth() * switchShare);
@@ -245,9 +242,12 @@ void ChainView::paint (juce::Graphics& g)
         const auto box = switchIn (face);
         g.setColour (lifted ? stock().panel : on ? ink : inkSoft);
         if (on && ! lifted)
-            g.fillRect (box);
+            g.fillRoundedRectangle (box.reduced (2.0f), 3.0f);
         else
-            g.drawRect (box, 1.0f);
+        {
+            g.setColour ((lifted ? stock().panel : ink).withAlpha (0.12f));
+            g.fillRoundedRectangle (box.reduced (2.0f), 3.0f);
+        }
         g.setFont (kit::label (14.0f));
         g.setColour (lifted ? stock().panel : on ? stock().panel : inkSoft);
         g.drawText (on ? "ON" : "OFF", box, juce::Justification::centred);
@@ -259,8 +259,8 @@ void ChainView::paint (juce::Graphics& g)
             block (blockArea (p), order[(size_t) p], false);
         else
         {
-            g.setColour (inkSoft);   // where it will land
-            g.drawRect (blockArea (p).withTrimmedRight (2.0f).withTrimmedBottom (2.0f), 1.0f);
+            g.setColour (ink.withAlpha (0.1f));   // where it will land
+            g.fillRoundedRectangle (blockArea (p).withTrimmedRight (2.0f).withTrimmedBottom (2.0f), 5.0f);
         }
     if (dragging >= 0)
         block (blockArea (0).withX (dragX), draggedModule, true);

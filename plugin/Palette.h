@@ -104,12 +104,38 @@ inline void applyTheme (int index)
     k.lit = rust;
 }
 
-// The type comes from the kit: one face at the sizes the panel used to ask of two,
-// scaled because VT323 reads small for its height.
+// Two faces: names and labels in the system's sans-serif, a little tracked for capitals;
+// values and readouts in the kit's VT323, a monospace, scaled because it reads small for
+// its height.
 enum class Weight { light, regular, medium };
 
-inline juce::Font panelFont (float size, Weight = Weight::regular, float = 0.12f) { return kit::label (size * 1.4f); }
+inline juce::Font panelFont (float size, Weight = Weight::regular, float tracking = 0.12f)
+{
+    return juce::Font (juce::FontOptions().withName (juce::Font::getDefaultSansSerifFontName()).withHeight (size * 1.08f))
+        .withExtraKerningFactor (tracking * 0.5f);
+}
 inline juce::Font monoFont (float size, Weight = Weight::regular) { return kit::label (size * 1.4f); }
+
+// A surface: a filled, rounded shape with no frame and no shadow. What panels, tiles and
+// windows are drawn as.
+constexpr float surfaceCorner = 6.0f;
+inline void fillSurface (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour colour, float corner = surfaceCorner)
+{
+    g.setColour (colour);
+    if (! colour.isOpaque() || r.getWidth() * r.getHeight() < 20000.0f)
+    {
+        g.fillRoundedRectangle (r, corner);
+        return;
+    }
+    // A big one, every frame: plain rectangles are far cheaper than one large rounded path,
+    // so only the four corners are curves.
+    g.fillRect (r.reduced (corner, 0.0f));
+    g.fillRect (r.withWidth (corner).reduced (0.0f, corner));
+    g.fillRect (r.withLeft (r.getRight() - corner).reduced (0.0f, corner));
+    for (const float x : { r.getX(), r.getRight() - 2.0f * corner })
+        for (const float y : { r.getY(), r.getBottom() - 2.0f * corner })
+            g.fillEllipse (x, y, 2.0f * corner, 2.0f * corner);
+}
 
 // The four-point sparkle glyph (labels, the wordmark, the display).
 inline void drawSparkle (juce::Graphics& g, juce::Point<float> centre, float size, juce::Colour colour)

@@ -74,22 +74,9 @@ void ModChip::paint (juce::Graphics& g)
     const int routes = silt.routeCount (m);
     auto r = getLocalBounds().toFloat().reduced (1.5f);
 
-    // Only a trace of a frame until it matters; armed: its colour; shown on MOD: ink.
-    if (muted)
-    {
-        g.setColour (ink.withAlpha (0.04f));
-        g.fillRect (r);
-    }
-    if (armed)
-    {
-        g.setColour (colour.base);
-        g.drawRect (r, 2.0f);
-    }
-    else
-    {
-        g.setColour (ink.withAlpha (selected ? 0.8f : isMouseOver (true) ? 0.32f : 0.12f));
-        g.drawRect (r, selected ? 1.4f : 1.0f);
-    }
+    // A faint plate until it matters; armed: tinted its colour; shown on MOD: stronger.
+    g.setColour (armed ? colour.base.withAlpha (0.3f) : ink.withAlpha (selected ? 0.16f : isMouseOver (true) ? 0.1f : 0.05f));
+    g.fillRoundedRectangle (r, 4.0f);
 
     auto area = getLocalBounds().reduced (5, 3);
     auto top = area.removeFromTop (juce::jmin (14, area.getHeight() / 2));
@@ -360,9 +347,9 @@ void ModBanner::paint (juce::Graphics& g)
     const auto& colour = modColour (m);
     const bool muted = ! silt.isModulatorEnabled (m);
     auto r = getLocalBounds().toFloat().reduced (2.0f);
-    // Its colour along the edge: the rail's chip already carries it at full strength.
-    g.setColour (muted ? colour.dim : colour.base);
-    g.drawRect (r, 1.5f);
+    // Tinted its colour: the rail's chip already carries it at full strength.
+    g.setColour ((muted ? colour.dim : colour.base).withAlpha (0.22f));
+    g.fillRoundedRectangle (r, 5.0f);
     auto text = r.reduced (6.0f, 4.0f);
     g.setColour (muted ? inkSoft : ink);
     g.setFont (monoFont (18.0f));
@@ -605,8 +592,6 @@ void RouteList::paint (juce::Graphics& g)
 {
     g.setColour (bone);
     g.fillRect (getLocalBounds());
-    g.setColour (ink.withAlpha (0.35f));
-    g.drawRect (getLocalBounds(), 1);
     g.setColour (ink);
     g.setFont (panelFont (12.0f));
     g.drawText ("MOD ROUTES", getLocalBounds().reduced (10, 4).removeFromTop (22), juce::Justification::centredLeft);

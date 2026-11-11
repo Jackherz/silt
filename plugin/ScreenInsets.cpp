@@ -181,10 +181,7 @@ float animationSeconds() { return (float) (juce::Time::getMillisecondCounter() %
 juce::Rectangle<float> frame (juce::Graphics& g, juce::Rectangle<float> area, const juce::String& title)
 {
     auto r = area.reduced (1.0f);
-    g.setColour (deepBack());
-    g.fillRect (r);
-    g.setColour (screenLight);
-    g.drawRect (r, 1.0f);
+    fillSurface (g, r, deepBack(), 4.0f);
     auto inside = r.reduced (8.0f, 4.0f);
     g.setColour (screenLime);
     g.setFont (monoFont (10.0f));

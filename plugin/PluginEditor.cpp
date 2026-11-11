@@ -394,6 +394,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
     // The Bench: SEND records what you hear and passes it on. An effect can send here,
     // too, and the instrument can take that as its sample. Silt FX has no sample to take into.
     benchStrip = std::make_unique<kit::bench::Strip> (stock(), SiltProcessor::isInstrument ? "I-01" : "I-01 FX", SiltProcessor::isInstrument ? "SILT" : "SILT FX", "SILT");
+    benchStrip->frameless = true;
     benchStrip->reservedRight = 132;
     benchStrip->onTake = [this] { takeMoment(); };
     benchStrip->onSend = [this] { sendMoment(); };
@@ -1911,16 +1912,13 @@ void SiltEditor::timerCallback()
     }
 }
 
-// One of the strip's panels: a sheet with its name turned up a narrow spine, to spend the
+// One of the strip's panels: a surface with its name turned up its left edge, to spend the
 // height on the controls.
 static void drawStripPanel (juce::Graphics& g, juce::Rectangle<int> r, const kit::Stock& s, const juce::String& name)
 {
-    kit::drawSheet (g, r, s);
+    fillSurface (g, r.toFloat(), s.panel);
     const auto spine = r.withWidth (spineWidth).reduced (1);
-    g.setColour (s.head);
-    g.fillRect (spine);
-    g.setColour (s.ink);
-    g.drawVerticalLine (spine.getRight(), (float) r.getY(), (float) r.getBottom());
+    g.setColour (s.soft);
     const juce::Graphics::ScopedSaveState saved (g);
     g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, spine.toFloat().getCentreX(), spine.toFloat().getCentreY()));
     g.setFont (kit::label (15.0f));
@@ -1930,21 +1928,29 @@ static void drawStripPanel (juce::Graphics& g, juce::Rectangle<int> r, const kit
 // The readout at the strip's height. Long messages (hover help) take the whole window.
 static void drawStripReadout (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& status)
 {
-    if (status.length() <= 26)
+    const auto& s = stock();
+    fillSurface (g, r.toFloat(), s.sunk);
+    g.setColour (s.onSunk);
+    if (status.length() > 26)
     {
-        kit::drawReadout (g, r, stock(), juce::String (JucePlugin_Name).toUpperCase(), "LIVE", status, {}, false);
+        g.setFont (kit::label (17.0f));
+        g.drawFittedText (status, r.reduced (10, 5), juce::Justification::centredLeft, 3, 0.8f);
         return;
     }
-    const auto& s = stock();
-    g.setColour (s.shadow);
-    g.fillRect (r.translated (3, 3));
+    // A title line with a status chip, and the figure under it.
+    auto inner = r.reduced (10, 6);
+    auto top = inner.removeFromTop (16);
+    const auto small = kit::label (15.0f);
+    g.setFont (small);
+    const auto chip = top.removeFromRight (kit::textWidth (small, "LIVE") + 10);
+    g.fillRoundedRectangle (chip.toFloat(), 3.0f);
     g.setColour (s.sunk);
-    g.fillRect (r);
-    g.setColour (s.ink);
-    g.drawRect (r, 1);
+    g.drawText ("LIVE", chip, juce::Justification::centred);
+    g.setColour (s.onSunk.withAlpha (0.75f));
+    g.drawFittedText (juce::String (JucePlugin_Name).toUpperCase(), top.withTrimmedRight (8), juce::Justification::centredLeft, 1, 0.8f);
     g.setColour (s.onSunk);
-    g.setFont (kit::label (17.0f));
-    g.drawFittedText (status, r.reduced (10, 5), juce::Justification::centredLeft, 3, 0.8f);
+    g.setFont (kit::label (28.0f));
+    g.drawFittedText (status, inner, juce::Justification::centredLeft, 1, 0.6f);
 }
 
 // One grid for the whole panel: a left column as wide as the mod rail, then
@@ -2300,17 +2306,13 @@ void SiltEditor::paint (juce::Graphics& g)
         const bool instrument = SiltProcessor::isInstrument;
         kit::drawMasthead (b, header, s, instrument ? "I-01" : "I-01 FX", s.accent, s.onAccent, juce::String (JucePlugin_Name).toUpperCase() + ".",
                            "GLYPH AUDIO", instrument ? "GRANULAR SAMPLER" : "GRANULAR, LIVE");
-        b.setColour (s.shadow);
-        b.fillRect (screen->getBounds().translated (3, 3));
         if constexpr (SiltProcessor::isInstrument)
             drawStripPanel (b, sourcePanel, s, "SOURCE");
         if (! instrument)
             drawStripPanel (b, levelsPanel, s, "LEVELS");
         drawStripPanel (b, chainPanel, s, "CHAIN");
-        // The page keys' frame, and the well.
-        for (const auto& group : keyGroups)
-            kit::drawSheet (b, group, s, 2);
-        kit::drawSheet (b, wellArea, s);
+        // The well the open page's controls sit in. The page keys need no frame of their own.
+        fillSurface (b, wellArea.toFloat(), s.panel);
     }
     {
         const juce::Graphics::ScopedSaveState saved (g);
@@ -2328,8 +2330,13 @@ void SiltEditor::paint (juce::Graphics& g)
     {
         const auto key = pageTabs[(size_t) page].getBounds();
         g.setColour (pageInk);
-        g.fillRect (key.getX(), key.getBottom(), key.getWidth() - 1, wellArea.getY() - key.getBottom());
-        g.fillRect (wellArea.withHeight (3));
+        g.fillRect (key.getX() + 1, key.getBottom() - 4, key.getWidth() - 2, wellArea.getY() - key.getBottom() + 5);
+        juce::Path band;   // the well's own rounded top edge
+        band.addRoundedRectangle ((float) wellArea.getX(), (float) wellArea.getY(), (float) wellArea.getWidth(), 3.0f + surfaceCorner,
+                                  surfaceCorner, surfaceCorner, true, true, false, false);
+        const juce::Graphics::ScopedSaveState saved (g);
+        g.reduceClipRegion (wellArea.withHeight (3));
+        g.fillPath (band);
     }
 
     // One rule, between the modulators and the knobs: the columns are clear from what's in them.
@@ -2337,7 +2344,7 @@ void SiltEditor::paint (juce::Graphics& g)
     g.drawVerticalLine (slotBounds (0).getX(), (float) controlRow.getY() + 8.0f, (float) controlRow.getBottom() - 8.0f);
 
     g.setColour (pageInk);
-    const auto labelFont = kit::label (17.0f);
+    const auto labelFont = panelFont (11.5f);
     g.setFont (labelFont);
     for (auto& c : controls)
         if (c->entry->inSlot() && c->component().isVisible())

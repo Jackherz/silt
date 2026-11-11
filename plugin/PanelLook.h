@@ -8,37 +8,96 @@
 namespace silt::ui
 {
 
-// The kit's look, plus what only Silt has: modulation rings on the knobs, and value
-// boxes under them that you can click to type in.
+// Silt's own look on the kit's: frameless rounded keys and menus, knobs inside an arc that
+// shows the value, modulation rings round them, and value boxes you can click to type in.
 class PanelLook final : public kit::Look
 {
 public:
     PanelLook() : kit::Look (stock()) {}
 
-    void drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float a0, float a1, juce::Slider& slider) override
+    // A flat disc with a pointer, inside an arc that fills to the value (from the middle
+    // on a knob whose range runs either side of zero). The modulation rings sit outside it.
+    void drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float, float, juce::Slider& slider) override
     {
-        kit::Look::drawRotarySlider (g, x, y, w, h, pos, a0, a1, slider);
-        if (drawModulation != nullptr)
+        const auto box = juce::Rectangle<int> (x, y, w, h).toFloat();
+        const float side = juce::jmin (box.getWidth(), box.getHeight()), u = side / 104.0f;
+        const auto area = box.withSizeKeepingCentre (side, side).reduced (15.0f * u);
+        const float r = area.getWidth() * 0.5f, track = r + 8.0f * u;
+        const auto c = area.getCentre();
+        const float a0 = juce::degreesToRadians (-135.0f), a1 = juce::degreesToRadians (135.0f);
+        const auto arc = [&] (float from, float to, juce::Colour colour)
         {
-            const auto box = juce::Rectangle<int> (x, y, w, h).toFloat();
-            drawModulation (g, slider, box.getCentre(), kit::Look::knobOuterRadius (box) + 2.0f, pos);
+            juce::Path path;
+            path.addCentredArc (c.x, c.y, track, track, 0.0f, a0 + from * (a1 - a0), a0 + to * (a1 - a0), true);
+            g.setColour (colour);
+            g.strokePath (path, juce::PathStrokeType (2.6f * u, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        };
+        const bool bipolar = slider.getMinimum() < 0.0 && slider.getMaximum() > 0.0;
+        const float origin = bipolar ? (float) slider.valueToProportionOfLength (0.0) : 0.0f;
+        arc (0.0f, 1.0f, s.ink.withAlpha (0.16f));
+        arc (juce::jmin (origin, pos), juce::jmax (origin, pos),
+             slider.isColourSpecified (juce::Slider::rotarySliderFillColourId) ? slider.findColour (juce::Slider::rotarySliderFillColourId)
+                                                                                : s.ink.withAlpha (slider.isMouseOverOrDragging() ? 1.0f : 0.82f));
+        g.setColour (s.shadow.withAlpha (0.45f));
+        g.fillEllipse (area.translated (0.0f, 2.0f * u));
+        g.setColour (knobFace (slider));
+        g.fillEllipse (area);
+        juce::Path pointer;
+        pointer.addRoundedRectangle (-1.5f * u, -r * 0.86f, 3.0f * u, r * 0.5f, 1.5f * u);
+        g.setColour (knobPointer (slider));
+        g.fillPath (pointer, juce::AffineTransform::rotation (a0 + pos * (a1 - a0)).translated (c));
+        if (drawModulation != nullptr)
+            drawModulation (g, slider, c, kit::Look::knobOuterRadius (box) + 2.0f, pos);
+    }
+
+    // A key is a filled, rounded plate with no frame: faint at rest, stronger under the
+    // mouse, solid while it's on. "accent" fills it in the accent; "led" keeps it faint with
+    // a light that says whether it's on; a page's key ("page") wears its colour, as a strip
+    // along the top and the whole key while it's open.
+    void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool hover, bool down) override
+    {
+        const auto& properties = b.getProperties();
+        const bool flat = properties.getWithDefault ("flat", false), led = properties.getWithDefault ("led", false);
+        const bool accent = properties.getWithDefault ("accent", false), page = properties.contains ("page");
+        const bool on = b.getToggleState() && ! led, enabled = b.isEnabled();
+        const auto r = (flat ? b.getLocalBounds() : b.getLocalBounds().withTrimmedRight (2).withTrimmedBottom (2)).toFloat().reduced (1.0f);
+        const auto tint = page ? pageColour ((int) properties["page"]) : accent ? s.accent : s.ink;
+        g.setColour (on || accent ? tint.interpolatedWith (s.panel, down ? 0.2f : hover ? 0.1f : 0.0f)
+                                  : s.ink.withAlpha (! enabled ? 0.04f : down ? 0.22f : hover ? 0.14f : 0.08f));
+        g.fillRoundedRectangle (r, corner);
+        if (page && ! on)
+        {
+            g.setColour (tint.withAlpha (0.85f));
+            g.fillRoundedRectangle (r.withHeight (3.0f), 1.5f);
+        }
+        if (led)
+        {
+            g.setColour (b.getToggleState() ? s.lit : s.ink.withAlpha (0.25f));
+            g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ r.getX() + 10.0f, r.getCentreY() }));
         }
     }
 
-    // A page's key wears its colour: a strip along the top, and the whole key while it's open.
-    void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour& background, bool hover, bool down) override
+    // A menu: the same plate, with a chevron.
+    void drawComboBox (juce::Graphics& g, int width, int height, bool, int, int, int, int, juce::ComboBox& box) override
     {
-        kit::Look::drawButtonBackground (g, b, background, hover, down);
-        const auto& properties = b.getProperties();
-        if (! properties.contains ("page"))
-            return;
-        const auto colour = pageColour ((int) properties["page"]);
-        if (b.getToggleState())
-            g.setColour (colour);
-        else
-            g.setColour (colour.withAlpha (0.85f));
-        g.fillRect (b.getToggleState() ? b.getLocalBounds().withTrimmedRight (1) : b.getLocalBounds().withTrimmedRight (1).removeFromTop (3));
+        const auto r = juce::Rectangle<float> ((float) width, (float) height).withTrimmedRight (2.0f).withTrimmedBottom (2.0f).reduced (1.0f);
+        g.setColour (s.ink.withAlpha (box.isMouseOver (true) ? 0.14f : 0.08f));
+        g.fillRoundedRectangle (r, corner);
+        const float cx = r.getRight() - r.getHeight() * 0.5f, cy = r.getCentreY();
+        juce::Path chevron;
+        chevron.startNewSubPath (cx - 3.5f, cy - 1.5f);
+        chevron.lineTo (cx, cy + 2.0f);
+        chevron.lineTo (cx + 3.5f, cy - 1.5f);
+        g.setColour (s.ink.withAlpha (0.8f));
+        g.strokePath (chevron, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
+
+    // Names in the sans face; values and readouts keep the display's monospace.
+    juce::Font getTextButtonFont (juce::TextButton&, int h) override { return panelFont (juce::jlimit (10.0f, 12.5f, (float) h * 0.42f)); }
+    juce::Font getComboBoxFont (juce::ComboBox& box) override { return panelFont (juce::jlimit (10.0f, 12.5f, (float) box.getHeight() * 0.42f)); }
+    juce::Font getPopupMenuFont() override { return panelFont (13.0f); }
+
+    static constexpr float corner = 4.0f;
 
     // Draws a knob's modulation over it (the editor knows the routes).
     std::function<void (juce::Graphics&, juce::Slider&, juce::Point<float>, float, float)> drawModulation;
@@ -52,7 +111,7 @@ public:
     static void drawSunkBox (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour face, juce::Colour)
     {
         g.setColour (face);
-        g.fillRect (r);
+        g.fillRoundedRectangle (r, 3.0f);
     }
 
     void drawLabel (juce::Graphics& g, juce::Label& label) override

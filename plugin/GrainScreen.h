@@ -459,8 +459,6 @@ private:
         g.setColour (insetBack.interpolatedWith (juce::Colours::black, 0.55f));   // as the corner pictures' ground
         g.fillRect (area.expanded (0, 2));
         const auto box = area.toFloat();
-        g.setColour (screenLight.withAlpha (0.6f));
-        g.drawRect (box, 1.0f);
         g.setColour (screenLight.withAlpha (0.35f));
         g.drawHorizontalLine (area.getCentreY(), box.getX(), box.getRight());
 
@@ -511,12 +509,9 @@ private:
 
     void paintScreen (juce::Graphics& g)
     {
-        // Flat, like the rest of the sheet: the screen's colour inside a hard frame.
+        // Flat, like the rest of the panel: the screen's colour as one rounded surface.
         auto r = getLocalBounds();
-        g.setColour (screenBlue);
-        g.fillRect (r);
-        g.setColour (frame);
-        g.drawRect (r, 2);
+        fillSurface (g, r.toFloat(), screenBlue);
         r.reduce (6, 6);
         glass = r;
 
