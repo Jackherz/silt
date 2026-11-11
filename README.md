@@ -38,7 +38,7 @@ Everything is described control by control in the [manual](docs/MANUAL.md).
 
 ## Status
 
-Version 0.1.0. It's developed and tested in Ableton Live 12 on macOS; other hosts
+Version 0.2.0. It's developed and tested in Ableton Live 12 on macOS; other hosts
 are untested and a Windows build is in progress.
 
 ## Install
