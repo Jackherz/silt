@@ -2153,13 +2153,15 @@ void SiltEditor::updateBench()
     if (now - benchCheckedAt >= 1000.0)
     {
         benchCheckedAt = now;
-        waiting = kit::bench::latest (benchChip());
+        waiting = kit::bench::latest();
     }
     const bool fresh = SiltProcessor::isInstrument && waiting.has_value() && waiting->stamp != momentTaken;
     const auto state = silt.audioName().toUpperCase();
     const bool bars = benchSource.getSelectedId() > 1;
     const juce::String text = recording == Recorder::State::waiting ? juce::String ("WAITING FOR THE NEXT BAR")
                             : recording == Recorder::State::recording ? "RECORDING " + juce::String (juce::roundToInt (silt.outputRecorder.progress() * 100.0f)) + "%"
+                            : fresh && waiting->fromChip == benchChip() && momentSent != 0 && waiting->stamp >= momentSent - 5000
+                                  ? "SENT " + juce::String (waiting->seconds, 2) + " S. TAKE TO RESAMPLE"   // what this Silt just sent
                             : fresh ? "FROM " + waiting->fromChip + " " + waiting->fromName + " / " + juce::String (waiting->seconds, 2) + " S"
                             : momentSent != 0 ? juce::String ("SENT: IT'S IN THE FOLDER") : juce::String ("NOTHING WAITING");
     benchStrip->set (state, text, busy ? "STOP" : "SEND >", busy || bars || silt.getOverview().seconds > 0.0 || silt.liveMode.load(), fresh);
@@ -2168,7 +2170,7 @@ void SiltEditor::updateBench()
 // A moment becomes the sample. Its file stays where it was sent, for the Finder.
 void SiltEditor::takeMoment()
 {
-    const auto moment = kit::bench::latest (benchChip());
+    const auto moment = kit::bench::latest();
     if (! moment.has_value())
         return;
     silt.loadFile (moment->audio);

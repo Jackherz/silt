@@ -888,10 +888,9 @@ TEST_CASE ("The Bench: a moment an effect sent becomes the sample, and the sampl
         for (int c = 0; c < 2; ++c)
             moment.setSample (c, i, 0.5f * std::sin ((float) i * 0.05f));
     REQUIRE (kit::bench::send (moment, 24000.0, "E-01", "BROOD", "BROOD"));
-    const auto sent = kit::bench::latest ("I-01");
+    const auto sent = kit::bench::latest();
     REQUIRE (sent.has_value());
-    CHECK (sent->fromChip == "E-01");
-    CHECK (! kit::bench::latest ("E-01").has_value());   // not offered back to who sent it
+    CHECK (sent->fromChip == "E-01");   // offered to anyone, the sender too: TAKE after SEND resamples
 
     rig.editor->takeMoment();
     for (int i = 0; i < 200 && ! juce::approximatelyEqual (rig.silt.getOverview().seconds, 0.5); ++i)
@@ -900,7 +899,7 @@ TEST_CASE ("The Bench: a moment an effect sent becomes the sample, and the sampl
 
     rig.editor->setBenchSource (0);
     rig.editor->sendMoment();
-    const auto back = kit::bench::latest ("E-01");
+    const auto back = kit::bench::latest();   // the newest: what Silt just sent
     REQUIRE (back.has_value());
     CHECK (back->fromName == "SILT");
     CHECK (back->audio.existsAsFile());
@@ -967,7 +966,7 @@ TEST_CASE ("The Bench: SEND records bars of the exact output and sends them when
     rig.editor->setBenchSource (4);
     rig.editor->sendMoment();
     CHECK (rig.silt.outputRecorder.state() != kit::bench::OutputRecorder::State::idle);
-    CHECK (! kit::bench::latest ("E-01").has_value());   // nothing out until it's done
+    CHECK (! kit::bench::latest().has_value());   // nothing out until it's done
 
     // Stop cancels.
     juce::AudioBuffer<float> block (juce::jmax (rig.silt.getTotalNumInputChannels(), rig.silt.getTotalNumOutputChannels()), 512);
@@ -986,7 +985,7 @@ TEST_CASE ("The Bench: SEND records bars of the exact output and sends them when
     }
     REQUIRE (rig.silt.outputRecorder.state() == kit::bench::OutputRecorder::State::done);
     rig.editor->updateBench();
-    const auto sent = kit::bench::latest ("E-01");
+    const auto sent = kit::bench::latest();
     REQUIRE (sent.has_value());
     CHECK (sent->fromName == "SILT");
     CHECK_THAT (sent->seconds, WithinAbs (4.0 * 4.0 * 60.0 / bpm, 0.05));

@@ -297,7 +297,9 @@ page are saved with the set. Moves are applied off the audio thread as normal au
 
 Along the bottom of the panel. SEND records the exact output for 4, 8 or 16 bars from the
 next bar line (at once if the host is stopped) and passes it on, or sends the sample if you
-choose that. TAKE makes what an effect sent the sample (Silt FX has nothing to take into).
+choose that. TAKE makes the newest moment on the Bench the sample: what Brood sent, what
+another Silt sent, or what this Silt just sent, so SEND then TAKE resamples the output
+(Silt FX has nothing to take into).
 FOLDER opens it in the Finder, chooses another folder, or picks a category, which is a folder
 inside it. Silt and Silt FX share a folder, separate from Brood's (`~/Music/Glyph Audio/Silt/` until
 you choose), and sending between plug-ins works whichever you choose. Silt keeps the
