@@ -43,8 +43,7 @@ are untested and a Windows build is in progress.
 
 ## Install
 
-Download `Silt-<version>-macOS.pkg` from the
-[latest release](https://github.com/Jackherz/silt/releases/latest). It works on Apple
+Download `Silt-<version>-macOS.pkg` from [jackherz.com](https://jackherz.com). It works on Apple
 Silicon and Intel Macs, and installs Silt and Silt FX as VST3, Audio Unit and CLAP
 plug-ins and as standalone apps. It's free, and not notarised by Apple, so macOS asks
 you to allow it once:
