@@ -12,7 +12,7 @@ const page = await browser.newPage({ viewport: { width: 1200, height: 820 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8);
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.body.innerText.includes('AHHH-PROGRESSION'), null, { timeout: 10000 });
 
 let failed = 0;
 const check = (what, ok, detail = '') => {
@@ -66,7 +66,7 @@ check('hover help reads the plug-in\'s line', help);
 
 // Modulation, on a fresh page.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8);
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.body.innerText.includes('AHHH-PROGRESSION'), null, { timeout: 10000 });
 const routeCount = () => page.evaluate(() => document.querySelectorAll('.route-row').length);
 // Alt-drag on SIZE: a route from MOD 1 (the last used, at first).
 b = await knob(1);
@@ -100,7 +100,7 @@ check('CLEAR ALL, twice, clears them', (await routeCount()) === 0);
 
 // RANDOM, UNDO and REDO.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8);
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.body.innerText.includes('AHHH-PROGRESSION'), null, { timeout: 10000 });
 const allValues = () => page.evaluate(() => [...document.querySelectorAll('.knob-hit')].map((k) => k.parentElement.innerText.trim()).join('|'));
 const start = await allValues();
 await page.getByText('RANDOM', { exact: true }).click();
@@ -114,7 +114,7 @@ check('REDO brings RANDOM back', (await allValues()) === randomised);
 
 // Presets: the arrows, the edited mark, the browser and SAVE.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8);
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.body.innerText.includes('AHHH-PROGRESSION'), null, { timeout: 10000 });
 const arrows = page.locator('[data-help="!preset"] .key .plate');
 await arrows.nth(2).click({ force: true });   // next
 check('the next arrow loads GLASS CLOUD', (await page.getByText('GLASS CLOUD', { exact: true }).count()) === 1);
@@ -141,7 +141,7 @@ await page.keyboard.press('Escape');
 
 // Sound: START AUDIO, the keys, LOAD.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8);
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.body.innerText.includes('AHHH-PROGRESSION'), null, { timeout: 10000 });
 await page.getByText('START AUDIO', { exact: true }).click({ force: true });
 await page.waitForFunction(() => window.siltAudio?.context?.state === 'running', null, { timeout: 5000 }).catch(() => {});
 check('START AUDIO starts it', await page.evaluate(() => window.siltAudio?.context?.state === 'running'));
@@ -205,8 +205,12 @@ check('a CC moves LEARN on to knob 2', await page.evaluate(() => document.body.i
 await page.getByText('LEARN', { exact: true }).click({ force: true });
 const sizeBefore = await valueText(1);
 await page.evaluate(() => window.siltMidi([0xb0, 71, 127]));   // knob 2's default CC, far from SIZE: no pickup yet
+await page.waitForTimeout(50);
 check('a far-off controller knob doesn\'t jump SIZE', (await valueText(1)) === sizeBefore, await valueText(1));
-await page.evaluate(() => { window.siltMidi([0xb0, 71, 0]); window.siltMidi([0xb0, 71, 90]); });   // crosses it: picked up
+await page.evaluate(() => window.siltMidi([0xb0, 71, 0]));
+await page.waitForTimeout(50);
+await page.evaluate(() => window.siltMidi([0xb0, 71, 90]));   // crosses it: picked up
+await page.waitForTimeout(50);
 check('crossing the value takes SIZE over', (await valueText(1)) !== sizeBefore, `${sizeBefore} -> ${await valueText(1)}`);
 
 // Samples undo: LOAD is a step (with ROOT); five loads, and only the last four undo.
