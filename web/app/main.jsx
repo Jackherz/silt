@@ -1221,6 +1221,7 @@ function App() {
   const [display, setDisplay] = useState(null);           // what the audio sends back, 30 times a second
   const [sample, setSample] = useState(null);             // { name, factory, channels, sampleRate, seconds, analysis }
   const sampleRef = useRef(null);                          // the same, now (undo reads it mid-step)
+  const startAudioRef = useRef(null), startingRef = useRef(false);
   const manualRef = useRef([]);                            // SLICE BY MANUAL's starts (shares)
   const sliceMarksRef = useRef([]);                        // the slices as shown, for edits
   const transientMemo = useRef({});
@@ -1331,6 +1332,7 @@ function App() {
 
   // Notes, from the on-screen keys, the computer's or MIDI: to the audio, and shown held.
   function noteOn(note, velocity = 100) {
+    startAudioRef.current?.();
     window.siltAudio?.noteOn(note, velocity);
     setHeld((h) => new Set(h).add(note));
   }
@@ -1580,6 +1582,13 @@ function App() {
 
   const startStop = async () => {
     if (audioState === 'running') { await data.audio.stop(); return; }
+    await startAudio();
+  };
+  // A note while the audio's off starts it (the key is the click the browser needs), so a note
+  // is never lost to a missed START AUDIO.
+  startAudioRef.current = () => { if (!data.audio.running && !startingRef.current) startAudio(); };
+  async function startAudio() {
+    startingRef.current = true;
     setAudioState('starting');
     try {
       await data.audio.start({
@@ -1591,8 +1600,10 @@ function App() {
     } catch (err) {
       setAudioState('off');
       showFlash(String(err.message ?? err).toUpperCase());
+    } finally {
+      startingRef.current = false;
     }
-  };
+  }
   // ARM: the bars at TEMPO (4/4, as a stopped host), up to 30 s; again to cancel (SiltProcessor::armCapture).
   const arm = async () => {
     if (capture) { data.audio.cancelCapture(); setCapture(null); return; }

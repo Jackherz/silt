@@ -294,6 +294,15 @@ for (const [n, name] of [[2, 'PITCH'], [4, 'RESONATOR'], [5, 'FILTER'], [6, 'COL
   check(`${name}'s corner picture draws`, ground[0] < 20 && ground[1] < 25 && ground[2] < 25 && errors.length === errorsBefore, ground.join());
 }
 
+// A key while the audio's off starts it, and the note plays.
+await page.goto(url);
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
+await page.keyboard.down('a');
+await page.waitForFunction(() => window.siltAudio?.context?.state === 'running' && window.siltAudio.lastDisplay?.grains > 0, null, { timeout: 5000 }).catch(() => {});
+check('a key with the audio off starts it and plays', await page.evaluate(() => window.siltAudio?.context?.state === 'running' && window.siltAudio.lastDisplay?.grains > 0));
+await page.keyboard.up('a');
+check('the button then reads STOP AUDIO', (await page.getByText('STOP AUDIO', { exact: true }).count()) === 1);
+
 check('no page errors', errors.length === 0, errors.join('; '));
 await browser.close();
 process.exitCode = failed ? 1 : 0;
