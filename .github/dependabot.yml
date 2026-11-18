@@ -1,15 +1,27 @@
 # Weekly pull requests for out-of-date CI actions and the browser version's packages.
-# Majors (React 19, Vite 7+) come as their own pull requests to try first.
+# Minor and patch updates only, one grouped pull request per ecosystem; security fixes
+# still come as soon as they're known. Majors (React 19, Vite 7+) are tried by hand.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: npm
     directory: /web
     schedule:
       interval: weekly
     groups:
-      web-minor:
-        update-types: [minor, patch]
+      react:              # first match wins: React and React DOM always move together
+        patterns: [react, react-dom]
+      web:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

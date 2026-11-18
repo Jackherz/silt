@@ -1,10 +1,19 @@
 name: build
 
-# Runs on pull requests, on pushes to main that change code (docs-only pushes
-# skip it), and from the Actions tab's "Run workflow" button. A newer push
-# cancels a run still in progress for the same branch.
+# Runs on pushes to main and pull requests that change the plug-in's code (docs-only
+# and web-only changes skip it), and from the Actions tab's "Run workflow" button.
+# A newer push cancels a run still in progress for the same branch.
 on:
   pull_request:
+    paths:
+      - CMakeLists.txt
+      - core/**
+      - plugin/**
+      - tests/**
+      - tools/**
+      - kit
+      - .gitmodules
+      - .github/workflows/**
   workflow_dispatch:
   push:
     branches: [main]
@@ -14,6 +23,8 @@ on:
       - plugin/**
       - tests/**
       - tools/**
+      - kit
+      - .gitmodules
       - .github/workflows/**
 
 concurrency:
