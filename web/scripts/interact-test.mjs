@@ -209,6 +209,27 @@ check('a far-off controller knob doesn\'t jump SIZE', (await valueText(1)) === s
 await page.evaluate(() => { window.siltMidi([0xb0, 71, 0]); window.siltMidi([0xb0, 71, 90]); });   // crosses it: picked up
 check('crossing the value takes SIZE over', (await valueText(1)) !== sizeBefore, `${sizeBefore} -> ${await valueText(1)}`);
 
+// Samples undo: LOAD is a step (with ROOT); five loads, and only the last four undo.
+await page.goto(url);
+await page.waitForFunction(() => document.body.innerText.includes('AHHH-PROGRESSION'), null, { timeout: 8000 });
+const loadFactory = async (name) => {
+  await page.getByText('LOAD', { exact: true }).click();
+  await page.locator('.popup-item', { hasText: name }).click();
+  await page.waitForFunction((n) => document.body.innerText.includes(n), name.toUpperCase().replace(/ /g, '-'), { timeout: 8000 });
+};
+await loadFactory('Keys Drone');
+await page.getByText('UNDO', { exact: true }).click();
+check('UNDO after LOAD brings the sample back', await page.evaluate(() => document.body.innerText.includes('AHHH-PROGRESSION')));
+await page.getByText('PLAY', { exact: true }).click();
+check('and its ROOT (E3)', (await page.getByText('E3', { exact: true }).count()) === 1);
+await page.getByText('REDO', { exact: true }).click();
+check('REDO loads it again', await page.evaluate(() => document.body.innerText.includes('KEYS-DRONE')) && (await page.getByText('G2', { exact: true }).count()) === 1);
+for (const n of ['Rain Bells', 'Guitar Harmonics', 'Ahhh Progression', 'Keys Drone']) await loadFactory(n);   // five loads in all
+let undos = 0;
+while (undos < 10 && !(await page.locator('.key.disabled', { hasText: 'UNDO' }).count())) { await page.getByText('UNDO', { exact: true }).click(); undos++; }
+check('five loads: four undo', undos === 4, String(undos));
+check('back to the first kept: Keys Drone', await page.evaluate(() => document.body.innerText.includes('KEYS-DRONE')));
+
 check('no page errors', errors.length === 0, errors.join('; '));
 await browser.close();
 process.exitCode = failed ? 1 : 0;

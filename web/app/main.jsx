@@ -1182,7 +1182,8 @@ function App() {
   const history = useRef({ undo: [], redo: [], pending: null });
   const [audioState, setAudioState] = useState('off');   // off, starting, running, suspended, error
   const [display, setDisplay] = useState(null);           // what the audio sends back, 30 times a second
-  const [sample, setSample] = useState(null);             // { name, factory, channels, sampleRate, seconds }
+  const [sample, setSample] = useState(null);             // { name, factory, channels, sampleRate, seconds, analysis }
+  const sampleRef = useRef(null);                          // the same, now (undo reads it mid-step)
   const [tempo, setTempo] = useState(120);
   const [micOn, setMicOn] = useState(false);
   const [held, setHeld] = useState(() => new Set());     // notes down, from any keyboard
@@ -1191,6 +1192,7 @@ function App() {
   const fileInput = useRef(null);
   const [capture, setCapture] = useState(null);           // ARM's take: { progress, resample }
   const capturedRef = useRef(null);
+  const stepRef = useRef(null);
   const midiRef = useRef(null);
   const [learnStep, setLearnStep] = useState(-1);         // −1 idle; 0–7 knob n; 8 previous page; 9 next
   const controller = useRef({
@@ -1304,12 +1306,18 @@ function App() {
   function installSample(decoded, name, factory, root) {
     const { audio, silt, byId } = data;
     const analysis = silt.analyse(decoded.channels, decoded.sampleRate);
-    audio.sendSample(decoded, analysis);
-    if (root != null) {
-      silt.setParam(byId.root.index, root);
-      audio.setParam(byId.root.index, silt.getParam(byId.root.index));
-    }
-    setSample({ name, factory, ...decoded, seconds: decoded.channels[0].length / decoded.sampleRate });
+    const next = { name, factory, ...decoded, seconds: decoded.channels[0].length / decoded.sampleRate, analysis };
+    const put = () => {
+      audio.sendSample(decoded, analysis);
+      if (root != null) {
+        silt.setParam(byId.root.index, root);
+        audio.setParam(byId.root.index, silt.getParam(byId.root.index));
+      }
+      sampleRef.current = next;
+      setSample(next);
+    };
+    // An undo step (the sample and ROOT together), except the one a new page opens with.
+    if (sampleRef.current) stepRef.current(name.toUpperCase(), put); else put();
     setVersion((n) => n + 1);
   }
 
@@ -1328,11 +1336,17 @@ function App() {
   // parameter and route; a drag is one step, as is a pick, RANDOM, a reset or a preset.
   const targets = data.params.filter((p) => silt.isTarget(p.index)).map((p) => p.index);
   const snapshot = () => ({
+    sample: sampleRef.current,
     p: data.params.map((p) => silt.getParam(p.index)),
     r: targets.flatMap((t) => [0, 1, 2, 3].map((m) => [silt.routeAmount(m, t), silt.routePolarity(m, t)])),
   });
-  const sameSound = (a, b) => a.p.every((v, i) => v === b.p[i]) && a.r.every((v, i) => v[0] === b.r[i][0] && v[1] === b.r[i][1]);
+  const sameSound = (a, b) => a.sample === b.sample && a.p.every((v, i) => v === b.p[i]) && a.r.every((v, i) => v[0] === b.r[i][0] && v[1] === b.r[i][1]);
   const restore = (snap) => {
+    if (snap.sample && snap.sample !== sampleRef.current) {
+      data.audio.sendSample(snap.sample, snap.sample.analysis);
+      sampleRef.current = snap.sample;
+      setSample(snap.sample);
+    }
     data.params.forEach((p, i) => { if (silt.getParam(p.index) !== snap.p[i]) { silt.setParam(p.index, snap.p[i]); window.siltAudio?.setParam(p.index, snap.p[i]); } });
     targets.forEach((t, k) => [0, 1, 2, 3].forEach((m) => {
       const [amount, polarity] = snap.r[k * 4 + m];
@@ -1349,11 +1363,16 @@ function App() {
       h.undo.push({ name: h.pending.name, before: h.pending.before, after });
       if (h.undo.length > 2000) h.undo.shift();
       h.redo = [];
+      // Samples and takes: the last four stay undoable (as Brood keeps its takes, and the plug-in
+      // lets old takes give way); a fifth lets the oldest go, and everything before it.
+      const changes = h.undo.map((st, i) => (st.before.sample !== st.after.sample ? i : -1)).filter((i) => i >= 0);
+      if (changes.length > 4) h.undo.splice(0, changes[changes.length - 5] + 1);
     }
     h.pending = null;
     setVersion((n) => n + 1);
   };
   const step = (name, fn) => { if (h.pending) { fn(); return; } beginStep(name); fn(); endStep(); };
+  stepRef.current = step;
   // A controller knob sends a message per move: moves of one parameter close together are one
   // step (SiltProcessor's ParameterChange merging).
   const mergedStep = (key, name, fn) => {
