@@ -26,6 +26,8 @@ export async function loadSilt(bytes) {
     prepare: (sampleRate, maxBlockSize = maxBlock) => x.silt_prepare(sampleRate, maxBlockSize),
     setParam: (id, value) => x.silt_set_param(id, value),
     getParam: (id) => x.silt_get_param(id),
+    to01: (id, value) => x.silt_to01(id, value),
+    from01: (id, proportion) => x.silt_from01(id, proportion),
     setRoute: (modulator, id, amount, polarity = 0) => x.silt_set_route(modulator, id, amount, polarity),
     setSample(channels, sampleRate) {
       const frames = channels[0].length;

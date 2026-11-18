@@ -1,30 +1,33 @@
 // Silt in the browser: the plug-in's panel at its own 1200 × 820, scaled to the
 // window, drawn from the plug-in's exported data (params, layout, help, presets)
 // and its own value text (the WebAssembly build).
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { panelGeometry, centred, box, SPINE } from './geometry.js';
 import { C, S, MOD, css, rgba, pageColour, font } from './theme.js';
-import { isShown, isDimmed, roundToInt } from './rules.js';
+import { isShown, isDimmed, roundToInt, helpFor } from './rules.js';
 import { loadSilt } from '../engine/silt-wasm.js';
 
 const PAGE_NAMES = ['GRAIN', 'SHAPE', 'PITCH', 'PLAY', 'RESONATOR', 'FILTER', 'COLOR', 'SPACE', 'MOD', 'CHAIN'];
 
+// What the parts can do: set a parameter, open a menu, start typing a value… (App provides it.)
+const UI = createContext(null);
+
 // --- small pieces ----------------------------------------------------------------------
 
-function At({ r, style, children, ...rest }) {
-  return <div className="at" style={{ ...box(r), ...style }} {...rest}>{children}</div>;
+function At({ r, style, children, className, ...rest }) {
+  return <div className={className ? `at ${className}` : 'at'} style={{ ...box(r), ...style }} {...rest}>{children}</div>;
 }
 
 // A key: a filled rounded plate with no frame (PanelLook::drawButtonBackground).
 // Its face is the bounds less 2 on the right and bottom, inset 1.
-function Key({ r, text, on = false, tint = S.ink, led, accent, disabled, size, flat, style }) {
+function Key({ r, text, on = false, tint = S.ink, led, accent, disabled, size, flat, style, onClick, help, onPointerDown }) {
   const filled = on || accent;
   const plate = flat ? [r[0] + 1, r[1] + 1, r[2] - 2, r[3] - 2] : [r[0] + 1, r[1] + 1, r[2] - 4, r[3] - 4];
   const fontSize = size ?? Math.max(10, Math.min(12.5, r[3] * 0.42));
   return (
-    <>
-      <At r={plate} style={{ borderRadius: 4, background: filled ? css(accent ? S.accent : tint) : rgba(S.ink, disabled ? 0.04 : 0.08) }} />
+    <div className={`key${filled ? ' filled' : ''}${disabled ? ' disabled' : ''}`} data-help={help} onClick={disabled ? undefined : onClick} onPointerDown={onPointerDown}>
+      <At r={plate} className="plate" style={{ borderRadius: 4, background: filled ? css(accent ? S.accent : tint) : rgba(S.ink, disabled ? 0.04 : 0.08) }} />
       {led !== undefined && (
         <div className="at" style={{ left: plate[0] + 10 - 3.5, top: plate[1] + plate[3] / 2 - 3.5, width: 7, height: 7, borderRadius: 4,
                                       background: led ? css(S.lit) : rgba(S.ink, 0.25) }} />
@@ -34,7 +37,7 @@ function Key({ r, text, on = false, tint = S.ink, led, accent, disabled, size, f
                                                         paddingLeft: led !== undefined ? 14 : 0, paddingTop: 2, whiteSpace: 'pre', ...style }}>
         <Fitted text={text} style={font.name(fontSize)} width={r[2] - 2 - 6 - (led !== undefined ? 14 : 0)} />
       </At>
-    </>
+    </div>
   );
 }
 
@@ -77,13 +80,15 @@ function Switch({ r, text, on }) {
 }
 
 // A menu: the same plate with a chevron (PanelLook::drawComboBox).
-function Menu({ r, text }) {
+function Menu({ r, text, items, selected, onPick, help }) {
+  const ui = useContext(UI);
   const plate = [r[0] + 1, r[1] + 1, r[2] - 4, r[3] - 4];
   const fontSize = Math.max(10, Math.min(12.5, r[3] * 0.42));
   const cx = plate[0] + plate[2] - plate[3] / 2, cy = plate[1] + plate[3] / 2;
+  const open = () => items && ui.openMenu({ r, items, selected, onPick });
   return (
-    <>
-      <At r={plate} style={{ borderRadius: 4, background: rgba(S.ink, 0.08) }} />
+    <div className="key" data-help={help} onClick={open}>
+      <At r={plate} className="plate" style={{ borderRadius: 4, background: rgba(S.ink, 0.08) }} />
       <At r={[plate[0] + 8, plate[1], plate[2] - plate[3] - 8, plate[3]]}
           style={{ ...font.name(fontSize), color: css(S.ink), display: 'flex', alignItems: 'center', whiteSpace: 'pre', paddingTop: 2 }}>
         <Fitted text={text} style={font.name(fontSize)} width={plate[2] - plate[3] - 8} />
@@ -92,7 +97,29 @@ function Menu({ r, text }) {
         <path d={`M${cx - 3.5} ${cy - 1.5} L${cx} ${cy + 2} L${cx + 3.5} ${cy - 1.5}`} fill="none" stroke={rgba(S.ink, 0.8)}
               strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
-    </>
+    </div>
+  );
+}
+
+// The pop-up a menu opens (JUCE's PopupMenu in the kit's colours): the panel, the
+// items in the name face, the one under the mouse in ink, the current one ticked.
+function Popup({ menu, close }) {
+  const itemH = 24, width = Math.max(menu.r[2], 140);
+  const top = menu.r[1] + menu.r[3];
+  const left = Math.min(menu.r[0], 1200 - width - 4);
+  const below = top + menu.items.length * itemH + 8 <= 820;
+  const y = below ? top : Math.max(4, menu.r[1] - menu.items.length * itemH - 8);
+  return (
+    <div className="popup-shield" onPointerDown={close}>
+      <div className="popup" style={{ left, top: y, width, background: css(S.panel), color: css(S.ink), ...font.name(13) }}
+           onPointerDown={(e) => e.stopPropagation()}>
+        {menu.items.map((item, i) => (
+          <div key={i} className="popup-item" style={{ height: itemH }} onClick={() => { menu.onPick(i); close(); }}>
+            <span className="tick">{i === menu.selected ? '\u2713' : ''}</span>{item}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -115,7 +142,8 @@ function StripPanel({ r, name }) {
 
 // --- the knob (PanelLook::drawRotarySlider) ----------------------------------------------
 
-function Knob({ r, pos, bipolarOrigin, text }) {
+function Knob({ r, pos, bipolarOrigin, text, id, help }) {
+  const ui = useContext(UI);
   // The slider's text box sits below: 76 × 16. The rest is the rotary.
   const boxH = 16, boxW = 76;
   const rot = [r[0], r[1], r[2], r[3] - boxH];
@@ -134,8 +162,26 @@ function Knob({ r, pos, bipolarOrigin, text }) {
   const lo = Math.min(origin, pos), hi = Math.max(origin, pos);
   const angle = at(pos) * 180 / Math.PI;
   const valueBox = [r[0] + Math.trunc((r[2] - boxW) / 2), r[1] + r[3] - boxH, boxW, boxH];
+  const editing = ui.editing === id;
+  // Up or right raises it: 250 px end to end, ten times finer with Shift (held now).
+  const down = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    let last = [e.clientX, e.clientY], running = ui.to01(id);
+    const move = (m) => {
+      const pixels = ((last[1] - m.clientY) + (m.clientX - last[0])) / ui.scale;
+      last = [m.clientX, m.clientY];
+      running = Math.max(0, Math.min(1, running + pixels / (m.shiftKey ? 2500 : 250)));
+      ui.setFrom01(id, running);
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); ui.endGesture(id); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    ui.beginGesture(id);
+  };
   return (
-    <>
+    <div data-help={help}>
+      <At r={rot} className="hit knob-hit" onPointerDown={down} onDoubleClick={() => ui.resetToDefault(id)} />
       <svg className="at" style={{ left: 0, top: 0, width: 1, height: 1, overflow: 'visible' }}>
         <path d={arc(0, 1)} fill="none" stroke={rgba(S.ink, 0.16)} strokeWidth={2.6 * u} strokeLinecap="round" />
         <path d={arc(lo, Math.max(hi, lo + 0.0005))} fill="none" stroke={rgba(S.ink, 0.82)} strokeWidth={2.6 * u} strokeLinecap="round" />
@@ -144,11 +190,26 @@ function Knob({ r, pos, bipolarOrigin, text }) {
         <rect x={-1.5 * u} y={-rad * 0.86} width={3 * u} height={rad * 0.5} rx={1.5 * u} fill="#181815"
               transform={`translate(${cx} ${cy}) rotate(${angle})`} />
       </svg>
-      <At r={valueBox} style={{ background: css(C.lcdGreen), borderRadius: 3, color: css(C.lcdText), ...font.value(Math.min(12, boxH * 0.7)),
-                                display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'pre' }}>
-        <Fitted text={text} style={font.value(Math.min(12, boxH * 0.7))} width={boxW - 4} />
+      <At r={valueBox} onClick={() => ui.setEditing(id)}
+          style={{ background: css(C.lcdGreen), borderRadius: 3, color: css(C.lcdText), ...font.value(Math.min(12, boxH * 0.7)),
+                   display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'pre', cursor: 'text' }}>
+        {editing ? <TypedValue id={id} text={text} style={font.value(Math.min(12, boxH * 0.7))} />
+                 : <Fitted text={text} style={font.value(Math.min(12, boxH * 0.7))} width={boxW - 4} />}
       </At>
-    </>
+    </div>
+  );
+}
+
+// Typing a value into a knob's box: the same window, the same type (PanelLook::ValueBox).
+// Enter or leaving the box takes it; Escape doesn't.
+function TypedValue({ id, text, style }) {
+  const ui = useContext(UI);
+  const ref = useRef(null);
+  useEffect(() => { ref.current?.focus(); ref.current?.select(); }, []);
+  const done = (take) => { if (take) ui.typeValue(id, ref.current.value); ui.setEditing(null); };
+  return (
+    <input ref={ref} className="typed" defaultValue={text} style={{ ...style, color: css(C.lcdText) }}
+           onBlur={() => done(true)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.preventDefault(); done(false); } }} />
   );
 }
 
@@ -158,11 +219,11 @@ function Source({ g }) {
   return (
     <>
       <StripPanel r={g.sourcePanel} name="SOURCE" />
-      <Key r={g.arm} text="ARM" led={false} />
-      <Menu r={g.bars} text="2 BARS" />
-      <Key r={g.resample} text="RESAMPLE" led={false} />
-      <Key r={g.load} text="LOAD" />
-      <Switch r={g.monitor} text="MONITOR" on={false} />
+      <Key r={g.arm} text="ARM" led={false} help="!arm" />
+      <Menu r={g.bars} text="2 BARS" help="!bars" />
+      <Key r={g.resample} text="RESAMPLE" led={false} help="!resample" />
+      <Key r={g.load} text="LOAD" help="!load" />
+      <div data-help="!monitor"><Switch r={g.monitor} text="MONITOR" on={false} /></div>
     </>
   );
 }
@@ -170,57 +231,157 @@ function Source({ g }) {
 const MODULE_PAGES = [4, 5, 6, 7];
 const SHORT = ['RES', 'FILTER', 'COLOR', 'SPACE'];
 
-function Chain({ g, idle, openModule, half, chainOpen }) {
+// The 24 chain orders, in permutation order (Instrument::chainOrder): 0 is RES, FILTER, COLOR, SPACE.
+const CHAIN_ORDERS = (() => {
+  const out = [], order = [0, 1, 2, 3];
+  for (let i = 0; i < 24; i++) {
+    out.push([...order]);
+    let k = 2; while (k >= 0 && order[k] >= order[k + 1]) k--;          // std::next_permutation
+    if (k < 0) { order.reverse(); continue; }
+    let l = 3; while (order[l] <= order[k]) l--;
+    [order[k], order[l]] = [order[l], order[k]];
+    order.splice(k + 1, 3 - k, ...order.slice(k + 1).reverse());
+  }
+  return out;
+})();
+const ON_IDS = ['resOn', 'filterOn', 'colorOn', 'spaceOn'];
+
+// Whether a module would change the sound, and if not why (ChainView::moduleActive, idleReason).
+function moduleState(m, v) {
+  if (v(ON_IDS[m]) <= 0.5) return { on: false, active: false, reason: 'OFF' };
+  let active;
+  if (m === 0) active = v('resMix') > 0;
+  else if (m === 1) {
+    const mix = v('filterMix') * 0.01, reso = v('filterReso') * 0.01, drive = v('filterDrive') * 0.01, env = v('filterEnv') * 0.01, key = v('filterKey') * 0.01;
+    const still = reso <= 0 && drive <= 0 && Math.abs(env) < 0.001 && Math.abs(key) < 0.001;
+    const open = mix <= 0 || (still && ((v('filterMorph') <= 0.001 && v('filterCutoff') >= 19900) || (v('filterMorph') >= 1.999 && v('filterCutoff') <= 21)));
+    active = !open;
+  } else if (m === 2) {
+    active = v('colorMix') > 0 && (v('colorDrive') > 0 || v('colorBits') < 15.99 || v('colorRate') < 40000 * 0.999 || v('colorComp') > 0
+                                   || v('colorNoise') > 0 || v('colorWow') > 0 || Math.abs(v('colorTone')) > 0.05);
+  } else active = v('spaceDelay') > 0 || v('spaceReverb') > 0 || v('spaceFreeze') > 0.5;
+  const reason = active ? '' : m === 0 ? 'MIX 0' : m === 1 ? (v('filterMix') <= 0 ? 'MIX 0' : 'OPEN') : m === 2 ? (v('colorMix') <= 0 ? 'MIX 0' : 'NEUTRAL') : 'LEVELS 0';
+  return { on: true, active, reason };
+}
+
+function Chain({ g, value, openModule, half, chainOpen }) {
+  const ui = useContext(UI);
   const [x, y, w, h] = g.chainView;
   const gap = 12, bw = (w - gap * 3) / 4;
+  const order = CHAIN_ORDERS[Math.max(0, Math.min(23, Math.round(value('chainOrder'))))];
+  const [drag, setDrag] = useState(null);   // { from, x }
+  const blockAt = (p) => [x + p * (bw + gap), y, bw, h];
+  const positionAt = (px) => {
+    let best = 0;
+    for (let p = 1; p < 4; p++) if (Math.abs(px - (blockAt(p)[0] + bw / 2)) < Math.abs(px - (blockAt(best)[0] + bw / 2))) best = p;
+    return best;
+  };
+  // The order as it would be with the dragged block dropped where it is now.
+  let shown = order;
+  if (drag?.moved) {
+    const rest = order.filter((_, p) => p !== drag.from);
+    rest.splice(positionAt(drag.x + bw / 2), 0, order[drag.from]);
+    shown = rest;
+  }
+
+  const down = (e, p) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const start = e.clientX, offset = (e.clientX - ui.stageLeft()) / ui.scale - blockAt(p)[0];
+    let state = { from: p, x: blockAt(p)[0], moved: false };
+    const move = (m) => {
+      state = { ...state, moved: state.moved || Math.abs(m.clientX - start) / ui.scale > 4,
+                x: Math.max(blockAt(0)[0], Math.min(blockAt(3)[0], (m.clientX - ui.stageLeft()) / ui.scale - offset)) };
+      setDrag(state);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      setDrag(null);
+      if (!state.moved) { ui.openModule(order[p]); return; }
+      const to = positionAt(state.x + bw / 2);
+      if (to === p) return;
+      const next = order.filter((_, i) => i !== p);
+      next.splice(to, 0, order[p]);
+      ui.setParam('chainOrder', CHAIN_ORDERS.findIndex((o) => o.every((v, i) => v === next[i])));
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  const block = (r, m, lifted, p) => {
+    const face = [r[0], r[1], r[2] - 2, r[3] - 2];
+    const open = m === openModule;
+    const st = moduleState(m, value);
+    const onTop = open ? S.panel : S.ink;
+    const inner = [face[0] + 8, face[1] + 5, face[2] - 16, face[3] - 10];
+    const light = [inner[0] + 5.5 - 5.5, inner[1] + inner[3] * 0.25 - 5.5, 11, 11];
+    const nameLeft = light[0] + 11 + 6;
+    return (
+      <div key={`b${m}`} data-help="!chain" className="chain-block">
+        <At r={face} className="hit" onPointerDown={p === undefined ? undefined : (e) => down(e, p)}
+            style={{ borderRadius: 5, cursor: 'grab', background: open ? css(pageColour(MODULE_PAGES[m])) : rgba(S.ink, lifted ? 0.2 : st.active ? 0.12 : 0.07) }} />
+        <At r={light} style={st.on ? { borderRadius: '50%', background: css(onTop) } : { borderRadius: '50%', border: `1.2px solid ${rgba(onTop, open ? 0.7 : 0.45)}` }} />
+        {p !== undefined && <At r={[light[0] - 7, light[1] - 7, 25, 25]} className="hit" onClick={() => ui.setParam(ON_IDS[m], st.on ? 0 : 1)} style={{ cursor: 'pointer' }} />}
+        <At r={[nameLeft, inner[1], inner[0] + inner[2] - nameLeft, inner[3] / 2]}
+            style={{ ...font.screen(15), color: st.on || open ? css(onTop) : css(S.soft), display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
+          {SHORT[m]}{open && m === 0 ? ` ${half + 1}/4` : ''}
+        </At>
+        {!st.active && (
+          <At r={[inner[0], inner[1] + inner[3] / 2, inner[2], inner[3] / 2]}
+              style={{ ...font.screen(11), color: open ? rgba(onTop, 0.8) : css(S.soft), display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
+            {st.reason}
+          </At>
+        )}
+      </div>
+    );
+  };
+
   return (
     <>
       <StripPanel r={g.chainPanel} name="CHAIN" />
+      <At r={[g.chainPanel[0], g.chainPanel[1], SPINE, g.chainPanel[3]]} className="hit" data-help="!chain" onClick={() => ui.setPage(9)} style={{ cursor: 'pointer' }} />
       {chainOpen && (
         // CHAIN has no key: open, the strip's own name shows as the held key.
         <>
-          <At r={[g.chainPanel[0] + 1, g.chainPanel[1] + 1, SPINE - 2, g.chainPanel[3] - 2]} style={{ background: css(S.ink), borderRadius: 3 }} />
-          <div className="at spine" style={{ left: g.chainPanel[0] + 1, top: g.chainPanel[1] + 1, width: g.chainPanel[3] - 2, height: SPINE - 2,
+          <At r={[g.chainPanel[0] + 1, g.chainPanel[1] + 1, SPINE - 2, g.chainPanel[3] - 2]} style={{ background: css(S.ink), borderRadius: 3, pointerEvents: 'none' }} />
+          <div className="at spine" style={{ left: g.chainPanel[0] + 1, top: g.chainPanel[1] + 1, width: g.chainPanel[3] - 2, height: SPINE - 2, pointerEvents: 'none',
                                               transform: `translateY(${g.chainPanel[3] - 2}px) rotate(-90deg)`, transformOrigin: '0 0',
                                               ...font.screen(15), color: css(S.panel) }}>CHAIN</div>
         </>
       )}
-      {[0, 1, 2, 3].map((m) => {
-        const r = [x + m * (bw + gap), y, bw, h];
-        const face = [r[0], r[1], r[2] - 2, r[3] - 2];
-        const open = m === openModule;
-        const onTop = open ? S.panel : S.ink;
-        const inner = [face[0] + 8, face[1] + 5, face[2] - 16, face[3] - 10];
-        const light = [inner[0] + 5.5 - 5.5, inner[1] + inner[3] * 0.25 - 5.5, 11, 11];
-        const nameLeft = light[0] + 11 + 6;
+      {[0, 1, 2].map((p) => {
+        const r = blockAt(p);
         return (
-          <React.Fragment key={m}>
-            <At r={face} style={{ borderRadius: 5, background: open ? css(pageColour(MODULE_PAGES[m])) : rgba(S.ink, 0.07) }} />
-            <At r={light} style={{ borderRadius: '50%', background: css(onTop) }} />
-            <At r={[nameLeft, inner[1], inner[0] + inner[2] - nameLeft, inner[3] / 2]}
-                style={{ ...font.screen(15), color: css(onTop), display: 'flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
-              {SHORT[m]}{open && m === 0 ? ` ${half + 1}/4` : ''}
-            </At>
-            <At r={[inner[0], inner[1] + inner[3] / 2, inner[2], inner[3] / 2]}
-                style={{ ...font.screen(11), color: open ? rgba(onTop, 0.8) : css(S.soft), display: 'flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
-              {idle[m]}
-            </At>
-            {m < 3 && (
-              <svg className="at" style={{ left: 0, top: 0, width: 1, height: 1, overflow: 'visible' }}>
-                <path d={`M${r[0] + r[2] + 2 + 8} ${r[1] + r[3] / 2} L${r[0] + r[2] + 3} ${r[1] + r[3] / 2 - 4} L${r[0] + r[2] + 3} ${r[1] + r[3] / 2 + 4} Z`}
-                      fill={rgba(S.soft, 0.35)} />
-              </svg>
-            )}
-          </React.Fragment>
+          <svg key={`a${p}`} className="at" style={{ left: 0, top: 0, width: 1, height: 1, overflow: 'visible' }}>
+            <path d={`M${r[0] + r[2] + 2 + 8} ${r[1] + r[3] / 2} L${r[0] + r[2] + 3} ${r[1] + r[3] / 2 - 4} L${r[0] + r[2] + 3} ${r[1] + r[3] / 2 + 4} Z`}
+                  fill={rgba(S.soft, 0.35)} />
+          </svg>
         );
       })}
+      {shown.map((m, p) => (drag?.moved && m === order[drag.from]
+        ? <At key={`g${m}`} r={[blockAt(p)[0], y, bw - 2, h - 2]} style={{ borderRadius: 5, background: rgba(S.ink, 0.1) }} />
+        : block(blockAt(p), m, false, drag?.moved ? undefined : p)))}
+      {drag?.moved && block([drag.x, y, bw, h], order[drag.from], true, undefined)}
     </>
   );
 }
 
 // The readout at the strip's height: a title with the LIVE chip, and the figure.
-function Readout({ r, title, figure }) {
+function Readout({ r, title, status }) {
   const inner = [r[0] + 10, r[1] + 6, r[2] - 20, r[3] - 12];
+  // Long messages (hover help) take the whole window: up to three lines, squeezed, never cut.
+  if (status.length > 26) {
+    const box = [r[0] + 10, r[1] + 5, r[2] - 20, r[3] - 10];
+    return (
+      <>
+        <Surface r={r} colour={S.sunk} />
+        <At r={box} style={{ color: css(S.onSunk), display: 'flex', alignItems: 'center' }}>
+          <WrappedFit text={status} width={box[2]} height={box[3]} style={font.screen(17)} lines={3} minScale={0.8} />
+        </At>
+      </>
+    );
+  }
+  const figure = status;
   const chipW = Math.ceil(measure('LIVE', `${font.screen(15).fontSize}px "B612 Mono"`)) + 10;
   return (
     <>
@@ -242,7 +403,8 @@ function Readout({ r, title, figure }) {
 
 // --- the well ----------------------------------------------------------------------------
 
-function Rail({ r, modTitles }) {
+function Rail({ r, modTitles, shown, armed }) {
+  const ui = useContext(UI);
   const gap = 4, h = Math.trunc((r[3] - gap * 3) / 4);
   return [0, 1, 2, 3].map((m) => {
     const chip = [r[0], r[1] + m * (h + gap), r[2], h];
@@ -252,8 +414,8 @@ function Rail({ r, modTitles }) {
     const swatch = [area[0] + 2, area[1] + topH / 2 - 7, 14, 14];
     const trace = [area[0] + 2 + 21, area[1] + topH + 1, area[2] - 4 - 21, area[3] - topH - 2];
     return (
-      <React.Fragment key={m}>
-        <At r={plate} style={{ borderRadius: 4, background: rgba(S.ink, m === 0 ? 0.16 : 0.05) }} />
+      <div key={m} data-help="!chip" className="chip" onClick={(e) => ui.selectModulator(m, !e.shiftKey)}>
+        <At r={plate} className="plate" style={{ borderRadius: 4, background: armed === m ? rgba(MOD[m].base, 0.3) : rgba(S.ink, shown === m ? 0.16 : 0.05) }} />
         <At r={swatch} style={{ borderRadius: '50%', background: css(MOD[m].base), color: css(MOD[m].ink), ...font.mono(9.5),
                                 display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {m + 1}
@@ -263,7 +425,7 @@ function Rail({ r, modTitles }) {
         </At>
         <At r={[trace[0], Math.trunc(trace[1] + trace[3] / 2), trace[2], 1]} style={{ background: rgba(S.ink, 0.15) }} />
         <At r={[trace[0], trace[1] + trace[3] / 2 - 0.7, trace[2], 1.4]} style={{ background: css(MOD[m].base), borderRadius: 1 }} />
-      </React.Fragment>
+      </div>
     );
   });
 }
@@ -301,14 +463,21 @@ function ShapePreview({ g, value, grainCurve }) {
   );
 }
 
-function Well({ g, page, entries, context, value, text, params, grainCurve }) {
+function Well({ g, page, entries, context, value, text, params, grainCurve, modTitles, armed }) {
+  const ui = useContext(UI);
+  const pick = (id) => (index) => ui.setParam(id, index);
+  const toggle = (id) => () => ui.setParam(id, value(id) > 0.5 ? 0 : 1);
+  const action = (id) => () => {
+    if (id === '!newPattern') ui.setParam('patternSeed', 1 + Math.floor(Math.random() * 9999));   // SiltProcessor::newPattern
+    if (id === '!assign') ui.selectModulator(context.modShown, true);
+  };
   const colour = pageColour(page);
   const items = entries.filter((e) => (e.alwaysShown || e.page === page) && isShown(e, context));
   return (
     <>
       <Surface r={g.well} colour={S.panel} />
       <At r={[g.well[0], g.well[1], g.well[2], 3]} style={{ background: css(colour), borderRadius: '6px 6px 0 0' }} />
-      <Rail r={g.rail} modTitles={['SINE', 'SINE', 'SINE', 'SINE']} />
+      <Rail r={g.rail} modTitles={modTitles} shown={context.modShown} armed={armed} />
       <At r={[g.slots[0].column[0], g.controlRow[1] + 8, 1, g.controlRow[3] - 16]} style={{ background: rgba(S.ink, 0.2) }} />
       {page === 1 && <ShapePreview g={g} value={value} grainCurve={grainCurve} />}
       {items.map((e, i) => {
@@ -317,8 +486,8 @@ function Well({ g, page, entries, context, value, text, params, grainCurve }) {
         if (e.kind === 'underButton' || e.kind === 'underMenu') {
           const r = centred(slot.under, e.width, 18);
           const rr = [r[0] + (e.dx ?? 0), r[1], r[2], r[3]];
-          if (e.kind === 'underMenu') return <Menu key={i} r={rr} text={e.items[Math.round(value(e.id))] ?? ''} />;
-          return <Key key={i} r={rr} text={e.text} on={value(e.id) > 0.5} size={10} />;
+          if (e.kind === 'underMenu') return <Menu key={i} r={rr} text={e.items[Math.round(value(e.id))] ?? ''} items={e.items} selected={Math.round(value(e.id))} onPick={pick(e.id)} help={e.id} />;
+          return <Key key={i} r={rr} text={e.text} on={value(e.id) > 0.5} size={10} onClick={toggle(e.id)} help={e.id} />;
         }
         const label = (
           <At key={`l${i}`} r={slot.label} style={{ ...font.name(11.5), color: css(colour), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -335,13 +504,14 @@ function Well({ g, page, entries, context, value, text, params, grainCurve }) {
           const v = value(e.id);
           const pos = p.kind === 'choice' || p.kind === 'integer' ? (v - p.low) / (p.high - p.low) : to01(p, v);
           const bipolar = p.low < 0 && p.high > 0 ? to01(p, 0) : undefined;
-          control = <Knob r={cell} pos={pos} bipolarOrigin={bipolar} text={text(e.id, v)} />;
+          control = <Knob r={cell} pos={pos} bipolarOrigin={bipolar} text={text(e.id, v)} id={e.id} help={e.id} />;
         } else if (e.kind === 'menu') {
-          control = <Menu r={centred(cell, cell[2], 26)} text={e.items[Math.round(value(e.id))] ?? ''} />;
+          control = <Menu r={centred(cell, cell[2], 26)} text={e.items[Math.round(value(e.id))] ?? ''} items={e.items} selected={Math.round(value(e.id))} onPick={pick(e.id)} help={e.id} />;
         } else if (e.kind === 'button' || e.kind === 'action') {
-          control = <Key r={centred(cell, cell[2] - 12, 34)} text={e.text} on={e.kind === 'button' && value(e.id) > 0.5} />;
+          control = <Key r={centred(cell, cell[2] - 12, 34)} text={e.text} on={e.kind === 'button' && value(e.id) > 0.5}
+                         onClick={e.kind === 'button' ? toggle(e.id) : action(e.id)} help={e.id} />;
         } else if (e.kind === 'banner') {
-          control = <Banner r={centred(cell, cell[2], 56)} m={context.modShown} type={Math.round(value(`m${context.modShown + 1}Type`))} routes={0}
+          control = <Banner r={centred(cell, cell[2], 56)} onClick={() => ui.selectModulator((context.modShown + 1) % 4, false)} m={context.modShown} type={Math.round(value(`m${context.modShown + 1}Type`))} routes={0}
                             muted={value(`m${context.modShown + 1}Enable`) <= 0.5} />;
         }
         return <div key={i} style={{ opacity: dim }}>{label}{control}</div>;
@@ -364,6 +534,35 @@ function Fitted({ text, width, cssFont, style, minScale = 0.7, origin = '50% 50%
   const wide = measure(String(text), f) + (style?.letterSpacing ?? 0) * String(text).length;
   const k = Math.max(minScale, Math.min(1, width / Math.max(1, wide)));
   return <span style={{ display: 'inline-block', transform: `scaleX(${k})`, transformOrigin: origin, marginLeft: origin === '0 50%' ? 0 : -(1 - k) * 0, }} data-fit={k < 1 ? k.toFixed(3) : undefined}>{text}</span>;
+}
+
+// Text over up to `lines` lines, as JUCE's drawFittedText: words wrap; a line that's still too
+// long is squeezed sideways, down to minScale, and below that the type gets smaller. Never cut.
+function WrappedFit({ text, width, height, style, lines, minScale }) {
+  let size = style.fontSize, out;
+  for (let tries = 0; tries < 12; tries++, size *= 0.92) {
+    const f = `${size}px "${style.fontFamily}"`;
+    const words = text.split(' ');
+    out = [];
+    let line = '';
+    for (const w of words) {
+      const next = line ? `${line} ${w}` : w;
+      if (measure(next, f) <= width || !line) line = next;
+      else { out.push(line); line = w; }
+    }
+    out.push(line);
+    const lineH = size * 1.15;
+    const squeeze = Math.min(...out.map((l) => width / Math.max(1, measure(l, f))));
+    if (out.length <= lines && out.length * lineH <= height && squeeze >= minScale) break;
+  }
+  return (
+    <div style={{ ...style, fontSize: size, lineHeight: 1.15 }}>
+      {out.map((l, i) => {
+        const k = Math.min(1, width / Math.max(1, measure(l, `${size}px "${style.fontFamily}"`)));
+        return <div key={i} style={{ whiteSpace: 'pre', transform: `scaleX(${k})`, transformOrigin: '0 50%' }} data-fit={k < 1 ? k.toFixed(3) : undefined}>{l}</div>;
+      })}
+    </div>
+  );
 }
 
 // Text width, as the plug-in measures it for placing the next thing.
@@ -402,11 +601,11 @@ function Die() {
 
 // MOD's banner: the shown modulator, tinted its colour (ModBanner::paint).
 const TYPE_NAMES = ['WAVE', 'RANDOM', 'ENVELOPE', 'FOLLOW', 'MIDI', 'MACRO', 'GRAIN'];
-function Banner({ r, m, type, routes, muted }) {
+function Banner({ r, m, type, routes, muted, onClick }) {
   const plate = [r[0] + 2, r[1] + 2, r[2] - 4, r[3] - 4];
   const text = [plate[0] + 6, plate[1] + 4, plate[2] - 12, plate[3] - 8];
   return (
-    <>
+    <div data-help="!modSelect" onClick={onClick} style={{ cursor: 'pointer' }}>
       <At r={plate} style={{ borderRadius: 5, background: rgba(muted ? MOD[m].dim : MOD[m].base, 0.22) }} />
       <At r={[text[0], text[1], text[2], text[3] / 2]} style={{ ...font.mono(18), color: css(muted ? C.inkSoft : C.ink), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         MOD {m + 1}
@@ -414,7 +613,7 @@ function Banner({ r, m, type, routes, muted }) {
       <At r={[text[0], text[1] + text[3] / 2, text[2], text[3] / 2]} style={{ ...font.mono(10), color: css(C.inkSoft), display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'pre' }}>
         {`${TYPE_NAMES[type] ?? ''}  ${routes} ${routes === 1 ? 'ROUTE' : 'ROUTES'}${muted ? '  MUTED' : ''}`}
       </At>
-    </>
+    </div>
   );
 }
 
@@ -443,9 +642,16 @@ function useScale() {
 function App() {
   const scale = useScale();
   const [data, setData] = useState(null);
-  // ?page=N opens a page (for checking against the plug-in's snapshots until the keys work).
-  const [page] = useState(() => Math.max(0, Math.min(9, Number(new URLSearchParams(location.search).get('page')) || 0)));
-  const [half] = useState(() => Math.max(0, Math.min(3, Number(new URLSearchParams(location.search).get('half')) || 0)));
+  const [, setVersion] = useState(0);
+  const query = new URLSearchParams(location.search);
+  const [page, setPage] = useState(() => Math.max(0, Math.min(9, Number(query.get('page')) || 0)));
+  const [half, setHalf] = useState(() => Math.max(0, Math.min(3, Number(query.get('half')) || 0)));
+  const [modShown, setModShown] = useState(0);
+  const [armed, setArmed] = useState(-1);
+  const [editing, setEditing] = useState(null);
+  const [menu, setMenu] = useState(null);
+  const [hover, setHover] = useState(null);
+  const stage = useRef(null);
   const g = useMemo(() => panelGeometry(true), []);
 
   useEffect(() => {
@@ -456,74 +662,138 @@ function App() {
       const faces = [['B612 Mono', 'B612Mono-Regular.ttf', {}], ['Overpass', 'Overpass-Medium.ttf', { weight: '500' }],
                      ['Chivo Mono', 'ChivoMono-Regular.ttf', {}], ['Glyph Grotesque', 'GlyphGrotesque-Regular.ttf', {}]];
       await Promise.all(faces.map(async ([family, file, descriptors]) => document.fonts.add(await new FontFace(family, `url(fonts/${file})`, descriptors).load())));
+      // The page's own instance of the sound's code: the parameters as the host holds them,
+      // their text and the previews. The audio's instance gets every change too (step 5).
       const silt = await loadSilt(await fetch('silt.wasm').then((r) => r.arrayBuffer()));
       silt.create(true);
-      setData({ params, layout, help, presets, silt });
+      setData({ params, layout, help, presets, silt, byId: Object.fromEntries(params.map((p) => [p.id, p])) });
     })().catch((err) => console.error(err));
   }, []);
 
   if (!data) return <div className="frame" style={{ width: 1200 * scale, height: 820 * scale }} />;
 
-  const byId = Object.fromEntries(data.params.map((p) => [p.id, p]));
-  const values = Object.fromEntries(data.params.map((p) => [p.id, data.silt.getParam(p.index)]));
-  const value = (id) => values[id] ?? 0;
-  const text = (id, v) => data.silt.text(byId[id].index, v);
-  const context = { value, modShown: 0, resonatorHalf: half, delayForced: false };
-  const idle = ['MIX 0', 'OPEN', 'NEUTRAL', 'LEVELS 0'];
+  const { byId, silt } = data;
+  const value = (id) => (byId[id] ? silt.getParam(byId[id].index) : 0);
+  const text = (id, v) => silt.text(byId[id].index, v);
+  const setParam = (id, v) => {
+    if (!byId[id]) return;
+    silt.setParam(byId[id].index, v);
+    window.siltAudio?.setParam(byId[id].index, v);
+    setVersion((n) => n + 1);
+  };
+  const selectModulator = (m, arm) => {
+    setModShown(m);
+    if (arm) setArmed((a) => (a === m ? -1 : m));
+  };
+  const ui = {
+    scale, editing,
+    stageLeft: () => stage.current.getBoundingClientRect().left,
+    to01: (id) => silt.to01(byId[id].index, value(id)),
+    setFrom01: (id, p) => setParam(id, silt.from01(byId[id].index, p)),
+    setParam,
+    resetToDefault: (id) => setParam(id, byId[id].default),
+    // As the plug-in reads typing: the parameter's own text to value (JUCE's getFloatValue,
+    // getIntValue, a choice by name, on/off).
+    typeValue: (id, typed) => {
+      const p = byId[id];
+      const t = typed.trim();
+      let v;
+      if (p.kind === 'choice') v = Math.max(0, p.choices.findIndex((c) => c === t));
+      else if (p.kind === 'switch') v = /^(on|yes|true)$/i.test(t) ? 1 : 0;
+      else if (p.kind === 'integer') v = parseInt(t, 10) || 0;
+      else v = parseFloat(t) || 0;
+      setParam(id, v);
+    },
+    setEditing, beginGesture: () => {}, endGesture: () => {},
+    openMenu: setMenu,
+    selectModulator,
+    setPage: (p) => setPage(p),
+    openModule: (m) => {
+      if (page === 4 + m && m === 0) setHalf((h) => (h + 1) % 4);   // RES again: its next page
+      setPage(4 + m);
+    },
+  };
+
+  const context = { value, modShown, resonatorHalf: half, delayForced: false };
   const wordWidth = Math.ceil(measure('SILT', `${font.wordmark(48).fontSize}px "Glyph Grotesque"`)) + 4;
+  const shapes = ['SINE', 'TRIANGLE', 'SAW', 'SQUARE'];
+  const modTitles = [0, 1, 2, 3].map((m) => {
+    const type = Math.round(value(`m${m + 1}Type`));
+    return type !== 0 ? TYPE_NAMES[type] : shapes[Math.max(0, Math.min(3, Math.round(value(`m${m + 1}Shape`))))];
+  });
+
+  // The readout: hover help first, then an armed modulator, then the standing figure (statusText).
+  const helpLine = hover ? helpFor(data.help, hover) : '';
+  const status = helpLine || (armed >= 0 ? `MOD ${armed + 1} ARMED: DRAG A KNOB'S OUTER RING` : statusFigure(null, -100, 120));
+
+  const over = (e) => {
+    const el = e.target.closest?.('[data-help]');
+    setHover(el ? el.getAttribute('data-help') : null);
+  };
 
   return (
-    <div className="frame" style={{ width: 1200 * scale, height: 820 * scale }}>
-      <div className="stage" style={{ width: 1200, height: 820, transform: `scale(${scale})`, background: css(S.page) }}>
-        {/* Masthead */}
-        <At r={[g.header[0], g.header[1] + g.header[3] - 2, g.header[2], 2]} style={{ background: css(S.ink) }} />
-        <At r={[g.header[0], g.header[1], 200, g.header[3] - 10]} style={{ ...font.wordmark(48), color: css(S.ink), display: 'flex', alignItems: 'center' }}>
-          SILT
-        </At>
-        <At r={[g.header[0] + wordWidth + 14, g.header[1] + 14, 400, 34]} style={{ ...font.name(15.5, 0.06), color: css(S.soft), lineHeight: '17px' }}>
-          GLYPH AUDIO<br />GRANULAR SAMPLER
-        </At>
-        <PresetBar r={g.presets} name="INIT" />
-        <Key r={g.tour} text="?" />
+    <UI.Provider value={ui}>
+      <div className="frame" style={{ width: 1200 * scale, height: 820 * scale }}>
+        <div ref={stage} className="stage" style={{ width: 1200, height: 820, transform: `scale(${scale})`, background: css(S.page) }}
+             onPointerOver={over} onPointerLeave={() => setHover(null)}>
+          {/* Masthead */}
+          <At r={[g.header[0], g.header[1] + g.header[3] - 2, g.header[2], 2]} style={{ background: css(S.ink) }} />
+          <At r={[g.header[0], g.header[1], 200, g.header[3] - 10]} style={{ ...font.wordmark(48), color: css(S.ink), display: 'flex', alignItems: 'center' }}>
+            SILT
+          </At>
+          <At r={[g.header[0] + wordWidth + 14, g.header[1] + 14, 400, 34]} style={{ ...font.name(15.5, 0.06), color: css(S.soft), lineHeight: '17px' }}>
+            GLYPH AUDIO<br />GRANULAR SAMPLER
+          </At>
+          <div data-help="!preset"><PresetBar r={g.presets} name="INIT" /></div>
+          <Key r={g.tour} text="?" help="!tour" />
 
-        {/* Strip */}
-        <Source g={g} />
-        <Chain g={g} idle={idle} openModule={page >= 4 && page <= 7 ? page - 4 : -1} half={half} chainOpen={page === 9} />
-        <Readout r={g.lcd} title="SILT" figure={statusFigure(null, -100, 120)} />
+          {/* Strip */}
+          <Source g={g} />
+          <Chain g={g} value={value} openModule={page >= 4 && page <= 7 ? page - 4 : -1} half={half} chainOpen={page === 9} />
+          <Readout r={g.lcd} title="SILT" status={status} />
 
-        {/* Screen (step 6 draws what's on it) */}
-        <Surface r={g.screen} colour={C.screenBlue} />
-        <At r={[g.screen[0] + 26, g.screen[1] + 18, 400, 20]} style={{ ...font.screen(17), color: css(C.screenPale) }}>RAIN-BELLS</At>
+          {/* Screen (step 6 draws what's on it) */}
+          <div data-help="!screen">
+            <Surface r={g.screen} colour={C.screenBlue} />
+            <At r={[g.screen[0] + 26, g.screen[1] + 18, 400, 20]} style={{ ...font.screen(17), color: css(C.screenPale) }}>RAIN-BELLS</At>
+          </div>
 
-        {/* The grip between the screen and the keys (screenDivider): three short dashes. */}
-        {[-1, 0, 1].map((i) => (
-          <At key={i} r={[g.well[0] + g.well[2] / 2 + i * 10 - 3, g.screen[1] + g.screen[3] + 3 + 3 - 1 + 0.5, 6, 2]} style={{ background: css(C.inkSoft) }} />
-        ))}
+          {/* The grip between the screen and the keys (screenDivider): three short dashes. */}
+          <div data-help="!grip">
+            {[-1, 0, 1].map((i) => (
+              <At key={i} r={[g.well[0] + g.well[2] / 2 + i * 10 - 3, g.screen[1] + g.screen[3] + 3 + 3 - 1 + 0.5, 6, 2]} style={{ background: css(C.inkSoft) }} />
+            ))}
+          </div>
 
-        {/* Key row */}
-        {[0, 1, 2, 3, 8].map((p) => (
-          <React.Fragment key={p}>
-            <Key r={g.pageKeys[p]} text={PAGE_NAMES[p]} on={p === page} tint={p === page ? mix(pageColour(p), S.panel, 0.25) : pageColour(p)} flat />
-            {p === page && (
-              <At r={[g.pageKeys[p][0] + 1, g.pageKeys[p][1] + g.pageKeys[p][3] - 4, g.pageKeys[p][2] - 2, g.well[1] - (g.pageKeys[p][1] + g.pageKeys[p][3]) + 5]}
-                  style={{ background: css(pageColour(p)) }} />
-            )}
-          </React.Fragment>
-        ))}
-        <Key r={g.learn} text="LEARN" led={false} />
-        <Key r={g.random} text="RANDOM" />
-        <At r={g.amount} style={{ background: css(C.lcdGreen), borderRadius: 3, color: css(C.lcdText), ...font.value(11.5), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>50%</At>
-        <Key r={g.routes} text="MOD ROUTES" />
-        <Key r={g.undo} text="UNDO" />
-        <Key r={g.redo} text="REDO" disabled />
+          {/* Key row */}
+          {[0, 1, 2, 3, 8].map((p) => (
+            <React.Fragment key={p}>
+              <Key r={g.pageKeys[p]} text={PAGE_NAMES[p]} on={p === page} tint={p === page ? mix(pageColour(p), S.panel, 0.25) : pageColour(p)} flat
+                   onClick={() => setPage(p)} help="!tab" />
+              {p === page && (
+                <At r={[g.pageKeys[p][0] + 1, g.pageKeys[p][1] + g.pageKeys[p][3] - 4, g.pageKeys[p][2] - 2, g.well[1] - (g.pageKeys[p][1] + g.pageKeys[p][3]) + 5]}
+                    style={{ background: css(pageColour(p)) }} />
+              )}
+            </React.Fragment>
+          ))}
+          <Key r={g.learn} text="LEARN" led={false} help="!learn" />
+          <Key r={g.random} text="RANDOM" help="!random" />
+          <At r={g.amount} data-help="!randomAmount" style={{ background: css(C.lcdGreen), borderRadius: 3, color: css(C.lcdText), ...font.value(11.5), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>50%</At>
+          <Key r={g.routes} text="MOD ROUTES" help="!routes" />
+          <Key r={g.undo} text="UNDO" help="!undo" />
+          <Key r={g.redo} text="REDO" disabled help="!redo" />
 
-        {/* Well */}
-        <Well g={g} page={page} entries={data.layout.instrument} context={context} value={value} text={text} params={byId} grainCurve={data.silt.grainCurve} />
+          {/* Well */}
+          <Well g={g} page={page} entries={data.layout.instrument} context={context} value={value} text={text} params={byId}
+                grainCurve={silt.grainCurve} modTitles={modTitles} armed={armed} />
 
-        {/* The browser's row, where the plug-in has the Bench */}
-        <Surface r={g.bench} colour={S.panel} />
+          {/* The browser's row, where the plug-in has the Bench */}
+          <Surface r={g.bench} colour={S.panel} />
+
+          {menu && <Popup menu={menu} close={() => setMenu(null)} />}
+        </div>
       </div>
-    </div>
+    </UI.Provider>
   );
 }
 

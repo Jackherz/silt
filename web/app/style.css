@@ -7,3 +7,24 @@ html, body { margin: 0; background: var(--page); overflow: hidden; }
 .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .at { position: absolute; line-height: 1; user-select: none; }
 .spine { display: flex; align-items: center; justify-content: center; }
+
+/* Keys: faint at rest, stronger under the mouse and pressed (PanelLook::drawButtonBackground). */
+.key { cursor: pointer; }
+.key:not(.filled):not(.disabled):hover .plate { background: rgba(233, 226, 208, 0.14) !important; }
+.key:not(.filled):not(.disabled):active .plate { background: rgba(233, 226, 208, 0.22) !important; }
+.key.filled:hover .plate { filter: brightness(0.93); }
+.key.disabled { cursor: default; }
+.chip { cursor: pointer; }
+.chip:hover .plate { filter: brightness(1.25); }
+.hit { touch-action: none; }
+.knob-hit { cursor: ns-resize; }
+.typed { width: 100%; height: 100%; border: 0; outline: 0; padding: 0; background: transparent; text-align: center; }
+.typed::selection { background: rgba(232, 106, 44, 0.35); }
+.popup-shield { position: absolute; inset: 0; z-index: 10; }
+.popup { position: absolute; padding: 4px 0; border-radius: 4px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45); }
+.popup-item { display: flex; align-items: center; padding: 0 12px 0 6px; white-space: nowrap; cursor: pointer; }
+.popup-item:hover { background: #e9e2d0; color: #212422; }
+.popup-item .tick { display: inline-block; width: 18px; }
+
+/* Drawn shapes never take the mouse; the parts underneath do. */
+svg.at { pointer-events: none; }

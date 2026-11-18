@@ -73,6 +73,17 @@ SILT_EXPORT void silt_set_param (int id, float value)
 }
 
 SILT_EXPORT float silt_get_param (int id) { return web->instrument.parameter (id); }
+
+// A knob's travel, as the plug-in's slider has it: 0–1 from a value (unsnapped), and the
+// value at a point along it (snapped to the parameter's steps).
+SILT_EXPORT float silt_to01 (int id, float value)
+{
+    const auto& p = sp::info (id);
+    if (p.mapping() == sp::Mapping::linear || p.kind != sp::Kind::real)
+        return std::clamp ((value - p.low) / (p.high - p.low), 0.0f, 1.0f);
+    return sp::to01 (id, value);
+}
+SILT_EXPORT float silt_from01 (int id, float proportion) { return sp::from01 (id, proportion); }
 SILT_EXPORT float silt_get_value (int id) { return web->instrument.value (id); }   // as the sound reads it, modulated
 
 // Modulation routes, by parameter id; amount −1…1, polarity 0 natural, 1 unipolar, 2 bipolar.
