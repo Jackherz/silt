@@ -96,7 +96,7 @@ export function Tour({ steps, step, go, done, W = 1200, H = 820 }) {
       <div className="at" style={{ left: inner[0] + inner[2] - 60, top: inner[1], width: 60, height: 24, ...font.screen(11 * 1.1), color: css(C.inkSoft), display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
         {step + 1} / {steps.length}
       </div>
-      <div ref={body} className="at tour-body" style={{ left: inner[0], top: inner[1] + 24 + 6, width: inner[2], ...font.name(13.5), lineHeight: `${13.5 * 1.08 + 3}px`, color: css(C.ink), whiteSpace: 'pre-wrap' }}>
+      <div ref={body} className="at tour-body" style={{ left: inner[0], top: inner[1] + 24 + 6, width: inner[2], ...font.name(13.5), lineHeight: `${13.5 * 1.08 + 3}px`, color: css(C.ink), whiteSpace: 'pre-line' }}>
         {s.body}
         {s.tryIt && (
           <div style={{ marginTop: 8 * 1.08 + 3 }}>

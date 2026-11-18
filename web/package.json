@@ -8,7 +8,9 @@
     "assets": "sh scripts/assets.sh",
     "dev": "sh scripts/assets.sh --quiet && vite --port 5176 --strictPort",
     "build": "sh scripts/assets.sh && vite build",
-    "check": "node app/check-exports.mjs ../build-web"
+    "check": "node app/check-exports.mjs ../build-web",
+    "test:interact": "node scripts/interact-test.mjs",
+    "test:fit": "node scripts/text-fit.mjs"
   },
   "dependencies": {
     "react": "18.3.1",

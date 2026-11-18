@@ -77,7 +77,7 @@ function Switch({ r, text, on }) {
       <At r={toggle} style={{ border: `1.5px solid ${css(S.ink)}`, borderRadius: 2, background: on ? css(S.lit) : 'transparent' }} />
       <At r={on ? [toggle[0] + 11, toggle[1], 11, 13] : [toggle[0], toggle[1], 11, 13]} style={{ background: css(S.ink), borderRadius: 1 }} />
       <At r={[r[0] + 26, r[1], r[2] - 26, r[3]]} style={{ ...font.screen(15), color: css(S.soft), display: 'flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
-        {text}
+        <Fitted text={text} style={font.screen(15)} width={r[2] - 26} origin="0 50%" />
       </At>
     </>
   );
@@ -904,7 +904,8 @@ function Banner({ r, m, type, routes, muted, onClick }) {
         MOD {m + 1}
       </At>
       <At r={[text[0], text[1] + text[3] / 2, text[2], text[3] / 2]} style={{ ...font.mono(10), color: css(C.inkSoft), display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'pre' }}>
-        {`${TYPE_NAMES[type] ?? ''}  ${routes} ${routes === 1 ? 'ROUTE' : 'ROUTES'}${muted ? '  MUTED' : ''}`}
+        {/* Squeezed to fit, never cut: ENVELOPE with MUTED is wider than the box. */}
+        <Fitted text={`${TYPE_NAMES[type] ?? ''}  ${routes} ${routes === 1 ? 'ROUTE' : 'ROUTES'}${muted ? '  MUTED' : ''}`} style={font.mono(10)} width={text[2] - 2} minScale={0.6} />
       </At>
     </div>
   );
@@ -1717,6 +1718,8 @@ function App() {
   // Web MIDI: everything to the sound (notes, pedal, wheel, pressure, bend); controllers but the
   // pedal and all-notes-off also to the controller above.
   window.siltMidi = (bytes) => midiRef.current?.(bytes);   // the same path a MIDI device takes (tests use it)
+  // For the text-fit check (scripts/text-fit.mjs): set a value or a view as a person would.
+  window.siltPanel = { params: data.params, setParam, setPage, setHalf, setModShown, setPresetName, setHover, helpKeys: () => Object.keys({ ...data.help, ...WEB_HELP }) };
   midiRef.current = (bytes) => {
     const [status, d1 = 0, d2 = 0] = bytes;
     const kind = status & 0xf0;
