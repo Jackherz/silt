@@ -1121,11 +1121,11 @@ function SaveDialog({ categories, start, save, cancel }) {
   );
 }
 
-// Help for the browser's own parts (new wording: for the owner to approve). START AUDIO's is Brood's.
+// Help for the browser's own parts, as the owner worded them. START AUDIO's is Brood's.
 const WEB_HELP = {
   '!start': 'AUDIO: starts and stops the sound on this page. Nothing plays until you press it',
-  '!mic': 'MIC: your microphone into Silt, for LIVE and FEED. Use headphones',
-  '!tempo': 'TEMPO: what synced settings follow. A host sets it in the plug-in; here you do',
+  '!mic': 'MIC: your voice or an instrument fed in to Silt, for LIVE and FEED modes. Use headphones',
+  '!tempo': 'TEMPO: beats per minute, modulation and time based fx will be synced to this amount',
   '!keys': 'KEYS: play notes here, or on the computer: A to K, Z and X for octaves',
 };
 
