@@ -16,7 +16,7 @@ await page.addInitScript(() => localStorage.setItem('silt-tour-v1', 'seen'));
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 await page.goto(url);
-await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION' && window.siltPanel);
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS' && window.siltPanel);
 await page.evaluate(() => document.fonts.ready);
 
 // In the page: every text's drawn rectangles against its box (the nearest positioned .at with a

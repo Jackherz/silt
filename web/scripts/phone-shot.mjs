@@ -8,7 +8,7 @@ await page.addInitScript(() => { if (!location.search.includes('tour=first')) lo
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 await page.goto(url);
-await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 15000 });
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 15000 });
 await page.waitForTimeout(400);
 await page.screenshot({ path: out, fullPage: true });
 await browser.close();

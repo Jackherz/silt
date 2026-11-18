@@ -11,6 +11,19 @@ export const SAMPLES = [
   { file: 'rain-bells.flac', name: 'Rain Bells', root: 63 },
   { file: 'guitar-harmonics.flac', name: 'Guitar Harmonics', root: 59 },
 ];
+// Brood's loops (Jack Herz's own recordings, Brood's DEMOS), as more samples. They aren't part of
+// Silt: on jackherz.com they load from Brood's own copy (/brood-app/demos/); while developing,
+// scripts/assets.sh copies them in from a Brood checkout, and the build leaves them out.
+export const BROOD_LOOPS = [
+  { id: 'ambiotica', name: 'Ambiotica' },
+  { id: 'feedback-ambience', name: 'Feedback ambience' },
+  { id: 'tela-tape-loop', name: 'Tela tape loop' },
+  { id: 'habit-and-keys-1', name: 'Habit and keys 1' },
+  { id: 'habit-and-keys-2', name: 'Habit and keys 2' },
+  { id: 'chroma-rhodes', name: 'Chroma Rhodes' },
+  { id: 'nylon-tines', name: 'Nylon tines' },
+];
+export const broodLoopUrl = (id) => `${import.meta.env.DEV ? 'brood-loops/' : '/brood-app/demos/'}${id}.flac`;
 export const MAX_SECONDS = 30;   // as the plug-in keeps of a file (SiltProcessor::maxCaptureSeconds)
 
 export class Audio {

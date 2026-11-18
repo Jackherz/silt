@@ -14,7 +14,7 @@ await page.addInitScript(() => { if (!location.search.includes('tour=first')) lo
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 10000 });
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 10000 });
 
 let failed = 0;
 const check = (what, ok, detail = '') => {
@@ -68,7 +68,7 @@ check('hover help reads the plug-in\'s line', help);
 
 // Modulation, on a fresh page.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 10000 });
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 10000 });
 const routeCount = () => page.evaluate(() => document.querySelectorAll('.route-row').length);
 // Alt-drag on SIZE: a route from MOD 1 (the last used, at first).
 b = await knob(1);
@@ -102,7 +102,7 @@ check('CLEAR ALL, twice, clears them', (await routeCount()) === 0);
 
 // RANDOM, UNDO and REDO.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 10000 });
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 10000 });
 const allValues = () => page.evaluate(() => [...document.querySelectorAll('.knob-hit')].map((k) => k.parentElement.innerText.trim()).join('|'));
 const start = await allValues();
 await page.getByText('RANDOM', { exact: true }).click();
@@ -116,7 +116,7 @@ check('REDO brings RANDOM back', (await allValues()) === randomised);
 
 // Presets: the arrows, the edited mark, the browser and SAVE.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 10000 });
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 10000 });
 const arrows = page.locator('[data-help="!preset"] .key .plate');
 await arrows.nth(2).click({ force: true });   // next
 check('the next arrow loads GLASS CLOUD', (await page.getByText('GLASS CLOUD', { exact: true }).count()) === 1);
@@ -143,7 +143,7 @@ await page.keyboard.press('Escape');
 
 // Sound: START AUDIO, the keys, LOAD.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 10000 });
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 10000 });
 await page.getByText('START AUDIO', { exact: true }).click({ force: true });
 await page.waitForFunction(() => window.siltAudio?.context?.state === 'running', null, { timeout: 5000 }).catch(() => {});
 check('START AUDIO starts it', await page.evaluate(() => window.siltAudio?.context?.state === 'running'));
@@ -217,7 +217,7 @@ check('crossing the value takes SIZE over', (await valueText(1)) !== sizeBefore,
 
 // Samples undo: LOAD is a step (with ROOT); five loads, and only the last four undo.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 8000 });
 const loadFactory = async (name) => {
   await page.getByText('LOAD', { exact: true }).click();
   await page.locator('.popup-item', { hasText: name }).click();
@@ -225,9 +225,9 @@ const loadFactory = async (name) => {
 };
 await loadFactory('Keys Drone');
 await page.getByText('UNDO', { exact: true }).click();
-check('UNDO after LOAD brings the sample back', await page.evaluate(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION'));
+check('UNDO after LOAD brings the sample back', await page.evaluate(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS'));
 await page.getByText('PLAY', { exact: true }).click();
-check('and its ROOT (E3)', (await page.getByText('E3', { exact: true }).count()) === 1);
+check('and its ROOT (B2)', (await page.getByText('B2', { exact: true }).count()) === 1);
 await page.getByText('REDO', { exact: true }).click();
 check('REDO loads it again', await page.evaluate(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'KEYS-DRONE') && (await page.getByText('G2', { exact: true }).count()) === 1);
 for (const n of ['Rain Bells', 'Guitar Harmonics', 'Ahhh Progression', 'Keys Drone']) await loadFactory(n);   // five loads in all
@@ -238,7 +238,7 @@ check('back to the first kept: Keys Drone', await page.evaluate(() => document.q
 
 // The screen: SLICE's lines (add, remove, drag, undo), the wheel's zoom, the scope.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 8000 });
 await page.getByText('INIT', { exact: true }).click();
 await page.locator('.preset-row', { hasText: 'STUTTER GRID' }).click();
 await page.keyboard.press('Enter');
@@ -271,7 +271,7 @@ check('ZOOM reads it', (await page.locator('.zoom-box').innerText()).startsWith(
 await page.locator('.zoom-box').dblclick();
 check('a double-click on ZOOM shows it all', Number(await screen.getAttribute('data-zoom')) === 1, await screen.getAttribute('data-zoom'));
 await page.goto(`${url}?page=5`);
-await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 8000 });
 await page.getByText('START AUDIO', { exact: true }).click({ force: true });
 await page.waitForFunction(() => window.siltAudio?.lastScope?.input?.length === 4096, null, { timeout: 5000 }).catch(() => {});
 check('FILTER\'s page: the scope reads the module', await page.evaluate(() => window.siltAudio?.lastScope?.input?.length === 4096));
@@ -279,7 +279,7 @@ check('FILTER\'s page: the scope reads the module', await page.evaluate(() => wi
 // The corner pictures: each page with one draws it, while a note plays, without an error.
 for (const [n, name] of [[2, 'PITCH'], [4, 'RESONATOR'], [5, 'FILTER'], [6, 'COLOR'], [7, 'SPACE'], [8, 'MOD']]) {
   await page.goto(`${url}?page=${n}`);
-  await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
+  await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 8000 });
   await page.getByText('START AUDIO', { exact: true }).click({ force: true });
   await page.waitForFunction(() => window.siltAudio?.lastDisplay, null, { timeout: 5000 }).catch(() => {});
   await page.evaluate(() => window.siltAudio.noteOn(60));
@@ -298,7 +298,7 @@ for (const [n, name] of [[2, 'PITCH'], [4, 'RESONATOR'], [5, 'FILTER'], [6, 'COL
 
 // A key while the audio's off doesn't start it: START AUDIO glows instead, and the note isn't kept.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 8000 });
 await page.keyboard.down('a');
 await page.waitForTimeout(300);
 check('a key with the audio off doesn\'t start it', await page.evaluate(() => !window.siltAudio?.running));
@@ -325,7 +325,7 @@ await page.keyboard.up('s');
 // never moves on by itself; Esc ends it and it stays ended; ? brings it back.
 await page.evaluate(() => localStorage.removeItem('silt-tour-v1'));
 await page.goto(`${url}?tour=first`);
-await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 8000 });
 check('the tour opens on a first visit', (await page.locator('.tour').count()) === 1);
 await page.getByText('SHAPE', { exact: true }).click({ force: true, timeout: 2000 }).catch(() => {});
 check('the dimmed parts take no clicks', (await page.getByText('FADE', { exact: true }).count()) === 0);
@@ -349,7 +349,7 @@ check('LOAD\'s menu works over the tour', (await page.locator('.tour-done').coun
 await page.keyboard.press('Escape');
 check('Esc ends it', (await page.locator('.tour').count()) === 0);
 await page.reload();
-await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 8000 });
 check('and it stays ended', (await page.locator('.tour').count()) === 0);
 await page.getByText('?', { exact: true }).click();
 check('? brings it back', (await page.locator('.tour').getAttribute('aria-label')) === 'Tour: Welcome to Silt');
@@ -361,6 +361,15 @@ check('Esc closes it', (await page.locator('.plugin-note').count()) === 0);
 await page.getByText('IN THE PLUG-IN', { exact: true }).click();
 await page.locator('.plugin-note').getByText('CLOSE', { exact: true }).click();
 check('CLOSE closes it', (await page.locator('.plugin-note').count()) === 0);
+
+// LOAD's FROM BROOD: one of Brood's loops, at C3.
+await page.goto(url);
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 8000 });
+await page.getByText('LOAD', { exact: true }).click();
+check('LOAD lists FROM BROOD', (await page.locator('.popup-header', { hasText: 'FROM BROOD' }).count()) === 1);
+await page.locator('.popup-item', { hasText: 'Chroma Rhodes' }).click();
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'CHROMA-RHODES', null, { timeout: 8000 }).catch(() => {});
+check('a Brood loop loads', await page.evaluate(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'CHROMA-RHODES'));
 
 check('no page errors', errors.length === 0, errors.join('; '));
 await browser.close();

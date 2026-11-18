@@ -7,7 +7,7 @@ import { panelGeometry, phoneGeometry, PW, centred, box, SPINE } from './geometr
 import { C, S, MOD, css, rgba, pageColour, font } from './theme.js';
 import { isShown, isDimmed, roundToInt, helpFor } from './rules.js';
 import { loadSilt } from '../engine/silt-wasm.js';
-import { Audio, SAMPLES } from './audio.js';
+import { Audio, SAMPLES, BROOD_LOOPS, broodLoopUrl } from './audio.js';
 import { Screen, makeOverview } from './screen.jsx';
 import { Tour, tourSeen, markTourSeen, PLUGIN_ONLY, union } from './tour.jsx';
 
@@ -1353,7 +1353,9 @@ function App() {
   }, []);
 
   // A new instance opens with the first factory sample, as the plug-in does.
-  useEffect(() => { if (data && !sample) loadSample({ factory: 0 }).catch((err) => console.error(err)); }, [data]);
+  // The first sound: Guitar Harmonics (the owner's choice).
+  const FIRST_SAMPLE = SAMPLES.findIndex((smp) => smp.name === 'Guitar Harmonics');
+  useEffect(() => { if (data && !sample) loadSample({ factory: FIRST_SAMPLE }).catch((err) => console.error(err)); }, [data]);
   // The computer's keys play notes: A W S E D F T G Y H U J K O L P (C to D# an octave up), Z and X
   // move the octave. Not while a value is being typed.
   useEffect(() => {
@@ -1412,19 +1414,23 @@ function App() {
   }
   // A sample: a factory one (ROOT to its note) or your file (ROOT back to C3), decoded, cut to
   // 30 s, analysed here on the page, then handed to the audio.
-  async function loadSample({ factory, file }) {
+  async function loadSample({ factory, brood, file }) {
     const { audio, silt, byId } = data;
-    const bytes = factory != null ? await fetch(`samples/${SAMPLES[factory].file}`).then((r) => r.arrayBuffer()) : await file.arrayBuffer();
+    const fetched = (url) => fetch(url).then((r) => { if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.arrayBuffer(); });
+    const bytes = factory != null ? await fetched(`samples/${SAMPLES[factory].file}`)
+                : brood != null ? await fetched(broodLoopUrl(BROOD_LOOPS[brood].id)) : await file.arrayBuffer();
     const decoded = await audio.decode(bytes);
-    const name = factory != null ? SAMPLES[factory].name : file.name.replace(/\.[^.]+$/, '');
-    installSample(decoded, name, factory ?? -1, factory != null ? SAMPLES[factory].root : 60);
+    const name = factory != null ? SAMPLES[factory].name : brood != null ? BROOD_LOOPS[brood].name : file.name.replace(/\.[^.]+$/, '');
+    const source = factory != null ? `silt:${factory}` : brood != null ? `brood:${brood}` : 'file';
+    // ROOT: a factory sample's own note; Brood's loops and your files play at C3.
+    installSample(decoded, name, source, factory != null ? SAMPLES[factory].root : 60);
     if (decoded.cut) showFlashRef.current?.(`FIRST ${30} S OF ${name.toUpperCase()}`);
   }
   // Any sample in: analysed here, installed by the audio; ROOT set if given (a take keeps it).
-  function installSample(decoded, name, factory, root) {
+  function installSample(decoded, name, source, root) {
     const { audio, silt, byId } = data;
     const analysis = silt.analyse(decoded.channels, decoded.sampleRate);
-    const next = { name, factory, ...decoded, seconds: decoded.channels[0].length / decoded.sampleRate, analysis };
+    const next = { name, source, ...decoded, seconds: decoded.channels[0].length / decoded.sampleRate, analysis };
     const put = () => {
       audio.sendSample(decoded, analysis);
       if (root != null) {
@@ -1685,7 +1691,7 @@ function App() {
     setCapture(null);
     if (!take) return;
     const time = new Date().toTimeString().slice(0, 8);
-    installSample({ channels: take.channels, sampleRate: take.sampleRate }, `${take.resample ? 'RESAMPLE' : 'CAPTURE'} ${time}`, -1, null);
+    installSample({ channels: take.channels, sampleRate: take.sampleRate }, `${take.resample ? 'RESAMPLE' : 'CAPTURE'} ${time}`, 'take', null);
   };
 
   // The 8-knob controller (SiltProcessor::handleController, applyControllerMoves): its knobs move
@@ -1766,7 +1772,10 @@ function App() {
   const loadMenu = () => setMenu({ r: g.load, items: [
     { text: 'Load file...', pick: () => fileInput.current?.click() },
     { header: true, text: 'FACTORY SAMPLES' },
-    ...SAMPLES.map((smp, i) => ({ text: smp.name, ticked: sample?.factory === i, pick: () => loadSample({ factory: i }) })),
+    ...SAMPLES.map((smp, i) => ({ text: smp.name, ticked: sample?.source === `silt:${i}`, pick: () => loadSample({ factory: i }) })),
+    { header: true, text: 'FROM BROOD' },
+    ...BROOD_LOOPS.map((loop, i) => ({ text: loop.name, ticked: sample?.source === `brood:${i}`,
+                                       pick: () => loadSample({ brood: i }).catch(() => showFlash("COULDN'T READ THAT FILE")) })),
   ] });
   const showFlash = (message) => {
     setFlash(message);

@@ -17,3 +17,7 @@ cp "$root"/resources/fonts/*.ttf "$root"/resources/fonts/OFL-*.txt "$out/fonts/"
 cp "$root"/kit/fonts/GlyphGrotesque-Regular.ttf "$root"/kit/fonts/OFL-GlyphGrotesque.txt "$out/fonts/"
 cp "$root"/resources/samples/*.flac "$out/samples/"
 [ "$1" = "--quiet" ] || echo "assets in web/$out"
+# Brood's loops, for LOAD's FROM BROOD while developing (on jackherz.com they load from Brood's
+# own copy): from a Brood checkout beside this one, or BROOD_DEMOS. The build leaves them out.
+brood="${BROOD_DEMOS:-$root/../Brood-Source/assets/demos}"
+if [ -d "$brood" ]; then mkdir -p "$out/brood-loops" && cp "$brood"/*.flac "$out/brood-loops/"; fi

@@ -7,7 +7,7 @@
   "scripts": {
     "assets": "sh scripts/assets.sh",
     "dev": "sh scripts/assets.sh --quiet && vite --port 5176 --strictPort",
-    "build": "sh scripts/assets.sh && vite build",
+    "build": "sh scripts/assets.sh && vite build && rm -rf dist/brood-loops",
     "check": "node app/check-exports.mjs ../build-web",
     "test:interact": "node scripts/interact-test.mjs",
     "test:fit": "node scripts/text-fit.mjs",

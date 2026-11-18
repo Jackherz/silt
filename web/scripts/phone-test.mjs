@@ -11,7 +11,7 @@ page.on('pageerror', (e) => errors.push(e.message));
 const results = [];
 const check = (what, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}${detail ? `: ${detail}` : ''}`); };
 await page.goto(url);
-await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 15000 });
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'GUITAR-HARMONICS', null, { timeout: 15000 });
 check('the phone layout, 390 wide', await page.evaluate(() => document.querySelector('.stage').style.width === '390px' && document.documentElement.classList.contains('phone')));
 check('nothing runs off the side', await page.evaluate(() => document.scrollingElement.scrollWidth <= innerWidth + 1));
 await page.getByText('START AUDIO', { exact: true }).tap();

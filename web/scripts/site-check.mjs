@@ -12,7 +12,7 @@ for (const [label, viewport, mobile] of [['desktop', { width: 1440, height: 900 
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`${site}#silt`);
   const frame = page.frameLocator('#silt-frame');
-  await frame.locator('canvas[data-sample="AHHH-PROGRESSION"]').waitFor({ timeout: 15000 });
+  await frame.locator('canvas[data-sample="GUITAR-HARMONICS"]').waitFor({ timeout: 15000 });
   // The frame grows to fit once Silt has drawn (slower on the live site than locally).
   await page.waitForFunction(() => { const f = document.getElementById('silt-frame'); return Math.abs(f.getBoundingClientRect().height - f.contentDocument.body.scrollHeight) < 2; }, null, { timeout: 15000 }).catch(() => {});
   await page.waitForTimeout(800);
