@@ -3,14 +3,15 @@
 // help line in the readout, every preset name and each tour card, and measures each piece of
 // text where the browser actually drew it against the box it lives in. Then it proves itself:
 // one label made too long on purpose must be caught.
-//   node scripts/text-fit.mjs [url]
+//   node scripts/text-fit.mjs [url]          (PHONE=1: at a phone's size, the phone layout)
 // The canvas screen's own lines are drawn and sized as the plug-in draws them; this checks the
 // panel round it.
 import { chromium } from 'playwright-core';
 
 const [url = 'http://localhost:5176/'] = process.argv.slice(2);
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser' });
-const page = await browser.newPage({ viewport: { width: 1200, height: 820 } });
+const PHONE = !!process.env.PHONE;
+const page = await browser.newPage(PHONE ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } : { viewport: { width: 1200, height: 820 } });
 await page.addInitScript(() => localStorage.setItem('silt-tour-v1', 'seen'));
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
@@ -25,7 +26,7 @@ await page.evaluate(() => document.fonts.ready);
 await page.addScriptTag({ content: `
 window.fitProblems = (where) => {
   const stage = document.querySelector('.stage');
-  const k = stage.getBoundingClientRect().width / 1200;
+  const k = stage.getBoundingClientRect().width / parseFloat(stage.style.width);
   const out = [];
   const walker = document.createTreeWalker(stage, NodeFilter.SHOW_TEXT);
   for (let n; (n = walker.nextNode());) {
@@ -109,7 +110,7 @@ await page.evaluate(() => window.siltPanel.setPresetName('Init'));
 await page.getByText('?', { exact: true }).click();
 for (let i = 0; i < 9; i++) {
   await measure(`tour ${i + 1}`); states++;
-  await page.getByText(i === 8 ? 'DONE' : 'NEXT', { exact: true }).click();
+  await page.getByText(i === 8 ? 'DONE' : 'NEXT', { exact: true }).click({ force: true });
 }
 await page.getByText('IN THE PLUG-IN', { exact: true }).click();
 await measure('in the plug-in'); states++;

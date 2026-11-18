@@ -10,7 +10,9 @@
     "build": "sh scripts/assets.sh && vite build",
     "check": "node app/check-exports.mjs ../build-web",
     "test:interact": "node scripts/interact-test.mjs",
-    "test:fit": "node scripts/text-fit.mjs"
+    "test:fit": "node scripts/text-fit.mjs",
+    "test:phone": "node scripts/phone-test.mjs",
+    "test:fit:phone": "PHONE=1 node scripts/text-fit.mjs"
   },
   "dependencies": {
     "react": "18.3.1",

@@ -3,7 +3,7 @@
 // and its own value text (the WebAssembly build).
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { panelGeometry, centred, box, SPINE } from './geometry.js';
+import { panelGeometry, phoneGeometry, PW, centred, box, SPINE } from './geometry.js';
 import { C, S, MOD, css, rgba, pageColour, font } from './theme.js';
 import { isShown, isDimmed, roundToInt, helpFor } from './rules.js';
 import { loadSilt } from '../engine/silt-wasm.js';
@@ -95,7 +95,7 @@ function Menu({ r, text, items, selected, onPick, help }) {
       <At r={plate} className="plate" style={{ borderRadius: 4, background: rgba(S.ink, 0.08) }} />
       <At r={[plate[0] + 8, plate[1], plate[2] - plate[3] - 8, plate[3]]}
           style={{ ...font.name(fontSize), color: css(S.ink), display: 'flex', alignItems: 'center', whiteSpace: 'pre', paddingTop: 2 }}>
-        <Fitted text={text} style={font.name(fontSize)} width={plate[2] - plate[3] - 8} />
+        <Fitted text={text} style={font.name(fontSize)} width={plate[2] - plate[3] - 8} origin="0 50%" />
       </At>
       <svg className="at" style={{ left: 0, top: 0, width: 1, height: 1, overflow: 'visible' }}>
         <path d={`M${cx - 3.5} ${cy - 1.5} L${cx} ${cy + 2} L${cx + 3.5} ${cy - 1.5}`} fill="none" stroke={rgba(S.ink, 0.8)}
@@ -118,12 +118,13 @@ function Popup({ menu, close }) {
 }
 
 function PopupList({ menu, close }) {
+  const ui = useContext(UI);
   const itemH = 24, sepH = 9;
   const items = menu.items.map((it, i) => (typeof it === 'string' ? { text: it, ticked: i === menu.selected, pick: () => menu.onPick(i) } : it));
   const width = Math.max(menu.r[2], 140, ...items.map((it) => (it.text ? measure(it.text, `500 ${font.name(13).fontSize}px "Overpass"`) + 44 : 0)));
   const height = items.reduce((h, it) => h + (it.separator ? sepH : itemH), 8);
   const top = menu.r[1] + menu.r[3];
-  const left = Math.max(4, Math.min(menu.r[0], 1200 - width - 4));
+  const left = Math.max(4, Math.min(menu.r[0], (ui.W ?? 1200) - width - 4));
   const y = top + height <= 816 ? top : Math.max(4, Math.min(menu.r[1], 816) - height);
   const [sub, setSub] = useState(null);   // { index, y }
   let at = y + 4;
@@ -468,12 +469,12 @@ function Chain({ g, value, openModule, half, chainOpen }) {
         {p !== undefined && <At r={[light[0] - 7, light[1] - 7, 25, 25]} className="hit" onClick={() => ui.setParam(ON_IDS[m], st.on ? 0 : 1)} style={{ cursor: 'pointer' }} />}
         <At r={[nameLeft, inner[1], inner[0] + inner[2] - nameLeft, inner[3] / 2]}
             style={{ ...font.screen(15), color: st.on || open ? css(onTop) : css(S.soft), display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
-          {SHORT[m]}{open && m === 0 ? ` ${half + 1}/4` : ''}
+          <Fitted text={`${SHORT[m]}${open && m === 0 ? ` ${half + 1}/4` : ''}`} style={font.screen(15)} width={inner[0] + inner[2] - nameLeft} origin="0 50%" />
         </At>
         {!st.active && (
           <At r={[inner[0], inner[1] + inner[3] / 2, inner[2], inner[3] / 2]}
               style={{ ...font.screen(11), color: open ? rgba(onTop, 0.8) : css(S.soft), display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
-            {st.reason}
+            <Fitted text={st.reason} style={font.screen(11)} width={inner[2]} origin="0 50%" />
           </At>
         )}
       </div>
@@ -576,9 +577,11 @@ function Rail({ r, modTitles, shown, armed, routeCounts, traces, bipolar }) {
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   };
-  const gap = 4, h = Math.trunc((r[3] - gap * 3) / 4);
+  // Down the side (the plug-in's rail), or across, side by side, on a phone.
+  const across = r[2] > r[3] * 3;
+  const gap = 4, h = Math.trunc((r[3] - gap * 3) / 4), cw = Math.trunc((r[2] - gap * 3) / 4);
   const chips = [0, 1, 2, 3].map((m) => {
-    const chip = [r[0], r[1] + m * (h + gap), r[2], h];
+    const chip = across ? [r[0] + m * (cw + gap), r[1], cw, r[3]] : [r[0], r[1] + m * (h + gap), r[2], h];
     const plate = [chip[0] + 1.5, chip[1] + 1.5, chip[2] - 3, chip[3] - 3];
     const area = [chip[0] + 5, chip[1] + 3, chip[2] - 10, chip[3] - 6];
     const topH = Math.min(14, Math.trunc(area[3] / 2));
@@ -770,7 +773,9 @@ function Well({ traces, g, page, entries, context, value, text, params, grainCur
       <Surface r={g.well} colour={S.panel} />
       <At r={[g.well[0], g.well[1], g.well[2], 3]} style={{ background: css(routesOpen ? S.ink : colour), borderRadius: '6px 6px 0 0' }} />
       <Rail r={g.rail} modTitles={modTitles} shown={context.modShown} armed={armed} routeCounts={routeCounts} traces={traces} bipolar={(m) => ['WAVE', 'RANDOM'].includes(TYPE_NAMES[Math.round(value(`m${m + 1}Type`))])} />
-      <At r={[g.slots[0].column[0], g.controlRow[1] + 8, 1, g.controlRow[3] - 16]} style={{ background: rgba(S.ink, 0.2) }} />
+      {g.phone
+        ? <At r={[g.controlRow[0] + 8, g.controlRow[1] - 4, g.controlRow[2] - 16, 1]} style={{ background: rgba(S.ink, 0.2) }} />
+        : <At r={[g.slots[0].column[0], g.controlRow[1] + 8, 1, g.controlRow[3] - 16]} style={{ background: rgba(S.ink, 0.2) }} />}
       {routesOpen && routeList}
       {!routesOpen && page === 1 && <ShapePreview g={g} value={value} grainCurve={grainCurve} />}
       {!routesOpen && items.map((e, i) => {
@@ -822,11 +827,15 @@ function statusFigure(source, levelDb, bpm) {
 
 // One line that never gets cut: squeezed sideways to fit, down to minScale (drawFittedText).
 // Either a canvas font string, or a style from theme.font (its tracking counted too).
+// One line squeezed sideways to fit, down to minScale; past that the type gets smaller too,
+// so it never runs out of its box (as WrappedFit, and JUCE's drawFittedText, do).
 function Fitted({ text, width, cssFont, style, minScale = 0.7, origin = '50% 50%' }) {
   const f = cssFont ?? `${style.fontWeight ?? 400} ${style.fontSize}px "${style.fontFamily}"`;
   const wide = measure(String(text), f) + (style?.letterSpacing ?? 0) * String(text).length;
-  const k = Math.max(minScale, Math.min(1, width / Math.max(1, wide)));
-  return <span style={{ display: 'inline-block', transform: `scaleX(${k})`, transformOrigin: origin, marginLeft: origin === '0 50%' ? 0 : -(1 - k) * 0, }} data-fit={k < 1 ? k.toFixed(3) : undefined}>{text}</span>;
+  const need = Math.min(1, width / Math.max(1, wide));
+  const k = Math.max(minScale, need), smaller = need < minScale ? need / minScale : 1;
+  const sized = smaller < 1 && style?.fontSize ? { fontSize: style.fontSize * smaller, letterSpacing: (style.letterSpacing ?? 0) * smaller } : null;
+  return <span style={{ display: 'inline-block', transform: `scaleX(${k})`, transformOrigin: origin, ...sized }} data-fit={need < 1 ? need.toFixed(3) : undefined}>{text}</span>;
 }
 
 // Text over up to `lines` lines, as JUCE's drawFittedText: words wrap; a line that's still too
@@ -923,14 +932,18 @@ function to01(p, v) {
 // The browser's row, where the plug-in has the Bench (there's no other plug-in to pass audio to
 // here): START AUDIO (Brood's key and wording), MIC, TEMPO, and keys to play from C1 to B3, which
 // covers SLICE's slices from C1 up. All of it is the browser's own; IN THE PLUG-IN says so.
-function BrowserRow({ r, state, onStart, remind, onPlugin, mic, onMic, tempo, onTempo, held, noteOn, noteOff }) {
+function BrowserRow({ r, parts, state, onStart, remind, onPlugin, mic, onMic, tempo, onTempo, held, noteOn, noteOff }) {
   const ui = useContext(UI);
   const y = r[1] + 6, h = r[3] - 12;
-  const keysR = [r[0] + 556, y, r[2] - 564, h];
-  const first = 36, whites = 21;
+  // The desktop: one row (keys C1 to B3). A phone: its own rows, two octaves, moved by OCT.
+  const [octaves, setOctaves] = useState(1);
+  const P = parts ?? { start: [r[0] + 8, y, 150, h], mic: [r[0] + 166, y, 84, h], tempoLabel: [r[0] + 262, y, 60, h], tempo: [r[0] + 322, y + 5, 86, h - 10],
+                       plugin: [r[0] + 420, y, 128, h], keys: [r[0] + 556, y, r[2] - 564, h] };
+  const keysR = P.keys;
+  const first = parts ? 24 + 12 * octaves : 36, whites = parts ? 14 : 21, count = parts ? 24 : 36;
   const white = keysR[2] / whites;
   const isBlack = (n) => [1, 3, 6, 8, 10].includes(n % 12);
-  const notes = Array.from({ length: 36 }, (_, i) => first + i);
+  const notes = Array.from({ length: count }, (_, i) => first + i);
   const whiteIndex = (n) => notes.filter((x) => x < n && !isBlack(x)).length;
   const pressing = useRef(null);
   const press = (note) => { if (pressing.current === note) return; if (pressing.current != null) noteOff(pressing.current); pressing.current = note; if (note != null) noteOn(note); };
@@ -969,16 +982,20 @@ function BrowserRow({ r, state, onStart, remind, onPlugin, mic, onMic, tempo, on
       <Surface r={r} colour={S.panel} />
       {/* A note while it's off: START AUDIO glows, fading in and out (again with each note). */}
       {remind > 0 && !running && state !== 'starting' && (
-        <div key={`remind${remind}`} className="at remind" style={{ left: r[0] + 9, top: y + 1, width: 146, height: h - 4 }} />
+        <div key={`remind${remind}`} className="at remind" style={{ left: P.start[0] + 1, top: P.start[1] + 1, width: P.start[2] - 4, height: P.start[3] - 4 }} />
       )}
-      <Key r={[r[0] + 8, y, 150, h]} text={state === 'starting' ? 'ONE MOMENT' : running ? 'STOP AUDIO' : 'START AUDIO'} led={running} onClick={onStart} help="!start" accent={!running && state !== 'starting'} />
-      <Key r={[r[0] + 166, y, 84, h]} text="MIC" led={mic} onClick={onMic} help="!mic" />
-      <At r={[r[0] + 262, y, 60, h]} style={{ ...font.name(12.5), color: css(S.soft), display: 'flex', alignItems: 'center' }} data-help="!tempo">TEMPO</At>
-      <At r={[r[0] + 322, y + 5, 86, h - 10]} data-help="!tempo" onPointerDown={tempoDrag} onDoubleClick={() => onTempo(120)}
+      <Key r={P.start} text={state === 'starting' ? 'ONE MOMENT' : running ? 'STOP AUDIO' : 'START AUDIO'} led={running} onClick={onStart} help="!start" accent={!running && state !== 'starting'} />
+      <Key r={P.mic} text="MIC" led={mic} onClick={onMic} help="!mic" />
+      <At r={P.tempoLabel} style={{ ...font.name(12.5), color: css(S.soft), display: 'flex', alignItems: 'center' }} data-help="!tempo">TEMPO</At>
+      <At r={P.tempo} data-help="!tempo" onPointerDown={tempoDrag} onDoubleClick={() => onTempo(120)}
           style={{ background: css(C.lcdGreen), color: css(C.lcdText), borderRadius: 3, ...font.value(11.5), display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'ns-resize' }}>
         {tempo.toFixed(1)} BPM
       </At>
-      <Key r={[r[0] + 420, y, 128, h]} text="IN THE PLUG-IN" onClick={onPlugin} help="!plugin" />
+      <Key r={P.plugin} text="IN THE PLUG-IN" onClick={onPlugin} help="!plugin" />
+      {parts && <>
+        <Key r={P.octDown} text="OCT -" onClick={() => setOctaves((o) => Math.max(0, o - 1))} disabled={octaves === 0} help="!keys" />
+        <Key r={P.octUp} text="OCT +" onClick={() => setOctaves((o) => Math.min(6, o + 1))} disabled={octaves === 6} help="!keys" />
+      </>}
       {notes.map(key)}
     </>
   );
@@ -1226,19 +1243,25 @@ function writeStored(key, value) {
 // and the page is just as tall as the panel; on its own, the panel fits the window.
 const EMBEDDED = (() => { try { return window.self !== window.top; } catch { return true; } })();
 if (EMBEDDED) document.documentElement.classList.add('embedded');
+// A phone (700 wide or less): the phone layout, 390 wide, scaled to the width; the page scrolls.
 function useScale() {
-  const fit = () => (EMBEDDED ? Math.max(0.1, window.innerWidth / 1200) : Math.max(0.1, Math.min(window.innerWidth / 1200, window.innerHeight / 820)));
-  const [scale, setScale] = useState(fit);
+  const fit = () => {
+    const phone = window.innerWidth <= 700;
+    return { phone, scale: phone ? window.innerWidth / PW
+                               : EMBEDDED ? Math.max(0.1, window.innerWidth / 1200) : Math.max(0.1, Math.min(window.innerWidth / 1200, window.innerHeight / 820)) };
+  };
+  const [state, setState] = useState(fit);
   useEffect(() => {
-    const on = () => setScale(fit());
+    const on = () => setState(fit());
     window.addEventListener('resize', on);
     return () => window.removeEventListener('resize', on);
   }, []);
-  return scale;
+  useEffect(() => { document.documentElement.classList.toggle('phone', state.phone); }, [state.phone]);
+  return state;
 }
 
 function App() {
-  const scale = useScale();
+  const { scale, phone } = useScale();
   const [data, setData] = useState(null);
   const [, setVersion] = useState(0);
   const query = new URLSearchParams(location.search);
@@ -1301,7 +1324,7 @@ function App() {
   const [userPresets, setUserPresets] = useState(() => readStored('silt-presets-v1', []));
   const [favourites, setFavourites] = useState(() => new Set(readStored('silt-favourites-v1', [])));
   const stage = useRef(null);
-  const g = useMemo(() => panelGeometry(true), []);
+  const g = useMemo(() => (phone ? phoneGeometry() : panelGeometry(true)), [phone]);
 
   useEffect(() => {
     (async () => {
@@ -1777,6 +1800,7 @@ function App() {
   const ui = {
     scale, editing,
     stageLeft: () => stage.current.getBoundingClientRect().left,
+    W: g.W,
     stageTop: () => stage.current.getBoundingClientRect().top,
     to01: (id) => silt.to01(byId[id].index, value(id)),
     setFrom01: (id, p) => setParam(id, silt.from01(byId[id].index, p)),
@@ -1893,11 +1917,12 @@ function App() {
   }
   const transients = transientMemo.current.marks;
   // --- the tour (SiltEditor::tourSteps, shortened for the browser: the owner's choice) ---------
-  const benchKeys = { start: [g.bench[0] + 8, g.bench[1] + 6, 150, g.bench[3] - 12] };
+  const benchKeys = { start: g.benchParts?.start ?? [g.bench[0] + 8, g.bench[1] + 6, 150, g.bench[3] - 12] };
   const pageKeysAll = union(Object.values(g.pageKeys));
   const slotBounds = (i) => g.slots[i].column;
   const scopeOnScreen = (() => {   // GrainScreen::scopeArea, in the panel's space
     const [sx, sy, sw, sh] = g.screen, fieldShare = 0.36;
+    if (g.phone) return [sx + 16, sy + sh - 12 - 16 - 4 - 124 - 8 - 68, sw - 32, 68];   // screen.jsx's phoneLayout
     const content = [16, 12, sw - 32, sh - 24];
     const insetX = content[0] + content[2] - Math.round(content[2] * 0.33);
     const area = [30, 22 + 16, sw - 60, sh - 44 - 16 - 20], rollH = Math.round(area[3] * fieldShare);
@@ -1949,7 +1974,7 @@ function App() {
     setTourStep(i);
   }
   goTourRef.current = goTour;
-  const wordWidth = Math.ceil(measure('SILT', `${font.wordmark(48).fontSize}px "Glyph Grotesque"`)) + 4;
+  const wordWidth = Math.ceil(measure('SILT', `${font.wordmark(g.phone ? 38 : 48).fontSize}px "Glyph Grotesque"`)) + 4;
   const shapes = ['SINE', 'TRIANGLE', 'SAW', 'SQUARE'];
   // Every route, in target order then modulator (SiltProcessor::allRoutes).
   const routes = [];
@@ -1982,15 +2007,15 @@ function App() {
 
   return (
     <UI.Provider value={ui}>
-      <div className="frame" style={{ width: 1200 * scale, height: 820 * scale }}>
-        <div ref={stage} className="stage" style={{ width: 1200, height: 820, transform: `scale(${scale})`, background: css(S.page) }}
+      <div className="frame" style={{ width: g.W * scale, height: g.H * scale }}>
+        <div ref={stage} className="stage" style={{ width: g.W, height: g.H, transform: `scale(${scale})`, background: css(S.page) }}
              onPointerOver={over} onPointerLeave={() => setHover(null)}>
           {/* Masthead */}
           <At r={[g.header[0], g.header[1] + g.header[3] - 2, g.header[2], 2]} style={{ background: css(S.ink) }} />
-          <At r={[g.header[0], g.header[1], 200, g.header[3] - 10]} style={{ ...font.wordmark(48), color: css(S.ink), display: 'flex', alignItems: 'center' }}>
+          <At r={[g.header[0], g.header[1], 200, g.header[3] - 10]} style={{ ...font.wordmark(g.phone ? 38 : 48), color: css(S.ink), display: 'flex', alignItems: 'center' }}>
             SILT
           </At>
-          <At r={[g.header[0] + wordWidth + 14, g.header[1] + 14, 400, 34]} style={{ ...font.name(15.5, 0.06), color: css(S.soft), lineHeight: '17px' }}>
+          <At r={g.phone ? [g.header[0] + wordWidth + 12, g.header[1] + 4, 200, 34] : [g.header[0] + wordWidth + 14, g.header[1] + 14, 400, 34]} style={{ ...font.name(15.5, 0.06), color: css(S.soft), lineHeight: '17px' }}>
             GLYPH AUDIO<br />GRANULAR SAMPLER
           </At>
           <div data-help="!preset">
@@ -2009,12 +2034,12 @@ function App() {
                   gain={Math.pow(10, value('sampleGain') / 20)} live={mode === 1 || mode === 2} feed={mode === 2} frozen={value('freeze') > 0.5}
                   fontPx={screenFont} transients={Math.round(value('snap')) > 1.5 ? transients : null}
                   scope={SCOPE_MODULE[page] !== undefined ? MODULE_NAMES[SCOPE_MODULE[page]] : null}
-                  page={page} picture={picture}
-                  zoomBox={[g.screen[0] + g.screen[2] - 30 - 200 - 78, g.screen[1] + 22, 78, 16]}
+                  page={page} picture={picture} phone={g.phone}
+                  zoomBox={g.phone ? [g.screen[0] + g.screen[2] - 30 - 130 - 78, g.screen[1] + 40, 78, 16] : [g.screen[0] + g.screen[2] - 30 - 200 - 78, g.screen[1] + 22, 78, 16]}
                   sliceEdits={{ begin: () => beginStep('SLICES'), end: endStep, ...sliceEdits,
                                 add: (share) => step('SLICES', () => sliceEdits.add(share)), remove: (i) => step('SLICES', () => sliceEdits.remove(i)) }} />
           {(
-            <GainBox r={[g.screen[0] + g.screen[2] - 30 - 200 - 78 - 130, g.screen[1] + 22, 130, 16]} text={`GAIN ${text('sampleGain', value('sampleGain')).toUpperCase()}`}
+            <GainBox r={g.phone ? [g.screen[0] + g.screen[2] - 30 - 130, g.screen[1] + 40, 130, 16] : [g.screen[0] + g.screen[2] - 30 - 200 - 78 - 130, g.screen[1] + 22, 130, 16]} text={`GAIN ${text('sampleGain', value('sampleGain')).toUpperCase()}`}
                      db={value('sampleGain')} set={(db) => setParam('sampleGain', db)} step={step} beginStep={beginStep} endStep={endStep}
                      normalise={() => { let peak = 0; for (const ch of sample?.channels ?? []) for (let i = 0; i < ch.length; i++) peak = Math.max(peak, Math.abs(ch[i]));
                                         return peak > 1e-6 ? Math.max(-24, Math.min(24, -1 - 20 * Math.log10(peak))) : 0; }}
@@ -2039,7 +2064,7 @@ function App() {
               )}
             </React.Fragment>
           ))}
-          <Key r={g.learn} text="LEARN" led={learnStep >= 0} help="!learn" onClick={() => { controller.current.learned = []; setLearnStep(learnStep >= 0 ? -1 : 0); }} />
+          {!g.phone && <Key r={g.learn} text="LEARN" led={learnStep >= 0} help="!learn" onClick={() => { controller.current.learned = []; setLearnStep(learnStep >= 0 ? -1 : 0); }} />}
           {learnStep >= 0 && learnStep < 8 && (
             // While learning, the slot whose knob to turn.
             <At r={[g.slots[learnStep].column[0] + 2, g.slots[learnStep].column[1] + 2, g.slots[learnStep].column[2] - 4, g.slots[learnStep].column[3] - 4]}
@@ -2058,8 +2083,9 @@ function App() {
                                       pageName={pageOfParam} currentPage={PAGE_NAMES[page]} close={() => setRoutesOpen(false)} />} />
 
           {/* The browser's row, where the plug-in has the Bench: audio, the microphone, tempo, keys. */}
-          <BrowserRow r={g.bench} state={audioState} onStart={startStop} remind={remind} onPlugin={() => setPluginOpen(true)} mic={micOn} onMic={toggleMic} tempo={tempo} onTempo={changeTempo}
+          <BrowserRow r={g.bench} state={audioState} parts={g.benchParts} onStart={startStop} remind={remind} onPlugin={() => setPluginOpen(true)} mic={micOn} onMic={toggleMic} tempo={tempo} onTempo={changeTempo}
                       held={held} noteOn={noteOn} noteOff={noteOff} />
+          {g.phone && <Key r={g.learn} text="LEARN" led={learnStep >= 0} help="!learn" onClick={() => { controller.current.learned = []; setLearnStep(learnStep >= 0 ? -1 : 0); }} />}
           <input ref={fileInput} type="file" accept="audio/*" style={{ display: 'none' }}
                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) loadSample({ file: f }).catch(() => showFlash("COULDN'T READ THAT FILE")); }} />
 
@@ -2076,7 +2102,7 @@ function App() {
                                  save={(name, category) => { savePreset(name, category); setSaving(false); }} cancel={() => setSaving(false)} />}
           {pluginOpen && <PluginNote r={[g.screen[0], g.screen[1], g.screen[2] + 3, g.well[1] + g.well[3] - g.screen[1] + 3]} close={() => setPluginOpen(false)} />}
           {menu && <Popup menu={menu} close={() => setMenu(null)} />}
-          {tourStep >= 0 && <Tour steps={tourSteps} step={tourStep} go={goTour} done={!!tourSteps[tourStep].done?.()} />}
+          {tourStep >= 0 && <Tour steps={tourSteps} step={tourStep} go={goTour} done={!!tourSteps[tourStep].done?.()} W={g.W} H={g.H} />}
         </div>
       </div>
     </UI.Provider>

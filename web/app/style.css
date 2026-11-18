@@ -62,3 +62,8 @@ svg.at { pointer-events: none; }
 .plugin-note .at { z-index: 40; }
 /* In jackherz.com's frame: the page is as tall as the panel, so the frame can grow to fit it. */
 html.embedded #root { min-height: 0; }
+/* A phone: the page scrolls round the phone layout; controls that drag don't scroll it. */
+html.phone, html.phone body { overflow-x: hidden; overflow-y: auto; }
+html.phone .knob-hit, html.phone .chip, html.phone .piano, html.phone .gain-box, html.phone .zoom-box { touch-action: none; }
+html.phone canvas.at { touch-action: pan-y; }
+html.phone .key { touch-action: manipulation; }

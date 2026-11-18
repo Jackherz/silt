@@ -38,7 +38,8 @@ export function makeOverview(sample) {
 
 // The screen's parts (GrainScreen's paintScreen): the glass inside a 6 px bezel, a line of text
 // at the top and the bottom, the grain field taking `fieldShare` of the rest, the waveform above.
-function layout(w, h, fieldShare) {
+function layout(w, h, fieldShare, phone) {
+  if (phone) return phoneLayout(w, h);
   const glass = [6, 6, w - 12, h - 12];
   let inner = [glass[0] + 10, glass[1] + 6, glass[2] - 20, glass[3] - 12];
   const top = [inner[0], inner[1], inner[2], 16];
@@ -60,7 +61,22 @@ function layout(w, h, fieldShare) {
   return { glass, top, bottom, roll, wave, inset, scope };
 }
 
-export function Screen({ r, scale, audio, overview, region, slices, gain, live, frozen, feed, fontPx, transients, scope, zoomBox, sliceEdits, page, picture }) {
+// A phone's screen (the browser's own): the same lines, waveform and grain field, with the
+// corner picture across the whole width at the bottom, where there's room to read it, and the
+// scope over the grain field above it.
+function phoneLayout(w, h) {
+  const glass = [6, 6, w - 12, h - 12];
+  const inner = [glass[0] + 10, glass[1] + 6, glass[2] - 20, glass[3] - 12];
+  const top = [inner[0], inner[1], inner[2], 16];
+  const bottom = [inner[0], inner[1] + inner[3] - 16, inner[2], 16];
+  const inset = [inner[0] - 6, bottom[1] - 4 - 124, inner[2] + 12, 124];
+  const roll = [inner[0], inset[1] - 8 - 68, inner[2], 68];
+  const waveTop = inner[1] + 16 + 20;   // under the top line and GAIN's
+  const wave = [inner[0], waveTop, inner[2], roll[1] - 6 - waveTop];
+  return { glass, top, bottom, roll, wave, inset, scope: roll };
+}
+
+export function Screen({ r, scale, audio, overview, region, slices, gain, live, frozen, feed, fontPx, transients, scope, zoomBox, sliceEdits, page, picture, phone }) {
   const canvas = useRef(null);
   const field = useRef(null);   // the grain field with its trails, at 2× the roll's size
   const state = useRef({});
@@ -68,7 +84,7 @@ export function Screen({ r, scale, audio, overview, region, slices, gain, live, 
   const scene = useRef(null);       // SPACE's sky, made when first shown
   const sceneState = useRef({ duck: 1, at: 0 });
   const [x0, y0, w, h] = r;
-  const L = useMemo(() => layout(w, h, 0.36), [w, h]);
+  const L = useMemo(() => layout(w, h, 0.36, phone), [w, h, phone]);
 
   // The waveform at this zoom and gain: drawn once per sample, gain, size and view.
   const waveCache = useRef(null);

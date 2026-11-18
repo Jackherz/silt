@@ -58,6 +58,11 @@ export function Tour({ steps, step, go, done, W = 1200, H = 820 }) {
   const spots = (s.spots ?? []).map((r) => grow(r, 6));
   const open = s.open ?? [];   // left open without a frame (the row under the panel, to play)
   const body = useRef(null);
+  const cardRef = useRef(null);
+  // On a phone the page is taller than the screen: each step brings its card into view.
+  useEffect(() => {
+    if (W < 700) cardRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [step, W]);
   const [bodyH, setBodyH] = useState(120);
   // The card is as tall as its words need (laid out unscaled, as the panel is).
   useLayoutEffect(() => { if (body.current) setBodyH(Math.ceil(body.current.offsetHeight)); });
@@ -89,7 +94,7 @@ export function Tour({ steps, step, go, done, W = 1200, H = 820 }) {
         {spots.map((r, i) => <rect key={i} x={r[0]} y={r[1]} width={r[2]} height={r[3]} fill="none" stroke={css(C.screenLime)} strokeWidth={2.5} style={{ pointerEvents: 'none' }} />)}
       </svg>
       <div className="at" style={{ left: card[0] + 3, top: card[1] + 4, width: card[2], height: card[3], background: 'rgba(0,0,0,0.25)' }} />
-      <div className="at tour-card" style={{ left: card[0], top: card[1], width: card[2], height: card[3], background: css(C.bone), boxShadow: `inset 0 0 0 2px ${css(C.ink)}` }} />
+      <div ref={cardRef} className="at tour-card" style={{ left: card[0], top: card[1], width: card[2], height: card[3], background: css(C.bone), boxShadow: `inset 0 0 0 2px ${css(C.ink)}` }} />
       <div className="at" style={{ left: inner[0], top: inner[1], width: inner[2] - 60, height: 24, ...font.name(17), color: css(C.rust), display: 'flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
         {s.title.toUpperCase()}
       </div>

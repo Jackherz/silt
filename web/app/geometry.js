@@ -40,7 +40,7 @@ export function panelGeometry(instrument = true) {
   const chainView = [chainPanel[0] + spineWidth + 6, chainPanel[1] + 4, chainPanel[2] - spineWidth - 12, stripHeight - 8];
 
   // SOURCE's keys.
-  const inner = [sourcePanel[0] + spineWidth + 6, sourcePanel[1] + 4, 290 - spineWidth - 12, stripHeight - 8];
+  const inner = [sourcePanel[0] + spineWidth + 6, sourcePanel[1] + 4, sourcePanel[2] - spineWidth - 12, stripHeight - 8];
   const arm = [inner[0], inner[1], 84, 28];
   const bars = [inner[0] + 90, inner[1], inner[2] - 90, 28];
   const third = trunc((inner[2] - 12) / 3);
@@ -91,8 +91,76 @@ export function panelGeometry(instrument = true) {
   const slotW = trunc(controlRow[2] / 8);
   const slots = Array.from({ length: 8 }, (_, i) => slotParts([controlRow[0] + i * slotW, controlRow[1], slotW, controlRow[3]]));
 
-  return { W, H, header, presets, tour, bench, strip, lcd, sourcePanel, chainPanel, chainView, arm, bars, resample, load, monitor,
+  return { W, H, phone: false, header, presets, tour, bench, strip, lcd, sourcePanel, chainPanel, chainView, arm, bars, resample, load, monitor,
            screen, keyRow, tray, pageKeys, redo, undo, routes, amount, random, learn, well, rail, controlRow, slots, instrument };
+}
+
+// A phone (the browser's own, after Brood's): the same parts stacked on a canvas 390 wide, as
+// tall as they need, which the page scrolls. 12 in from each side, 366 across.
+export const PW = 390;
+export function phoneGeometry() {
+  const x = 12, w = 366;
+  let y = 12;
+  const row = (h, after = 10) => { const r = [x, y, w, h]; y += h + after; return r; };
+  const header = row(44, 8);
+  const tour = [x + w - 36, header[1] + 4, 36, 36];
+  const presets = row(36, 12);
+  const lcd = row(stripHeight);
+  const sourcePanel = row(stripHeight);
+  const chainPanel = row(stripHeight);
+  const chainView = [chainPanel[0] + spineWidth + 6, chainPanel[1] + 4, chainPanel[2] - spineWidth - 12, stripHeight - 8];
+  const strip = [x, sourcePanel[1], w, chainPanel[1] + stripHeight - sourcePanel[1]];
+  const inner = [sourcePanel[0] + spineWidth + 6, sourcePanel[1] + 4, sourcePanel[2] - spineWidth - 12, stripHeight - 8];
+  const arm = [inner[0], inner[1], 84, 28];
+  const bars = [inner[0] + 90, inner[1], inner[2] - 90, 28];
+  const third = trunc((inner[2] - 12) / 3);
+  const y2 = inner[1] + 30, h2 = inner[3] - 30;
+  const resample = [inner[0], y2, third + 16, h2];
+  const load = [resample[0] + resample[2] + 6, y2, third - 16, h2];
+  const monitor = [load[0] + load[2] + 6, y2, inner[0] + inner[2] - (load[0] + load[2] + 6), h2];
+  const screen = row(360);
+
+  // The everyday keys, then the page keys right over the well, so the open page's tab meets
+  // it (LEARN goes down with the browser's keys).
+  const actions = row(trayHeight, 8);
+  const keyRow = row(trayHeight);
+  const tray = keyRow;
+  const pageKeys = {};
+  {
+    const groupGap = 10, border = 1, keyed = [0, 1, 2, 3, 8];
+    const room = tray[2] - groupGap - 4 * border;
+    let offset = tray[0] + border;
+    keyed.forEach((t, shown) => {
+      if (t === 8) offset += 2 * border + groupGap;
+      const left = offset + trunc(room * shown / keyed.length), right = offset + trunc(room * (shown + 1) / keyed.length);
+      pageKeys[t] = [left, tray[1] + border, right - left, trayHeight - 2 * border];
+    });
+  }
+  const random = [x, actions[1], 78, trayHeight];
+  const amount = [x + 82, actions[1], 48, trayHeight - 2];
+  const routes = [x + 134, actions[1], 104, trayHeight];
+  const undo = [x + 242, actions[1], 60, trayHeight];
+  const redo = [x + 306, actions[1], 60, trayHeight];
+
+  // The well: the four MOD chips in a row, then the eight controls as two rows of four.
+  const rail = [x, y, w, 52];
+  const controlRow = [x, y + 60, w, 2 * 150];
+  const well = [x, y, w, 60 + 2 * 150];
+  y += well[3] + 12;
+  const slotW = w / 4;
+  const slots = Array.from({ length: 8 }, (_, i) => slotParts([Math.round(x + (i % 4) * slotW), controlRow[1] + Math.trunc(i / 4) * 150, Math.round(slotW), 150]));
+
+  // The browser's own keys, in two rows, then two octaves of keys.
+  const bench = [x, y, w, 40 + 8 + 40 + 8 + 84];
+  const parts = {
+    start: [x, y, 150, 40], mic: [x + 158, y, 72, 40], tempoLabel: [x + 238, y, 52, 40], tempo: [x + 290, y + 5, 76, 30],
+    plugin: [x, y + 48, 150, 40], octDown: [x + 250, y + 48, 54, 40], octUp: [x + 312, y + 48, 54, 40],
+    keys: [x, y + 96, w, 84],
+  };
+  const learn = [x + 158, y + 48, 84, 40];
+  const H = bench[1] + bench[3] + 16;
+  return { W: PW, H, phone: true, header, presets, tour, bench, benchParts: parts, strip, lcd, sourcePanel, chainPanel, chainView, arm, bars, resample, load, monitor,
+           screen, keyRow, tray, pageKeys, redo, undo, routes, amount, random, learn, well, rail, controlRow, slots, instrument: true };
 }
 
 // SiltEditor::slotParts: a column's label, control and the row under it.
