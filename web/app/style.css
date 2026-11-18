@@ -60,3 +60,5 @@ svg.at { pointer-events: none; }
 .tour > .at:not(.tour-shade) { z-index: 51; }
 .tour-key:not(.disabled):hover .plate { background: rgba(233, 226, 208, 0.14) !important; }
 .plugin-note .at { z-index: 40; }
+/* In jackherz.com's frame: the page is as tall as the panel, so the frame can grow to fit it. */
+html.embedded #root { min-height: 0; }

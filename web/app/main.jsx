@@ -1222,8 +1222,12 @@ function writeStored(key, value) {
 
 // --- the panel ---------------------------------------------------------------------------
 
+// Inside jackherz.com's frame, which grows to fit what's in it, the panel fills the frame's width
+// and the page is just as tall as the panel; on its own, the panel fits the window.
+const EMBEDDED = (() => { try { return window.self !== window.top; } catch { return true; } })();
+if (EMBEDDED) document.documentElement.classList.add('embedded');
 function useScale() {
-  const fit = () => Math.max(0.1, Math.min(window.innerWidth / 1200, window.innerHeight / 820));
+  const fit = () => (EMBEDDED ? Math.max(0.1, window.innerWidth / 1200) : Math.max(0.1, Math.min(window.innerWidth / 1200, window.innerHeight / 820)));
   const [scale, setScale] = useState(fit);
   useEffect(() => {
     const on = () => setScale(fit());
@@ -1638,6 +1642,8 @@ function App() {
       });
       data.audio.transport(false, tempo);
       data.audio.midiOn();
+      // jackherz.com: the site's music player pauses while Silt plays.
+      if (EMBEDDED) window.parent?.postMessage({ type: 'jackherz-silt-audio-started' }, window.location.origin);
     } catch (err) {
       setAudioState('off');
       showFlash(String(err.message ?? err).toUpperCase());
