@@ -234,6 +234,46 @@ while (undos < 10 && !(await page.locator('.key.disabled', { hasText: 'UNDO' }).
 check('five loads: four undo', undos === 4, String(undos));
 check('back to the first kept: Keys Drone', await page.evaluate(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'KEYS-DRONE'));
 
+// The screen: SLICE's lines (add, remove, drag, undo), the wheel's zoom, the scope.
+await page.goto(url);
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
+await page.getByText('INIT', { exact: true }).click();
+await page.locator('.preset-row', { hasText: 'STUTTER GRID' }).click();
+await page.keyboard.press('Enter');
+const screen = page.locator('canvas[data-sample]');
+const slicesNow = async () => (await screen.getAttribute('data-slices')).split(',').filter(Boolean).map(Number);
+check('STUTTER GRID shows 16 slices', (await slicesNow()).length === 16, String((await slicesNow()).length));
+const sb = await screen.boundingBox();
+const W = await screen.evaluate((c) => parseFloat(c.style.width)), k = sb.width / W;
+const waveX = (share) => sb.x + (16 + share * (W - 32)) * k, waveY = sb.y + 80 * k;
+await page.mouse.dblclick(waveX(1 / 32), waveY);
+check('a double-click on the waveform adds a slice', (await slicesNow()).length === 17, String((await slicesNow()).length));
+await page.mouse.dblclick(waveX(4 / 16), waveY);
+check('a double-click on a line removes it', (await slicesNow()).length === 16 && !(await slicesNow()).some((m) => Math.abs(m - 0.25) < 0.001), String(await slicesNow()));
+const slicesBefore = await slicesNow();
+await page.mouse.move(waveX(8 / 16), waveY); await page.mouse.down();
+await page.mouse.move(waveX(8 / 16) + 40 * k, waveY, { steps: 4 }); await page.mouse.up();
+const moved = await slicesNow();
+check('a line drags', moved.length === 16 && moved.some((m, i) => Math.abs(m - slicesBefore[i]) > 0.01), String(moved.slice(6, 10)));
+await page.getByText('UNDO', { exact: true }).click();
+check('UNDO puts the dragged line back', (await slicesNow()).join() === slicesBefore.join(), String((await slicesNow()).slice(6, 10)));
+await page.getByText('UNDO', { exact: true }).click();
+await page.getByText('UNDO', { exact: true }).click();
+check('UNDO twice more: 16 equal slices again', (await slicesNow()).length === 16 && Math.abs((await slicesNow())[4] - 0.25) < 0.001, String(await slicesNow()));
+await page.mouse.move(waveX(0.5), waveY);
+await page.mouse.wheel(0, -60);
+await page.waitForTimeout(50);
+const zoomed = Number(await screen.getAttribute('data-zoom'));
+check('scrolling up on the waveform zooms in', zoomed > 1.05, String(zoomed));
+check('ZOOM reads it', (await page.locator('.zoom-box').innerText()).startsWith('ZOOM '), await page.locator('.zoom-box').innerText());
+await page.locator('.zoom-box').dblclick();
+check('a double-click on ZOOM shows it all', Number(await screen.getAttribute('data-zoom')) === 1, await screen.getAttribute('data-zoom'));
+await page.goto(`${url}?page=5`);
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
+await page.getByText('START AUDIO', { exact: true }).click({ force: true });
+await page.waitForFunction(() => window.siltAudio?.lastScope?.input?.length === 4096, null, { timeout: 5000 }).catch(() => {});
+check('FILTER\'s page: the scope reads the module', await page.evaluate(() => window.siltAudio?.lastScope?.input?.length === 4096));
+
 check('no page errors', errors.length === 0, errors.join('; '));
 await browser.close();
 process.exitCode = failed ? 1 : 0;

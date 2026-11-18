@@ -46,3 +46,4 @@ svg.at { pointer-events: none; }
 .dialog-shield { position: absolute; inset: 0; z-index: 8; background: rgba(0, 0, 0, 0.35); }
 .piano { cursor: pointer; box-shadow: inset 0 -2px 0 rgba(0,0,0,0.18); }
 .gain-box:hover { background: rgba(76, 100, 104, 0.35); }
+.zoom-box:hover { background: rgba(76, 100, 104, 0.35); }

@@ -366,6 +366,9 @@ function Source({ g, onLoad, monitor, onMonitor, onArm, capturing, bars, onBars,
 }
 
 const MODULE_PAGES = [4, 5, 6, 7];
+// The scope taps the module of RESONATOR, FILTER and COLOR's pages (SiltEditor::updateScope).
+const SCOPE_MODULE = { 4: 0, 5: 1, 6: 2 };
+const MODULE_NAMES = ['RESONATOR', 'FILTER', 'COLOR', 'SPACE'];
 const BAR_CHOICES = ['1 BAR', '2 BARS', '4 BARS', '8 BARS'];
 const SHORT = ['RES', 'FILTER', 'COLOR', 'SPACE'];
 
@@ -1216,6 +1219,11 @@ function App() {
   const [display, setDisplay] = useState(null);           // what the audio sends back, 30 times a second
   const [sample, setSample] = useState(null);             // { name, factory, channels, sampleRate, seconds, analysis }
   const sampleRef = useRef(null);                          // the same, now (undo reads it mid-step)
+  const manualRef = useRef([]);                            // SLICE BY MANUAL's starts (shares)
+  const sliceMarksRef = useRef([]);                        // the slices as shown, for edits
+  const transientMemo = useRef({});
+  // The scope taps RESONATOR, FILTER or COLOR while its page is open.
+  useEffect(() => { data?.audio.scope(SCOPE_MODULE[page] ?? -1); }, [data, page]);
   const overview = useMemo(() => makeOverview(sample), [sample]);
   const [tempo, setTempo] = useState(120);
   const [micOn, setMicOn] = useState(false);
@@ -1373,14 +1381,16 @@ function App() {
     sample: sampleRef.current,
     p: data.params.map((p) => silt.getParam(p.index)),
     r: targets.flatMap((t) => [0, 1, 2, 3].map((m) => [silt.routeAmount(m, t), silt.routePolarity(m, t)])),
+    sl: manualRef.current,
   });
-  const sameSound = (a, b) => a.sample === b.sample && a.p.every((v, i) => v === b.p[i]) && a.r.every((v, i) => v[0] === b.r[i][0] && v[1] === b.r[i][1]);
+  const sameSound = (a, b) => a.sample === b.sample && a.sl.length === b.sl.length && a.sl.every((v, i) => v === b.sl[i]) && a.p.every((v, i) => v === b.p[i]) && a.r.every((v, i) => v[0] === b.r[i][0] && v[1] === b.r[i][1]);
   const restore = (snap) => {
     if (snap.sample && snap.sample !== sampleRef.current) {
       data.audio.sendSample(snap.sample, snap.sample.analysis);
       sampleRef.current = snap.sample;
       setSample(snap.sample);
     }
+    if (snap.sl !== manualRef.current) setManualSlices(snap.sl);
     data.params.forEach((p, i) => { if (silt.getParam(p.index) !== snap.p[i]) { silt.setParam(p.index, snap.p[i]); window.siltAudio?.setParam(p.index, snap.p[i]); } });
     targets.forEach((t, k) => [0, 1, 2, 3].forEach((m) => {
       const [amount, polarity] = snap.r[k * 4 + m];
@@ -1389,6 +1399,42 @@ function App() {
     setVersion((n) => n + 1);
   };
   const h = history.current;
+  // SLICE BY MANUAL: your own slice starts (SiltProcessor::setManualSlices): sorted, inside the
+  // sample, at most 128, none closer than 256 samples' worth. The page's own (saved with undo).
+  const sliceGap = () => (sampleRef.current ? 256 / sampleRef.current.channels[0].length : 0.0005);
+  function setManualSlices(marks) {
+    const sorted = [...marks].sort((a, b) => a - b), gap = sliceGap(), kept = [];
+    for (const m of sorted)
+      if (m >= 0 && m < 1 && (kept.length === 0 || m - kept[kept.length - 1] >= gap) && kept.length < 128) kept.push(Math.fround(m));
+    manualRef.current = kept;
+    data.audio.setSlices(kept);
+    setVersion((n) => n + 1);
+  }
+  // From EQUAL or AT HITS: their slices become MANUAL's, then the edit applies.
+  const makeSlicesManual = () => {
+    if (Math.round(value('sliceMode')) === 2 && manualRef.current.length > 0) return;
+    setManualSlices(sliceMarksRef.current);
+    setParam('sliceMode', 2);
+  };
+  const sliceEdits = {
+    move(index, share) {
+      makeSlicesManual();
+      const marks = [...manualRef.current];
+      if (index < 0 || index >= marks.length) return;
+      // Between its neighbours: slices keep their order (and their minimum size).
+      const gap = sliceGap() * 1.01;
+      const lo = index > 0 ? marks[index - 1] + gap : 0, hi = index + 1 < marks.length ? marks[index + 1] - gap : 0.999;
+      marks[index] = Math.max(lo, Math.min(Math.max(lo, hi), share));
+      setManualSlices(marks);
+    },
+    add(share) { makeSlicesManual(); setManualSlices([...manualRef.current, Math.max(0, Math.min(0.999, share))]); },
+    remove(index) {
+      makeSlicesManual();
+      const marks = [...manualRef.current];
+      if (marks.length > 1 && index >= 0 && index < marks.length) marks.splice(index, 1);
+      setManualSlices(marks);
+    },
+  };
   const beginStep = (name) => { if (!h.pending) h.pending = { name, before: snapshot() }; };
   const endStep = () => {
     if (!h.pending) return;
@@ -1752,6 +1798,7 @@ function App() {
   const shownRegion = regionMemo.current.region;
   const sliceMarks = (() => {
     if (mode !== 3 || !sample) return [];
+    if (Math.round(value('sliceMode')) === 2 && manualRef.current.length > 0) return manualRef.current;
     const [start, length] = shownRegion;
     if (Math.round(value('sliceMode')) === 1) {
       const frames = sample.channels[0].length, a = sample.analysis, nz = a[0], nt = a[1];
@@ -1765,6 +1812,13 @@ function App() {
     const count = Math.max(1, Math.min(128, Math.round(value('sliceCount'))));
     return Array.from({ length: count }, (_, i) => start + length * i / count);
   })();
+  sliceMarksRef.current = sliceMarks;
+  // SNAP to hits: the transients it can land on, ticked along the waveform's top.
+  if (transientMemo.current.sample !== sample) {
+    const a = sample?.analysis, frames = sample?.channels[0].length;
+    transientMemo.current = { sample, marks: sample ? Array.from({ length: a[1] }, (_, i) => a[3 + a[0] + i] / frames) : [] };
+  }
+  const transients = transientMemo.current.marks;
   const wordWidth = Math.ceil(measure('SILT', `${font.wordmark(48).fontSize}px "Glyph Grotesque"`)) + 4;
   const shapes = ['SINE', 'TRIANGLE', 'SAW', 'SQUARE'];
   // Every route, in target order then modulator (SiltProcessor::allRoutes).
@@ -1823,7 +1877,11 @@ function App() {
           {/* The screen: the waveform, the grains, LIVE's ring (screen.jsx). */}
           <Screen r={g.screen} scale={scale} audio={data.audio} overview={overview} region={shownRegion} slices={sliceMarks}
                   gain={Math.pow(10, value('sampleGain') / 20)} live={mode === 1 || mode === 2} feed={mode === 2} frozen={value('freeze') > 0.5}
-                  fontPx={screenFont} />
+                  fontPx={screenFont} transients={Math.round(value('snap')) > 1.5 ? transients : null}
+                  scope={SCOPE_MODULE[page] !== undefined ? MODULE_NAMES[SCOPE_MODULE[page]] : null}
+                  zoomBox={[g.screen[0] + g.screen[2] - 30 - 200 - 78, g.screen[1] + 22, 78, 16]}
+                  sliceEdits={{ begin: () => beginStep('SLICES'), end: endStep, ...sliceEdits,
+                                add: (share) => step('SLICES', () => sliceEdits.add(share)), remove: (i) => step('SLICES', () => sliceEdits.remove(i)) }} />
           {(
             <GainBox r={[g.screen[0] + g.screen[2] - 30 - 200 - 78 - 130, g.screen[1] + 22, 130, 16]} text={`GAIN ${text('sampleGain', value('sampleGain')).toUpperCase()}`}
                      db={value('sampleGain')} set={(db) => setParam('sampleGain', db)} step={step} beginStep={beginStep} endStep={endStep}

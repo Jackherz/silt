@@ -361,3 +361,29 @@ SILT_EXPORT float* silt_snap_region (double begin, double end, int frames, int s
 
 SILT_EXPORT int silt_max_block() { return maxBlock; }
 SILT_EXPORT int silt_active_grains() { return web->instrument.activeGrains.load(); }
+
+// SLICE BY MANUAL: your own slice starts (shares), already sorted and spaced by the page
+// (SiltProcessor::setManualSlices); written into silt_slices_in() first.
+namespace { std::array<float, 128> sliceIn {}; }
+SILT_EXPORT float* silt_slices_in() { return sliceIn.data(); }
+SILT_EXPORT void silt_set_slices (int count)
+{
+    auto& in = web->instrument;
+    count = std::clamp (count, 0, (int) in.sliceTable.size());
+    in.sliceCountManual.store (0, std::memory_order_release);   // none read while they change
+    for (int i = 0; i < count; ++i)
+        in.sliceTable[(size_t) i].store (sliceIn[(size_t) i], std::memory_order_relaxed);
+    in.sliceCountManual.store (count, std::memory_order_release);
+}
+
+// The scope (RESONATOR, FILTER, COLOR): which module it taps (−1: none), and the latest
+// `count` samples in and out, oldest first; returns the write counter, as readScope does.
+namespace { std::array<float, silt::Instrument::scopeSize / 2> scopeIn {}, scopeOut {}; }
+SILT_EXPORT void silt_scope_module (int module) { web->instrument.scopeModule.store (module); }
+SILT_EXPORT float* silt_scope_in() { return scopeIn.data(); }
+SILT_EXPORT float* silt_scope_out() { return scopeOut.data(); }
+SILT_EXPORT unsigned silt_read_scope (int count)
+{
+    count = std::clamp (count, 0, (int) scopeIn.size());
+    return web->instrument.readScope (scopeIn.data(), scopeOut.data(), count);
+}

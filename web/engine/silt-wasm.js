@@ -65,6 +65,18 @@ export async function loadSilt(bytes) {
     display: (count) => floats(x.silt_display(), count + 4).slice(),
     screen: () => floats(x.silt_screen_data(), x.silt_screen()).slice(),
     livePeaks: () => floats(x.silt_live_peaks(), 1024).slice(),
+    // SLICE BY MANUAL's starts (sorted and spaced already).
+    setSlices(marks) {
+      const n = Math.min(128, marks.length);
+      floats(x.silt_slices_in(), 128).set(marks.slice(0, n));
+      x.silt_set_slices(n);
+    },
+    // The scope: which module it taps (-1 none); read gives { written, input, output }.
+    scopeModule: (m) => x.silt_scope_module(m),
+    readScope(count) {
+      const written = x.silt_read_scope(count) >>> 0;
+      return { written, input: floats(x.silt_scope_in(), count).slice(), output: floats(x.silt_scope_out(), count).slice() };
+    },
     // Region edges snapped as the engine plays them, given the sample's analysis.
     snapRegion(begin, end, frames, snap, analysis) {
       floats(x.silt_analysis_in(analysis.length), analysis.length).set(analysis);

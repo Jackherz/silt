@@ -45,6 +45,9 @@ class SiltProcessor extends AudioWorkletProcessor {
       case 'param': silt.setParamRaw(m.index, m.value); break;
       case 'routes': silt.clearRoutes(); for (const [mod, index, amount, polarity] of m.routes) silt.setRoute(mod, index, amount, polarity); break;
       case 'route': silt.setRoute(m.m, m.index, m.amount, m.polarity); break;
+      case 'slices': silt.setSlices(m.marks); break;   // SLICE BY MANUAL's starts
+      // The scope: the module it taps (RESONATOR, FILTER, COLOR; -1 none), read with the display.
+      case 'scope': silt.scopeModule(m.module); this.scopeOn = m.module >= 0; break;
       case 'sample': silt.setSampleAnalysed(m.channels, m.sampleRate, m.analysis); break;
       case 'midi': silt.midi(0, m.bytes[0], m.bytes[1] ?? 0, m.bytes[2] ?? 0); break;
       // ARM: record `frames` of the input (the microphone), or with RESAMPLE what Silt itself
@@ -111,6 +114,11 @@ class SiltProcessor extends AudioWorkletProcessor {
                               capture: this.capture ? this.capture.at / this.capture.left.length : -1,
                               screen: silt.screen(), live: null });
       if (++this.liveTick % 4 === 0) this.port.postMessage({ type: 'live', peaks: silt.livePeaks() });
+      // The scope, 30 times a second: the latest 4096 samples in and out (SiltEditor::updateScope).
+      if (this.scopeOn && this.liveTick % 2 === 0) {
+        const scope = silt.readScope(4096);
+        this.port.postMessage({ type: 'scope', ...scope }, [scope.input.buffer, scope.output.buffer]);
+      }
       this.inputPeak = 0;
       this.outputPeak = 0;
     }

@@ -55,6 +55,7 @@ export class Audio {
           if ((this.displays = (this.displays ?? 0) + 1) % 2 === 0) this.onDisplay?.(e.data);   // the panel: 30 a second
         }
         if (e.data.type === 'live') this.livePeaks = e.data.peaks;
+        if (e.data.type === 'scope') this.lastScope = e.data;   // the screen reads this itself
         if (e.data.type === 'ready') this.onState?.('ready');
         if (e.data.type === 'captured') this.onCaptured?.(e.data);
         if (e.data.type === 'captureCancelled') this.onCaptured?.(null);
@@ -98,6 +99,8 @@ export class Audio {
 
   setParam(index, value) { this.post({ type: 'param', index, value }); }
   setRoute(m, index, amount, polarity) { this.post({ type: 'route', m, index, amount, polarity }); }
+  setSlices(marks) { this.post({ type: 'slices', marks: [...marks] }); }
+  scope(module) { if (module < 0) this.lastScope = null; this.post({ type: 'scope', module }); }
   midi(bytes) { this.post({ type: 'midi', bytes }); }
   noteOn(note, velocity = 100) { this.midi([0x90, note, velocity]); }
   noteOff(note) { this.midi([0x80, note, 0]); }
