@@ -149,6 +149,26 @@ target_link_libraries(silt_snapshot_fx
     PRIVATE silt_core silt_samples silt_fonts kit_fonts juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
+# Golden renders: fixed scenes through processBlock, compared sample for sample
+# against a reference folder (tools/golden/Main.cpp). Instrument and FX.
+foreach(golden IN ITEMS silt_golden silt_golden_fx)
+    juce_add_console_app(${golden} PRODUCT_NAME "${golden}")
+    target_sources(${golden} PRIVATE tools/golden/Main.cpp ${SILT_PLUGIN_SOURCES})
+    if(golden STREQUAL "silt_golden")
+        set(golden_name "Silt")
+        set(golden_synth 1)
+    else()
+        set(golden_name "Silt FX")
+        set(golden_synth 0)
+    endif()
+    target_compile_definitions(${golden} PRIVATE
+        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1
+        JucePlugin_Name="${golden_name}" JucePlugin_IsSynth=${golden_synth} JucePlugin_VersionString="${PROJECT_VERSION}")
+    target_link_libraries(${golden}
+        PRIVATE silt_core silt_samples silt_fonts kit_fonts juce::juce_audio_utils
+        PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+endforeach()
+
 # Plug-in level tests: the instrument's processor built into a Catch2 runner.
 if(SILT_BUILD_TESTS)
     juce_add_console_app(silt_plugin_tests PRODUCT_NAME "silt-plugin-tests")
