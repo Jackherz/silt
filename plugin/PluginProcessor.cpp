@@ -52,412 +52,78 @@ using Range = juce::NormalisableRange<float>;
 
 constexpr int stateMagic = 0x544c4953;   // "SILT"
 
-// Synced Size and Rate: note values, in quarter notes (T = triplet, D = dotted).
-// SCAN synced: how long one pass of the region takes.
-const juce::StringArray scanBarNames { "1/4 BAR", "1/2 BAR", "1 BAR", "2 BARS", "4 BARS", "8 BARS", "16 BARS", "32 BARS" };
-constexpr double scanBars[] { 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0 };
-
-const juce::StringArray divisionNames { "1/64", "1/32", "1/16T", "1/16", "1/8T", "1/16D", "1/8", "1/4T",
-                                        "1/8D", "1/4", "1/2T", "1/4D", "1/2", "1/2D", "1 bar", "2 bars", "4 bars" };
-constexpr double divisionQuarters[] { 1.0 / 16, 1.0 / 8, 1.0 / 6, 1.0 / 4, 1.0 / 3, 3.0 / 8, 1.0 / 2, 2.0 / 3,
-                                      3.0 / 4, 1.0, 4.0 / 3, 3.0 / 2, 2.0, 3.0, 4.0, 8.0, 16.0 };
-constexpr int sixteenth = 3, eighth = 6, dottedEighth = 8, quarter = 9;
 constexpr double maxDelayMs = 4000.0;
-
-// In silt::Scale order.
-const juce::StringArray scaleNames { "Off", "Chromatic", "Major", "Minor", "Dorian", "Phrygian", "Lydian",
-                                     "Mixolydian", "Major pent.", "Minor pent.", "Whole tone", "Octaves", "Fifths" };
-const juce::StringArray keyNames { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
 constexpr int rateModeSync = 1, rateModeGrains = 2;   // "rateMode" choices; 0 is Free
 constexpr double maxSyncedSizeMs = 4000.0;
 
 double quartersFor (const std::atomic<float>* choice) noexcept
 {
-    return divisionQuarters[juce::jlimit (0, (int) std::size (divisionQuarters) - 1, (int) choice->load (std::memory_order_relaxed))];
-}
-const juce::StringArray captureBarChoices { "1 bar", "2 bars", "4 bars", "8 bars" };
-constexpr int captureBars[] { 1, 2, 4, 8 };
-
-Range skewed (float lo, float hi, float centre)
-{
-    Range r (lo, hi);
-    r.setSkewForCentre (centre);
-    return r;
+    return silt::params::quartersFor ((int) choice->load (std::memory_order_relaxed));
 }
 
-// How values read on the panel and in the host: a few significant digits and the unit.
-using Format = std::function<juce::String (float, int)>;
-
-juce::String formatMs (float v, int)
-{
-    // juce::String (v, 0) means "no limit", not "no decimals": round instead.
-    if (v >= 1000.0f)
-        return juce::String (v / 1000.0f, 2) + " s";
-    return (v < 10.0f ? juce::String (v, 1) : juce::String (juce::roundToInt (v))) + " ms";
-}
-
-juce::String formatHz (float v, int) { return juce::String (v, v < 10.0f ? 2 : 1) + " Hz"; }
-juce::String formatPercent (float v, int) { return juce::String (juce::roundToInt (v)) + "%"; }
-juce::String formatSemitones (float v, int) { return (v >= 0.005f ? "+" : v <= -0.005f ? "" : " ") + juce::String (std::abs (v) < 0.005f ? 0.0f : v, 2) + " st"; }
-juce::String formatTimes (float v, int) { return juce::String (v, 2) + "x"; }
-juce::String formatDb (float v, int) { return v <= -47.95f ? juce::String ("-inf dB") : juce::String (v, 1) + " dB"; }
-
-std::unique_ptr<Float> percent (const juce::String& id, const juce::String& name, float def)
-{
-    return std::make_unique<Float> (juce::ParameterID { id, 1 }, name, Range (0.0f, 100.0f, 0.1f), def,
-                                    juce::AudioParameterFloatAttributes().withStringFromValueFunction (formatPercent));
-}
-
-std::unique_ptr<Float> withUnit (const juce::String& id, const juce::String& name, Range range, float def, Format format)
-{
-    return std::make_unique<Float> (juce::ParameterID { id, 1 }, name, range, def,
-                                    juce::AudioParameterFloatAttributes().withStringFromValueFunction (std::move (format)));
-}
-
+// The host's parameters, from silt::params (the JUCE-free table the browser
+// version reads too), in its order. The ranges are JUCE's own, built from the
+// table's numbers; silt-golden checks the two agree to the bit.
 juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
 {
+    namespace sp = silt::params;
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
-    // Grain
-    layout.add (withUnit ("pitch", "Pitch", Range (-24.0f, 24.0f, 0.01f), 0.0f, formatSemitones),
-                withUnit ("size", "Size", skewed (10.0f, 2000.0f, 150.0f), 100.0f, formatMs),
-                withUnit ("rate", "Rate", skewed (0.1f, 100.0f, 10.0f), 20.0f, formatHz),
-                percent ("spray", "Spray", 0.0f),
-                percent ("jitter", "Jitter", 50.0f),
-                percent ("reverse", "Reverse", 0.0f),
-                percent ("randAmp", "Random amp", 0.0f),
-                percent ("randPan", "Random pan", 0.0f),
-                percent ("fade", "Fade", 100.0f),
-                percent ("slant", "Slant", 50.0f),
-                percent ("ease", "Ease", 50.0f));
-
-    // Tempo sync for Size and Rate
-    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "sizeSync", 1 }, "Size sync", false),
-                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "sizeDiv", 1 }, "Size (synced)",
-                                                              divisionNames, sixteenth),
-                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "rateMode", 1 }, "Rate mode",
-                                                              juce::StringArray { "Free", "Sync", "Grains" }, 0),
-                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "rateDiv", 1 }, "Rate (synced)",
-                                                              divisionNames, sixteenth),
-                // Size in Grains mode: its own range, with half the knob below 60 ms
-                // where the texture changes most.
-                withUnit ("grainSize", "Size (grains)", skewed (10.0f, 500.0f, 60.0f), 80.0f, formatMs),
-                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "grains", 1 }, "Grains", 1, 32, 8,
-                    juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int n, int)
-                    {
-                        return juce::String (n) + (n == 1 ? " grain" : " grains");
-                    })));
-
-    // Region and playhead
-    // Start and Length in fine steps (0.001 %: a third of a millisecond on 30 s).
-    const auto finePercent = [] (const char* id, const char* name, float def)
+    for (int id = 0; id < sp::count; ++id)
     {
-        return std::make_unique<Float> (juce::ParameterID { id, 1 }, name, Range (0.0f, 100.0f, 0.001f), def,
-                                        juce::AudioParameterFloatAttributes().withStringFromValueFunction (
-                                            [] (float v, int) { return juce::String (v, 2) + "%"; }));
-    };
-    layout.add (finePercent ("start", "Start", 0.0f),
-                finePercent ("length", "Length", 100.0f),
-                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "snap", 1 }, "Snap",
-                                                              juce::StringArray { "Off", "Zero crossing", "Transient" }, 0),
-                withUnit ("scan", "Scan", Range (-4.0f, 4.0f, 0.01f), 1.0f, formatTimes),
-                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "scanSync", 1 }, "Scan sync", false),
-                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "scanDiv", 1 }, "Scan (bars a pass)",
-                                                              scanBarNames, 4),
-                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "endMode", 1 }, "End",
-                                                              juce::StringArray { "Loop", "Hold", "Stop", "Bounce" }, 0));
+        if (! sp::inBuild (id, SiltProcessor::isInstrument))
+            continue;
+        const auto& p = sp::info (id);
+        const juce::ParameterID pid { p.id, 1 };
+        const auto name = juce::String::fromUTF8 (p.name);
+        const float def = sp::defaultFor (id, SiltProcessor::isInstrument);
+        const auto text = [id] (float v, int) { return juce::String::fromUTF8 (sp::text (id, v).c_str()); };
 
-    // Voice
-    layout.add (withUnit ("attack", "Attack", skewed (0.0f, 5000.0f, 100.0f), 5.0f, formatMs),
-                withUnit ("decay", "Decay", skewed (1.0f, 5000.0f, 200.0f), 200.0f, formatMs),
-                percent ("sustain", "Sustain", 100.0f),
-                withUnit ("release", "Release", skewed (1.0f, 10000.0f, 400.0f), 300.0f, formatMs),
-                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "root", 1 }, "Root note", 0, 127, 60,
-                    juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int note, int)
-                    {
-                        return juce::MidiMessage::getMidiNoteName (note, true, true, 3);
-                    })));
-
-    // Pitch page: random pitch, scale snapping, pattern, heads.
-    const auto semitonesSpread = [] (float v, int) { return (v < 0.05f ? juce::String ("0") : juce::String::fromUTF8 ("\xc2\xb1") + juce::String (v, 1)) + " st"; };
-    const auto semitonesDepth = [] (float v, int) { return juce::String (v, 1) + " st"; };
-    layout.add (withUnit ("randPitch", "Random pitch", Range (0.0f, 24.0f, 0.01f), 0.0f, semitonesSpread),
-                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "scale", 1 }, "Scale", scaleNames, 0),
-                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "key", 1 }, "Key", keyNames, 0),
-                withUnit ("patternDepth", "Pattern", Range (0.0f, 24.0f, 0.01f), 0.0f, semitonesDepth),
-                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "patternSteps", 1 }, "Pattern steps", 2, 16, 8,
-                    juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int n, int) { return juce::String (n) + " steps"; })),
-                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "patternSeed", 1 }, "Pattern seed", 1, 9999, 1),
-                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "heads", 1 }, "Heads", 1, 8, 1,
-                    juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int n, int) { return juce::String (n) + (n == 1 ? " head" : " heads"); })),
-                percent ("headSpread", "Head spread", 50.0f));
-
-    // SLICE: keys play slices of the region, equal or cut at its transients.
-    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "sliceMode", 1 }, "Slice by",
-                                                              juce::StringArray { "Equal", "Transients", "Manual" }, 0),
-                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "sliceCount", 1 }, "Slices", 2, 64, 16));
-
-    // Mode: the sample (PITCH), the live input (LIVE: a granular delay), or
-    // Silt's own output (FEED: the same ring with no input, seeded from the
-    // sample, so the grains keep re-granulating what they play). Silt FX is
-    // always LIVE and has no mode.
-    if constexpr (SiltProcessor::isInstrument)
-        layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "keyMode", 1 }, "Mode",
-                                                                  juce::StringArray { "Pitch", "Live", "Feed", "Slice" }, 0));
-    layout.add (withUnit ("liveDelay", "Delay", skewed (10.0f, 4000.0f, 300.0f), 250.0f, formatMs),
-                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "delaySync", 1 }, "Delay sync", false),
-                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "delayDiv", 1 }, "Delay (synced)",
-                                                              divisionNames, eighth),
-                // To 120%: past 100% the loop sustains, held by its soft clip (a FEED drone).
-                withUnit ("feedback", "Feedback", Range (0.0f, 120.0f, 0.1f), 0.0f,
-                          [] (float v, int) { return juce::String (juce::roundToInt (v)) + "%"; }),
-                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "freeze", 1 }, "Freeze", false),
-                // With no keys held: nothing, a constant voice, or the input playing the envelope.
-                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "liveRun", 1 }, "No notes",
-                                                              juce::StringArray { "Off", "Always", "Follow" },
-                                                              SiltProcessor::isInstrument ? 1 : 2));
-
-    // Resonator: a bank of ringing bands after the grains.
-    layout.add (withUnit ("resTune", "Resonator tune", Range (24.0f, 96.0f, 0.01f), 48.0f, [] (float v, int)
-                {
-                    const int note = juce::roundToInt (v);
-                    const int cents = juce::roundToInt ((v - (float) note) * 100.0f);
-                    return juce::MidiMessage::getMidiNoteName (note, true, true, 3)
-                         + (cents == 0 ? juce::String() : (cents > 0 ? " +" : " ") + juce::String (cents) + "c");
-                }),
-                withUnit ("resShift", "Resonator shift", Range (-36.0f, 36.0f, 1.0f), 0.0f, [] (float v, int)
-                {
-                    const int s = juce::roundToInt (v);
-                    if (s == 0)
-                        return juce::String ("0");
-                    return (s > 0 ? "+" : "") + (s % 12 == 0 ? juce::String (s / 12) + " OCT" : juce::String (s) + " ST");
-                }),
-                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "resNotes", 1 }, "Resonator notes",
-                                                              juce::StringArray { "Scale", "Harmonics", "Bell", "Sample" }, 0),
-                withUnit ("resRange", "Resonator range", Range (1.0f, 8.0f, 0.01f), 8.0f,
-                          [] (float v, int) { return juce::String (v, 1) + " oct"; }),
-                withUnit ("resDecay", "Resonator decay", skewed (0.05f, 20.0f, 1.5f), 1.5f,
-                          [] (float v, int) { return formatMs (v * 1000.0f, 0); }),
-                percent ("resBright", "Resonator bright", 50.0f),
-                percent ("resWidth", "Resonator width", 50.0f),
-                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "resFollow", 1 }, "Resonator follows notes", false),
-                percent ("resMix", "Resonator mix", 0.0f));
-
-    // Resonator, page 2: the bank's character.
-    layout.add (percent ("resReso", "Resonator resonance", 50.0f),
-                std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "resBands", 1 }, "Resonator bands", 1, silt::Resonator::maxBands,
-                                                           silt::Resonator::maxBands),
-                percent ("resDrift", "Resonator drift", 0.0f),
-                percent ("resSpread", "Resonator spread", 0.0f),
-                withUnit ("resOddEven", "Resonator odd/even", Range (-100.0f, 100.0f, 0.1f), 0.0f, [] (float v, int)
-                {
-                    const int n = juce::roundToInt (v);
-                    return n < 0 ? "ODD " + juce::String (-n) + "%" : n > 0 ? "EVEN " + juce::String (n) + "%" : juce::String ("ALL");
-                }),
-                percent ("resDrive", "Resonator drive", 0.0f),
-                percent ("resDamp", "Resonator damp", 0.0f));
-
-    // Resonator, page 3: reshaping the series.
-    const auto signedPercent = [] (float v, int) { const int n = juce::roundToInt (v); return (n > 0 ? "+" : "") + juce::String (n) + "%"; };
-    layout.add (withUnit ("resStretch", "Resonator stretch", Range (-100.0f, 100.0f, 0.1f), 0.0f, signedPercent),
-                withUnit ("resCurve", "Resonator stretch curve", Range (-100.0f, 100.0f, 0.1f), 0.0f, signedPercent),
-                percent ("resSnap", "Resonator snap", 0.0f),
-                withUnit ("resOffset", "Resonator offset", Range (-12.0f, 12.0f, 0.01f), 0.0f,
-                          [] (float v, int)
-                          {
-                              if (juce::roundToInt (v * 100.0f) == 0)
-                                  return juce::String ("0 st");
-                              return (v > 0.0f ? "+" : "") + juce::String (v, 2) + " st";
-                          }),
-                withUnit ("resRipple", "Resonator ripple", Range (1.0f, 16.0f, 0.01f), 2.0f,
-                          [] (float v, int) { return juce::String (v, 1) + " peaks"; }),
-                percent ("resDepth", "Resonator ripple depth", 0.0f),
-                percent ("resSweep", "Resonator sweep", 0.0f));
-
-    // Resonator, page 4: what sets it ringing.
-    layout.add (percent ("resStrike", "Resonator strike", 0.0f),
-                percent ("resPosition", "Resonator strike position", 30.0f),
-                percent ("resHardness", "Resonator strike hardness", 60.0f),
-                percent ("resParticles", "Resonator particles", 0.0f),
-                withUnit ("resDensity", "Resonator particle density", skewed (2.0f, 5000.0f, 200.0f), 200.0f,
-                          [] (float v, int) { return juce::String (juce::roundToInt (v)) + " /s"; }),
-                percent ("resTop", "Resonator top", 0.0f),
-                percent ("resSaturate", "Resonator saturate", 0.0f));
-
-    // Filter: after the resonator.
-    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "filterMode", 1 }, "Filter",
-                                                              juce::StringArray { "12 dB", "24 dB" }, 0),
-                withUnit ("filterCutoff", "Filter cutoff", skewed (20.0f, 20000.0f, 1000.0f), 20000.0f, [] (float v, int)
-                {
-                    return v >= 1000.0f ? juce::String (v / 1000.0f, v >= 10000.0f ? 1 : 2) + " kHz"
-                                        : juce::String (juce::roundToInt (v)) + " Hz";
-                }),
-                percent ("filterReso", "Filter resonance", 0.0f),
-                withUnit ("filterMorph", "Filter morph", Range (0.0f, 2.0f, 0.001f), 0.0f, [] (float v, int)
-                {
-                    const char* names[] { "LP", "BP", "HP" };
-                    const int nearest = juce::roundToInt (v);
-                    if (std::abs (v - (float) nearest) < 0.02f)
-                        return juce::String (names[nearest]);
-                    const int lower = juce::jmin (1, (int) v);
-                    return juce::String (names[lower]) + "-" + names[lower + 1] + " " + juce::String (juce::roundToInt ((v - (float) lower) * 100.0f)) + "%";
-                }),
-                percent ("filterDrive", "Filter drive", 0.0f),
-                withUnit ("filterEnv", "Filter envelope", Range (-100.0f, 100.0f, 0.1f), 0.0f, [] (float v, int)
-                {
-                    const int n = juce::roundToInt (v);
-                    return (n > 0 ? "+" : "") + juce::String (n) + "%";
-                }),
-                percent ("filterKey", "Filter key tracking", 0.0f),
-                percent ("filterMix", "Filter mix", 100.0f));
-
-    // Color: after the filter.
-    layout.add (percent ("colorDrive", "Color drive", 0.0f),
-                withUnit ("colorTone", "Color tone", Range (-100.0f, 100.0f, 0.1f), 0.0f, [] (float v, int)
-                {
-                    const int n = juce::roundToInt (v);
-                    return n == 0 ? juce::String ("FLAT") : (n < 0 ? "DARK " : "BRIGHT ") + juce::String (std::abs (n)) + "%";
-                }),
-                withUnit ("colorBits", "Color bits", Range (2.0f, 16.0f, 0.01f), 16.0f, [] (float v, int)
-                {
-                    return v >= 15.995f ? juce::String ("OFF") : juce::String (v, 1) + " bits";
-                }),
-                withUnit ("colorRate", "Color rate", skewed (200.0f, silt::Color::rateOff, 4000.0f), silt::Color::rateOff, [] (float v, int)
-                {
-                    if (v >= silt::Color::rateOff - 1.0f)
-                        return juce::String ("OFF");
-                    return v >= 1000.0f ? juce::String (v / 1000.0f, v >= 10000.0f ? 1 : 2) + " kHz"
-                                        : juce::String (juce::roundToInt (v)) + " Hz";
-                }),
-                percent ("colorComp", "Color comp", 0.0f),
-                percent ("colorNoise", "Color noise", 0.0f),
-                percent ("colorWow", "Color wow", 0.0f),
-                percent ("colorMix", "Color mix", 100.0f));
-
-    // Space: delay and reverb sends, last in the chain.
-    layout.add (withUnit ("spaceTime", "Delay time", skewed (10.0f, 4000.0f, 400.0f), 375.0f, formatMs),
-                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "spaceSync", 1 }, "Delay sync", false),
-                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "spaceDiv", 1 }, "Delay time (synced)",
-                                                              divisionNames, dottedEighth),
-                percent ("spaceFeedback", "Delay feedback", 35.0f),
-                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "spaceMode", 1 }, "Delay mode",
-                                                              juce::StringArray { "Ping-pong", "Stereo" }, 0),
-                percent ("spaceDelay", "Delay level", 0.0f),
-                percent ("spaceSize", "Reverb size", 50.0f),
-                withUnit ("spaceDecay", "Reverb decay", skewed (0.3f, 30.0f, 3.0f), 3.0f,
-                          [] (float v, int) { return formatMs (v * 1000.0f, 0); }),
-                withUnit ("spaceTone", "Space tone", Range (0.0f, 100.0f, 0.1f), 50.0f, [] (float v, int)
-                {
-                    const int n = juce::roundToInt (v);
-                    return n < 50 ? "DARK " + juce::String ((50 - n) * 2) + "%"
-                         : n > 50 ? "BRIGHT " + juce::String ((n - 50) * 2) + "%" : juce::String ("NATURAL");
-                }),
-                percent ("spaceShimmer", "Reverb shimmer", 0.0f),
-                percent ("spaceReverb", "Reverb level", 0.0f),
-                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "spaceFreeze", 1 }, "Space freeze", false),
-                std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "spaceDuck", 1 }, "Space duck",
-                                                              juce::StringArray { "Off", "Light", "Medium", "Heavy" }, 0));
-
-    // CHAIN: the order the four modules run in, one of the 24.
-    {
-        juce::StringArray orders;
-        for (int i = 0; i < SiltProcessor::numChainOrders; ++i)
-            orders.add (SiltProcessor::chainOrderName (i));
-        layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "chainOrder", 1 }, "Chain order", orders, 0));
-        // Each module's ON switch: off, the sound passes it untouched.
-        for (int m = 0; m < SiltProcessor::numModules; ++m)
+        switch (p.kind)
         {
-            static const char* names[] { "Resonator on", "Filter on", "Color on", "Space on" };
-            layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { SiltProcessor::moduleOnId (m), 1 }, names[m], true));
+            case sp::Kind::real:
+            {
+                Range range;
+                switch (p.mapping())
+                {
+                    case sp::Mapping::linear:
+                        range = Range (p.low, p.high, p.interval);
+                        break;
+                    case sp::Mapping::skewed:
+                        range = Range (p.low, p.high);
+                        range.setSkewForCentre (p.centre);
+                        break;
+                    case sp::Mapping::cubicRate:
+                        // Through zero: −50…+50 Hz on a cubic (most of the travel at slow rates,
+                        // smooth through 0, so modulation can sweep across it). Below zero
+                        // a WAVE runs backwards; near 0 it holds (STOP).
+                        range = Range (p.low, p.high,
+                                       [] (float, float, float x) { const float u = 2.0f * x - 1.0f; return 50.0f * u * u * u; },
+                                       [] (float, float, float v) { return 0.5f * (std::cbrt (juce::jlimit (-50.0f, 50.0f, v) / 50.0f) + 1.0f); },
+                                       [] (float, float, float v) { return std::abs (v) < 0.01f ? 0.0f : v; });
+                        break;
+                }
+                layout.add (std::make_unique<Float> (pid, name, range, def,
+                                                     juce::AudioParameterFloatAttributes().withStringFromValueFunction (text)));
+                break;
+            }
+            case sp::Kind::integer:
+                layout.add (std::make_unique<juce::AudioParameterInt> (pid, name, (int) p.low, (int) p.high, (int) def,
+                    juce::AudioParameterIntAttributes().withStringFromValueFunction ([text] (int n, int length) { return text ((float) n, length); })));
+                break;
+            case sp::Kind::boolean:
+                layout.add (std::make_unique<juce::AudioParameterBool> (pid, name, def > 0.5f));
+                break;
+            case sp::Kind::choice:
+            {
+                juce::StringArray choices;
+                for (const auto* c : p.choices)
+                    choices.add (juce::String::fromUTF8 (c));
+                layout.add (std::make_unique<juce::AudioParameterChoice> (pid, name, choices, (int) def));
+                break;
+            }
         }
     }
-
-    // Modulators 1–4 (MOD page). Their own settings aren't modulation targets.
-    for (int n = 1; n <= SiltProcessor::numModulators; ++n)
-    {
-        const auto id = [n] (const char* suffix) { return "m" + juce::String (n) + suffix; };
-        const auto name = [n] (const char* what) { return "Mod " + juce::String (n) + " " + what; };
-        layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("Type"), 1 }, name ("type"),
-                                                                  juce::StringArray { "Wave", "Random", "Envelope", "Follow", "MIDI", "Macro", "Per grain" }, 0),
-                    // Through zero: −50…+50 Hz on a cubic (most of the travel at slow rates,
-                    // smooth through 0, so modulation can sweep across it). Below zero
-                    // a WAVE runs backwards; near 0 it holds (STOP).
-                    withUnit (id ("Rate"), name ("rate"),
-                              Range (-50.0f, 50.0f,
-                                     [] (float, float, float x) { const float u = 2.0f * x - 1.0f; return 50.0f * u * u * u; },
-                                     [] (float, float, float v) { return 0.5f * (std::cbrt (juce::jlimit (-50.0f, 50.0f, v) / 50.0f) + 1.0f); },
-                                     [] (float, float, float v) { return std::abs (v) < 0.01f ? 0.0f : v; }),
-                              1.0f, [] (float v, int) { return std::abs (v) < 0.005f ? juce::String ("STOP") : (v < 0.0f ? "-" : "") + formatHz (std::abs (v), 0); }),
-                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Sync"), 1 }, name ("sync"), false),
-                    std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("Div"), 1 }, name ("rate (synced)"), divisionNames, quarter),
-                    withUnit (id ("Shape"), name ("shape"), Range (0.0f, 3.0f, 0.001f), 0.0f, [] (float v, int)
-                    {
-                        const char* names[] { "SINE", "TRI", "SAW", "SQUARE" };
-                        const int nearest = juce::roundToInt (v);
-                        if (std::abs (v - (float) nearest) < 0.02f)
-                            return juce::String (names[nearest]);
-                        const int lower = juce::jmin (2, (int) v);
-                        return juce::String (names[lower]) + "-" + names[lower + 1] + " " + juce::String (juce::roundToInt ((v - (float) lower) * 100.0f)) + "%";
-                    }),
-                    withUnit (id ("Phase"), name ("phase"), Range (0.0f, 360.0f, 0.1f), 0.0f,
-                              [] (float v, int) { return juce::String (juce::roundToInt (v)) + juce::String::charToString ((juce::juce_wchar) 0x00b0); }),
-                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Retrig"), 1 }, name ("retrigger"), false),
-                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Rev"), 1 }, name ("reverse (synced)"), false),
-                    percent (id ("Smooth"), name ("smooth"), 100.0f),
-                    percent (id ("Jitter"), name ("jitter"), 0.0f),
-                    withUnit (id ("Attack"), name ("attack"), skewed (0.0f, 5000.0f, 100.0f), 10.0f, formatMs),
-                    withUnit (id ("Decay"), name ("decay"), skewed (1.0f, 5000.0f, 200.0f), 300.0f, formatMs),
-                    percent (id ("Sustain"), name ("sustain"), 50.0f),
-                    withUnit (id ("Release"), name ("release"), skewed (1.0f, 10000.0f, 400.0f), 500.0f, formatMs),
-                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Repeat"), 1 }, name ("repeat"), false),
-                    withUnit (id ("FAttack"), name ("follow attack"), skewed (0.1f, 1000.0f, 30.0f), 10.0f, formatMs),
-                    withUnit (id ("FRelease"), name ("follow release"), skewed (1.0f, 3000.0f, 200.0f), 200.0f, formatMs),
-                    withUnit (id ("Gain"), name ("follow gain"), Range (-24.0f, 24.0f, 0.1f), 0.0f, formatDb),
-                    std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("Source"), 1 }, name ("MIDI source"),
-                                                                  juce::StringArray { "Velocity", "Note", "Mod wheel", "Aftertouch", "Pitch bend" }, 0),
-                    // Muted: contributes nothing; its routes are kept.
-                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Enable"), 1 }, name ("on"), true),
-                    // Per voice: each voice runs its own copy from its own note (grain
-                    // parameters only; the effects follow the shared one).
-                    std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id ("Voice"), 1 }, name ("per voice"), false),
-                    // SPREAD (a per-voice WAVE): each new note's wave starts further round
-                    // the cycle, so a chord's voices move apart instead of together.
-                    percent (id ("Spread"), name ("voice spread"), 0.0f),
-                    percent (id ("Macro"), name ("macro"), 0.0f),
-                    // PER GRAIN: how its rolls fall: evenly, mostly small, or mostly extreme.
-                    std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { id ("GrainSpread"), 1 }, name ("grain spread"),
-                                                                  juce::StringArray { "Even", "Centre", "Edges" }, 0),
-                    // WAVE: where the cycle turns round (50%: as drawn) and how it bends (0%: straight).
-                    percent (id ("Sym"), name ("symmetry"), 50.0f),
-                    withUnit (id ("Curve"), name ("curve"), Range (-100.0f, 100.0f, 0.1f), 0.0f, [] (float v, int)
-                    {
-                        const int whole = juce::roundToInt (v);
-                        return (whole > 0 ? "+" : "") + juce::String (whole) + "%";
-                    }));
-    }
-
-    // Capture and output
-    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "captureBars", 1 }, "Capture length",
-                                                              captureBarChoices, 1),
-                // RESAMPLE: ARM records Silt's own output (from the next bar) as the
-                // new sample. (The id is from when this was called FEED.)
-                std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "captureFeed", 1 }, "Resample own output", false),
-                withUnit ("gain", "Output", Range (-48.0f, 12.0f, 0.1f), 0.0f, formatDb),
-                // The sample's own level, before the grains go anywhere: for samples
-                // that come in too loud or too soft (the screen's GAIN).
-                withUnit ("sampleGain", "Sample gain", Range (-24.0f, 24.0f, 0.1f), 0.0f, [] (float v, int)
-                {
-                    return (v > 0.04f ? "+" : "") + juce::String (v, 1) + " dB";
-                }));
-
-    // MIX: the dry input against the grains, the two going on through the chain together.
-    layout.add (percent ("mix", "Mix", 100.0f));
-    if constexpr (SiltProcessor::isInstrument)
-        layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "monitor", 1 }, "Monitor input", false));
-    else
-        // INPUT: how loud the track goes into the grains (the dry side of MIX stays as it is).
-        layout.add (withUnit ("inputGain", "Input", Range (-24.0f, 24.0f, 0.1f), 0.0f, formatDb));
-
     return layout;
 }
 
@@ -819,7 +485,7 @@ silt::GrainParams SiltProcessor::readParams (const float* voiceValues) const noe
     {
         const double quartersPerBar = timeSigNumerator.load (std::memory_order_relaxed) * 4.0 / juce::jmax (1, timeSigDenominator.load (std::memory_order_relaxed));
         const double perQuarter = 60.0 / juce::jlimit (20.0, 400.0, hostBpm.load (std::memory_order_relaxed));
-        p.scanPassSeconds = scanBars[(size_t) juce::jlimit (0, (int) std::size (scanBars) - 1, juce::roundToInt (v (raw->scanDiv)))] * quartersPerBar * perQuarter;
+        p.scanPassSeconds = silt::params::scanBars[(size_t) juce::jlimit (0, (int) std::size (silt::params::scanBars) - 1, juce::roundToInt (v (raw->scanDiv)))] * quartersPerBar * perQuarter;
     }
     p.scatter = grainScatter.count > 0 ? &grainScatter : nullptr;
     return p;
@@ -2394,7 +2060,7 @@ silt::layout::Context SiltProcessor::layoutContext() const
 
 double SiltProcessor::divisionQuarters (int index)
 {
-    return ::divisionQuarters[juce::jlimit (0, (int) std::size (::divisionQuarters) - 1, index)];
+    return silt::params::quartersFor (index);
 }
 
 void SiltProcessor::newPattern()
@@ -2527,7 +2193,7 @@ void SiltProcessor::armCapture()
     if (captureState.load() != CaptureState::idle)
         return;
 
-    const int bars = captureBars[juce::jlimit (0, 3, (int) raw->captureBars->load())];
+    const int bars = silt::params::captureBarCounts[juce::jlimit (0, 3, (int) raw->captureBars->load())];
     const double barQuarters = timeSigNumerator.load() * 4.0 / juce::jmax (1, timeSigDenominator.load());
     const double bpm = juce::jlimit (20.0, 400.0, hostBpm.load());
     const double seconds = juce::jmin (maxCaptureSeconds, bars * barQuarters * 60.0 / bpm);

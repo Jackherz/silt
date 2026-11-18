@@ -13,6 +13,7 @@
 #include <kit/TapeInput.h>
 #include <silt/LevelMeter.h>
 #include <silt/Modulator.h>
+#include <silt/Params.h>
 #include <silt/Resonator.h>
 #include <silt/Space.h>
 

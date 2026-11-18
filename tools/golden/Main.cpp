@@ -9,6 +9,7 @@
 // Built twice, as the instrument (silt_golden) and as Silt FX (silt_golden_fx).
 
 #include "../../plugin/PluginProcessor.h"
+#include <silt/Params.h>
 
 #include <cstdio>
 #include <functional>
@@ -354,6 +355,88 @@ std::vector<float> run (const Scene& scene)
     silt.setPlayHead (nullptr);
     return out;
 }
+// The host's parameters against silt::params, the JUCE-free table: the same ids in
+// the same order, names, kinds, choices and defaults, and to the bit the same
+// travel (0–1 and back) and text at thousands of points along each.
+bool checkParameters()
+{
+    namespace sp = silt::params;
+    SiltProcessor silt;
+    const auto& all = silt.getParameters();
+    int problems = 0, checked = 0, index = 0;
+    const auto report = [&problems] (const juce::String& what)
+    {
+        if (++problems <= 40)
+            std::printf ("params: %s\n", what.toRawUTF8());
+    };
+    const auto same = [] (float a, float b) { return std::memcmp (&a, &b, sizeof (float)) == 0; };
+
+    for (int id = 0; id < sp::count; ++id)
+    {
+        if (! sp::inBuild (id, SiltProcessor::isInstrument))
+            continue;
+        const auto& info = sp::info (id);
+        if (index >= all.size())
+        {
+            report (juce::String ("the host has no ") + info.id);
+            break;
+        }
+        auto* p = dynamic_cast<juce::RangedAudioParameter*> (all[index++]);
+        const juce::String name = info.id;
+        if (p->getParameterID() != name)
+        {
+            report ("at " + juce::String (index - 1) + " the host has " + p->getParameterID() + ", the table " + name);
+            continue;
+        }
+        if (p->getName (1024) != juce::String::fromUTF8 (info.name))
+            report (name + ": named " + p->getName (1024));
+        const bool kindOk = info.kind == sp::Kind::real    ? dynamic_cast<juce::AudioParameterFloat*> (p) != nullptr
+                          : info.kind == sp::Kind::integer ? dynamic_cast<juce::AudioParameterInt*> (p) != nullptr
+                          : info.kind == sp::Kind::boolean ? dynamic_cast<juce::AudioParameterBool*> (p) != nullptr
+                                                           : dynamic_cast<juce::AudioParameterChoice*> (p) != nullptr;
+        if (! kindOk)
+            report (name + ": a different kind");
+        if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (p))
+        {
+            juce::StringArray table;
+            for (const auto* c : info.choices)
+                table.add (juce::String::fromUTF8 (c));
+            if (choice->choices != table)
+                report (name + ": choices " + choice->choices.joinIntoString ("|"));
+        }
+        if (! same (p->getDefaultValue(), sp::to01 (id, sp::defaultFor (id, SiltProcessor::isInstrument))))
+            report (name + ": default " + juce::String (p->convertFrom0to1 (p->getDefaultValue())));
+
+        for (int k = 0; k <= 4000; ++k)
+        {
+            const float x = (float) k / 4000.0f;
+            const float v = p->convertFrom0to1 (x);
+            if (! same (v, sp::from01 (id, x)))
+            {
+                report (name + ": from 0-1 at " + juce::String (x, 6) + " " + juce::String (v, 9) + " vs " + juce::String (sp::from01 (id, x), 9));
+                break;
+            }
+            if (p->getText (x, 1024) != juce::String::fromUTF8 (sp::text (id, v).c_str()))
+            {
+                report (name + ": text at " + juce::String (v, 6) + " '" + p->getText (x, 1024) + "' vs '" + juce::String::fromUTF8 (sp::text (id, v).c_str()) + "'");
+                break;
+            }
+            // Off the steps, and past both ends.
+            const auto range = p->getNormalisableRange();
+            const float off = range.start + (range.end - range.start) * (-0.01f + 1.02f * x) + 0.000317f;
+            if (! same (p->convertTo0to1 (off), sp::to01 (id, off)) || ! same (p->convertTo0to1 (v), sp::to01 (id, v)))
+            {
+                report (name + ": to 0-1 at " + juce::String (off, 9));
+                break;
+            }
+            ++checked;
+        }
+    }
+    if (index != all.size())
+        report ("the host has " + juce::String (all.size() - index) + " more");
+    std::printf ("parameters: %d checked at %d points, %d differences\n", index, checked, problems);
+    return problems == 0;
+}
 } // namespace
 
 int main (int argc, char* argv[])
@@ -368,7 +451,7 @@ int main (int argc, char* argv[])
     outDir.createDirectory();
     const juce::File refDir = argc > 2 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]) : juce::File();
 
-    bool allSame = true;
+    bool allSame = checkParameters();
     for (const auto& scene : scenes())
     {
         const auto out = run (scene);
