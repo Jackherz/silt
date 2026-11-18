@@ -8,6 +8,8 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH ?? '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
 });
 const page = await browser.newPage({ viewport: { width: 1200, height: 820 }, deviceScaleFactor: 2 });
+// The tour opens on a first visit; these runs start with it seen (the tour has its own checks).
+await page.addInitScript(() => { if (!location.search.includes('tour=first')) localStorage.setItem('silt-tour-v1', 'seen'); });
 await page.goto(url);
 await page.waitForFunction(() => document.querySelectorAll('.at').length > 50);
 await page.waitForTimeout(300);

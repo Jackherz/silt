@@ -8,6 +8,8 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH ?? '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
 });
 const page = await browser.newPage({ viewport: { width: 1200, height: 820 } });
+// The tour opens on a first visit; these runs start with it seen (the tour has its own checks).
+await page.addInitScript(() => { if (!location.search.includes('tour=first')) localStorage.setItem('silt-tour-v1', 'seen'); });
 // (Audio: the browser is launched with autoplay allowed; see launch args.)
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
@@ -318,6 +320,42 @@ await page.waitForTimeout(300);
 check('after STOP AUDIO a key keeps it stopped', await page.evaluate(() => window.siltAudio.context.state === 'suspended'));
 check('and START AUDIO glows again', (await page.locator('.remind').count()) === 1);
 await page.keyboard.up('s');
+
+// The tour: opens on a first visit, lights START AUDIO, dims the rest, ticks a done step but
+// never moves on by itself; Esc ends it and it stays ended; ? brings it back.
+await page.evaluate(() => localStorage.removeItem('silt-tour-v1'));
+await page.goto(`${url}?tour=first`);
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
+check('the tour opens on a first visit', (await page.locator('.tour').count()) === 1);
+await page.getByText('SHAPE', { exact: true }).click({ force: true, timeout: 2000 }).catch(() => {});
+check('the dimmed parts take no clicks', (await page.getByText('FADE', { exact: true }).count()) === 0);
+await page.getByText('START AUDIO', { exact: true }).click();
+await page.waitForFunction(() => window.siltAudio?.context?.state === 'running', null, { timeout: 5000 }).catch(() => {});
+await page.waitForTimeout(200);
+check('the lit part is live, and the card ticks', (await page.locator('.tour-done').count()) === 1);
+await page.waitForTimeout(1500);
+check('it never moves on by itself', (await page.locator('.tour').getAttribute('aria-label')) === 'Tour: Welcome to Silt');
+await page.keyboard.press('ArrowRight');
+check('the arrow key moves on', (await page.locator('.tour').getAttribute('aria-label')) === 'Tour: The screen');
+await page.keyboard.down('a');
+await page.waitForFunction(() => document.querySelector('.tour-done'), null, { timeout: 3000 }).catch(() => {});
+await page.keyboard.up('a');
+check('a key still plays while touring', (await page.locator('.tour-done').count()) === 1);
+await page.keyboard.press('Escape');
+check('Esc ends it', (await page.locator('.tour').count()) === 0);
+await page.reload();
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
+check('and it stays ended', (await page.locator('.tour').count()) === 0);
+await page.getByText('?', { exact: true }).click();
+check('? brings it back', (await page.locator('.tour').getAttribute('aria-label')) === 'Tour: Welcome to Silt');
+await page.getByText('SKIP TOUR', { exact: true }).click();
+await page.getByText('IN THE PLUG-IN', { exact: true }).click();
+check('IN THE PLUG-IN opens the note', (await page.locator('.plugin-row').count()) === 9, String(await page.locator('.plugin-row').count()));
+await page.keyboard.press('Escape');
+check('Esc closes it', (await page.locator('.plugin-note').count()) === 0);
+await page.getByText('IN THE PLUG-IN', { exact: true }).click();
+await page.locator('.plugin-note').getByText('CLOSE', { exact: true }).click();
+check('CLOSE closes it', (await page.locator('.plugin-note').count()) === 0);
 
 check('no page errors', errors.length === 0, errors.join('; '));
 await browser.close();

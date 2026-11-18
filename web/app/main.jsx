@@ -9,6 +9,7 @@ import { isShown, isDimmed, roundToInt, helpFor } from './rules.js';
 import { loadSilt } from '../engine/silt-wasm.js';
 import { Audio, SAMPLES } from './audio.js';
 import { Screen, makeOverview } from './screen.jsx';
+import { Tour, tourSeen, markTourSeen, PLUGIN_ONLY, union } from './tour.jsx';
 
 const PAGE_NAMES = ['GRAIN', 'SHAPE', 'PITCH', 'PLAY', 'RESONATOR', 'FILTER', 'COLOR', 'SPACE', 'MOD', 'CHAIN'];
 
@@ -921,10 +922,10 @@ function to01(p, v) {
 // The browser's row, where the plug-in has the Bench (there's no other plug-in to pass audio to
 // here): START AUDIO (Brood's key and wording), MIC, TEMPO, and keys to play from C1 to B3, which
 // covers SLICE's slices from C1 up. All of it is the browser's own; IN THE PLUG-IN says so.
-function BrowserRow({ r, state, onStart, remind, mic, onMic, tempo, onTempo, held, noteOn, noteOff }) {
+function BrowserRow({ r, state, onStart, remind, onPlugin, mic, onMic, tempo, onTempo, held, noteOn, noteOff }) {
   const ui = useContext(UI);
   const y = r[1] + 6, h = r[3] - 12;
-  const keysR = [r[0] + 420, y, r[2] - 428, h];
+  const keysR = [r[0] + 556, y, r[2] - 564, h];
   const first = 36, whites = 21;
   const white = keysR[2] / whites;
   const isBlack = (n) => [1, 3, 6, 8, 10].includes(n % 12);
@@ -976,6 +977,7 @@ function BrowserRow({ r, state, onStart, remind, mic, onMic, tempo, onTempo, hel
           style={{ background: css(C.lcdGreen), color: css(C.lcdText), borderRadius: 3, ...font.value(11.5), display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'ns-resize' }}>
         {tempo.toFixed(1)} BPM
       </At>
+      <Key r={[r[0] + 420, y, 128, h]} text="IN THE PLUG-IN" onClick={onPlugin} help="!plugin" />
       {notes.map(key)}
     </>
   );
@@ -1020,6 +1022,31 @@ function Sheet({ r, index, name, tail, children }) {
       </At>
       {children}
     </>
+  );
+}
+
+// IN THE PLUG-IN: how the plug-in and this page differ, both ways round, as Brood's page has it.
+function PluginNote({ r, close }) {
+  useEffect(() => {
+    const keys = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+    window.addEventListener('keydown', keys);
+    return () => window.removeEventListener('keydown', keys);
+  }, [close]);
+  const box = [r[0], r[1], r[2] - 3, r[3] - 3];
+  const list = [box[0] + 14, box[1] + 36, box[2] - 28, box[3] - 36 - 52];
+  return (
+    <div className="plugin-note" role="dialog" aria-label="In the plug-in">
+      <Sheet r={box} index="?" name="IN THE PLUG-IN" tail="HOW THIS PAGE DIFFERS" />
+      <div className="at plugin-list" style={{ left: list[0], top: list[1], width: list[2], height: list[3], overflowY: 'auto' }}>
+        {PLUGIN_ONLY.map(([name, text]) => (text
+          ? <div key={name} className="plugin-row" style={{ display: 'flex', gap: 16, padding: '5px 0', borderBottom: `1px solid ${rgba(S.ink, 0.1)}` }}>
+              <div style={{ ...font.name(13), color: css(S.ink), width: 130, flex: 'none', paddingTop: 2 }}>{name}</div>
+              <div style={{ fontFamily: 'Chivo Mono', fontSize: 13 / 1.19, lineHeight: '17px', color: css(S.soft), flex: 1 }}>{text}</div>
+            </div>
+          : <div key={name} style={{ ...font.name(12), color: css(S.accent), padding: '12px 0 4px' }}>{name}</div>))}
+      </div>
+      <Key r={[box[0] + box[2] - 14 - 90, box[1] + box[3] - 10 - 32, 90, 32]} text="CLOSE" onClick={close} />
+    </div>
   );
 }
 
@@ -1138,6 +1165,8 @@ const WEB_HELP = {
   '!mic': 'MIC: your voice or an instrument fed in to Silt, for LIVE and FEED modes. Use headphones',
   '!tempo': 'TEMPO: beats per minute, modulation and time based fx will be synced to this amount',
   '!keys': 'KEYS: play notes here, or on the computer: A to K, Z and X for octaves',
+  '!plugin': 'IN THE PLUG-IN: how the plug-in and this page differ',
+  '!tour': '?: the tour',
 };
 
 // The screen's GAIN (SampleGainBox): the sample's own level. Drag (Shift finer), scroll,
@@ -1256,6 +1285,13 @@ function App() {
   const [presetName, setPresetName] = useState('Init');
   const presetAsLoaded = useRef(null);
   const [browserOpen, setBrowserOpen] = useState(false);
+  const [tourStep, setTourStep] = useState(-1);           // the tour's open step, or −1
+  const tourAt = useRef({});                              // how things stood when the open step began
+  const randomsDone = useRef(0);
+  const [pluginOpen, setPluginOpen] = useState(false);    // IN THE PLUG-IN
+  // The tour opens by itself on a first visit.
+  useEffect(() => { if (data && !tourSeen()) goTourRef.current?.(0); }, [data]);
+  const goTourRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [userPresets, setUserPresets] = useState(() => readStored('silt-presets-v1', []));
   const [favourites, setFavourites] = useState(() => new Set(readStored('silt-favourites-v1', [])));
@@ -1483,6 +1519,7 @@ function App() {
   const steps01 = (p) => (p.kind === 'choice' ? p.choices.length : p.kind === 'switch' ? 2 : p.kind === 'integer' ? p.high - p.low + 1 : 2);
   const randomise = () => {
     let changed = 0;
+    randomsDone.current++;
     step(`RANDOM ${PAGE_NAMES[page]}`, () => {
       for (const e of randomisable(page)) {
         if (randomExcluded.has(e.id)) continue;
@@ -1846,6 +1883,63 @@ function App() {
     transientMemo.current = { sample, marks: sample ? Array.from({ length: a[1] }, (_, i) => a[3 + a[0] + i] / frames) : [] };
   }
   const transients = transientMemo.current.marks;
+  // --- the tour (SiltEditor::tourSteps, shortened for the browser: the owner's choice) ---------
+  const benchKeys = { start: [g.bench[0] + 8, g.bench[1] + 6, 150, g.bench[3] - 12] };
+  const pageKeysAll = union(Object.values(g.pageKeys));
+  const slotBounds = (i) => g.slots[i].column;
+  const scopeOnScreen = (() => {   // GrainScreen::scopeArea, in the panel's space
+    const [sx, sy, sw, sh] = g.screen, fieldShare = 0.36;
+    const content = [16, 12, sw - 32, sh - 24];
+    const insetX = content[0] + content[2] - Math.round(content[2] * 0.33);
+    const area = [30, 22 + 16, sw - 60, sh - 44 - 16 - 20], rollH = Math.round(area[3] * fieldShare);
+    return [sx + area[0], sy + area[1] + area[3] - rollH, Math.min(area[0] + area[2], insetX - 10) - area[0], rollH];
+  })();
+  const routeCount = () => data.params.reduce((n, p) => n + (silt.isTarget(p.index) ? [0, 1, 2, 3].filter((m) => silt.routeAmount(m, p.index) !== 0).length : 0), 0);
+  const tourSteps = [
+    { title: 'Welcome to Silt',
+      body: 'Silt cuts a sound into tiny pieces, called grains, and plays lots of them at once, overlapping. Change how long the grains are, how many there are and where in the sound they come from, and one sample turns into pads, textures, rhythms or drones.\n\nThis tour takes a minute or two. The lit part of each step is live, so try things as you go.',
+      spots: [benchKeys.start], page: -1, tryIt: 'Press START AUDIO.', done: () => audioState === 'running' },
+    { title: 'The screen',
+      body: 'This is your sample. While you play, each white line is a grain sounding right now, and the shaded band is the part of the sample grains are taken from.',
+      spots: [g.screen], page: -1, tryIt: 'Play a note: click a key under the panel, or press A to K on your computer.',
+      done: () => (data.audio.lastDisplay?.grains ?? 0) > 0 },
+    { title: 'Your own sounds',
+      body: 'LOAD opens an audio file, or one of the built-in samples. You can also drop a file on the panel, or press ARM to record from your microphone (for the number of bars beside it).',
+      spots: [union([g.arm, g.load])], page: -1, tryIt: 'Click LOAD and pick a different factory sample.',
+      done: () => sampleRef.current !== tourAt.current.sample },
+    { title: 'Pages',
+      body: 'Each tab is a page of up to eight controls, the same eight your MIDI controller\'s knobs move. GRAIN and SHAPE make the grains, PITCH and PLAY decide how notes play them, and MOD is movement. The effects\' pages open from the chain above the screen.',
+      spots: [pageKeysAll], page: 0, tryIt: 'Click another tab to look around.', done: () => page !== 0 },
+    { title: 'Spray',
+      body: 'SPRAY scatters each grain to a random spot near where it would play, so the sound blurs and shimmers. Drag a knob up or down to turn it, hold Shift for fine moves, and double-click to put it back.',
+      spots: [g.screen, slotBounds(3)], page: 0, tryIt: 'Drag SPRAY up while you play, and watch the grains spread out across the waveform.',
+      done: () => Math.abs(value('spray') - tourAt.current.spray) > 5 },
+    { title: 'See what you hear',
+      body: 'RES, FILTER, COLOR and SPACE shape the sound after the grains: click one in the chain for its page. On the first three, the strip on the screen shows the sound going in (faint) and coming out (bright).',
+      spots: [scopeOnScreen, slotBounds(2)], page: 6, tryIt: 'Play a note and turn BITS down: the bright line breaks into steps as the sound gets crunchier.',
+      done: () => value('colorBits') < tourAt.current.bits - 1 },
+    { title: 'Movement',
+      body: 'These four are modulators: waves, random, envelopes and more. Connect one to a knob and the knob moves by itself. Rings round a knob show what\'s moving it, and MOD ROUTES lists every connection.',
+      spots: [g.rail, g.controlRow], page: 8, tryIt: 'Drag MOD 1 from the left onto any knob.', done: () => routeCount() > tourAt.current.routes },
+    { title: 'Happy accidents',
+      body: 'RANDOM shakes up the page that\'s open. The box beside it sets how far, from a nudge to anything goes. Right-click a knob to keep RANDOM away from it.',
+      spots: [union([g.random, g.amount, g.undo, g.redo])], page: -1, tryIt: 'Press RANDOM, listen, then press UNDO to go back.',
+      done: () => randomsDone.current > tourAt.current.randoms && (h.redo[h.redo.length - 1]?.name ?? '').startsWith('RANDOM') },
+    { title: 'That\'s the tour',
+      body: 'A good way in: pick a preset, play a chord, then press RANDOM at 25% on a page and keep what you like.\n\nThis ? button brings the tour back any time. IN THE PLUG-IN says how this page and the plug-in differ.',
+      spots: [g.tour], page: -1 },
+  ];
+  // From the second step on, the row under the panel stays open too, so you can always play.
+  tourSteps.forEach((st, i) => { if (i > 0) st.open = [g.bench]; });
+  function goTour(index) {
+    if (index >= tourSteps.length) { setTourStep(-1); markTourSeen(); return; }
+    const i = Math.max(0, index), st = tourSteps[i];
+    if (st.page >= 0) setPage(st.page);
+    tourAt.current = { sample: sampleRef.current, spray: value('spray'), bits: value('colorBits'), routes: routeCount(), randoms: randomsDone.current };
+    setPluginOpen(false);
+    setTourStep(i);
+  }
+  goTourRef.current = goTour;
   const wordWidth = Math.ceil(measure('SILT', `${font.wordmark(48).fontSize}px "Glyph Grotesque"`)) + 4;
   const shapes = ['SINE', 'TRIANGLE', 'SAW', 'SQUARE'];
   // Every route, in target order then modulator (SiltProcessor::allRoutes).
@@ -1893,7 +1987,7 @@ function App() {
           <div data-help="!preset">
             <PresetBar r={g.presets} name={`${presetName.toUpperCase()}${presetEdited ? ' *' : ''}`} onStep={stepPreset} onBrowse={() => setBrowserOpen(true)} onSave={() => setSaving(true)} />
           </div>
-          <Key r={g.tour} text="?" help="!tour" />
+          <Key r={g.tour} text="?" help="!tour" onClick={() => goTour(0)} />
 
           {/* Strip */}
           <Source g={g} onLoad={loadMenu} onArm={arm} capturing={!!capture} bars={Math.round(value('captureBars'))} onBars={(i) => ui.setParam('captureBars', i)}
@@ -1955,7 +2049,7 @@ function App() {
                                       pageName={pageOfParam} currentPage={PAGE_NAMES[page]} close={() => setRoutesOpen(false)} />} />
 
           {/* The browser's row, where the plug-in has the Bench: audio, the microphone, tempo, keys. */}
-          <BrowserRow r={g.bench} state={audioState} onStart={startStop} remind={remind} mic={micOn} onMic={toggleMic} tempo={tempo} onTempo={changeTempo}
+          <BrowserRow r={g.bench} state={audioState} onStart={startStop} remind={remind} onPlugin={() => setPluginOpen(true)} mic={micOn} onMic={toggleMic} tempo={tempo} onTempo={changeTempo}
                       held={held} noteOn={noteOn} noteOff={noteOff} />
           <input ref={fileInput} type="file" accept="audio/*" style={{ display: 'none' }}
                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) loadSample({ file: f }).catch(() => showFlash("COULDN'T READ THAT FILE")); }} />
@@ -1971,7 +2065,9 @@ function App() {
           )}
           {saving && <SaveDialog categories={data.presets.categories} start={presetName === 'Init' ? '' : presetName}
                                  save={(name, category) => { savePreset(name, category); setSaving(false); }} cancel={() => setSaving(false)} />}
+          {pluginOpen && <PluginNote r={[g.screen[0], g.screen[1], g.screen[2] + 3, g.well[1] + g.well[3] - g.screen[1] + 3]} close={() => setPluginOpen(false)} />}
           {menu && <Popup menu={menu} close={() => setMenu(null)} />}
+          {tourStep >= 0 && <Tour steps={tourSteps} step={tourStep} go={goTour} done={!!tourSteps[tourStep].done?.()} />}
         </div>
       </div>
     </UI.Provider>
