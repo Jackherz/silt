@@ -14,7 +14,10 @@ export const SAMPLES = [
 export const MAX_SECONDS = 30;   // as the plug-in keeps of a file (SiltProcessor::maxCaptureSeconds)
 
 export class Audio {
-  constructor({ wasm, paramCount, onDisplay, onState }) {
+  constructor({ wasm, paramCount, onDisplay, onState, onCaptured, onMidi }) {
+    this.onCaptured = onCaptured;
+    this.onMidi = onMidi;
+    this.midiAccess = null;
     this.wasm = wasm;
     this.paramCount = paramCount;
     this.onDisplay = onDisplay;
@@ -49,6 +52,8 @@ export class Audio {
       node.port.onmessage = (e) => {
         if (e.data.type === 'display') this.onDisplay?.(e.data);
         if (e.data.type === 'ready') this.onState?.('ready');
+        if (e.data.type === 'captured') this.onCaptured?.(e.data);
+        if (e.data.type === 'captureCancelled') this.onCaptured?.(null);
       };
       node.onprocessorerror = () => this.onState?.('error');
       context.onstatechange = () => this.onState?.(context.state);
@@ -68,6 +73,23 @@ export class Audio {
   async stop() {
     await this.context?.suspend();
     this.onState?.(this.context?.state);
+  }
+
+  // ARM: a take of this many seconds (RESAMPLE: of Silt's own output).
+  capture(seconds, resample) { this.post({ type: 'capture', frames: Math.max(1, Math.round(seconds * (this.context?.sampleRate ?? 48000))), resample }); }
+  cancelCapture() { this.post({ type: 'captureCancel' }); }
+
+  // Web MIDI, where the browser has it: every input's messages to onMidi (the page plays the
+  // notes and reads the controllers). Asked for once, when audio starts.
+  async midiOn() {
+    if (this.midiAccess || !navigator.requestMIDIAccess) return !!this.midiAccess;
+    try {
+      this.midiAccess = await navigator.requestMIDIAccess();
+      const listen = () => { for (const input of this.midiAccess.inputs.values()) input.onmidimessage = (e) => this.onMidi?.([...e.data]); };
+      listen();
+      this.midiAccess.onstatechange = listen;
+      return true;
+    } catch { return false; }
   }
 
   setParam(index, value) { this.post({ type: 'param', index, value }); }

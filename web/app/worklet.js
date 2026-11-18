@@ -17,6 +17,7 @@ class SiltProcessor extends AudioWorkletProcessor {
     this.inputPeak = 0;
     this.outputPeak = 0;
     this.paramCount = 0;
+    this.capture = null;         // { left, right, at, resample }: ARM's take, being recorded
     this.port.onmessage = (e) => this.message(e.data);
   }
 
@@ -45,6 +46,10 @@ class SiltProcessor extends AudioWorkletProcessor {
       case 'route': silt.setRoute(m.m, m.index, m.amount, m.polarity); break;
       case 'sample': silt.setSampleAnalysed(m.channels, m.sampleRate, m.analysis); break;
       case 'midi': silt.midi(0, m.bytes[0], m.bytes[1] ?? 0, m.bytes[2] ?? 0); break;
+      // ARM: record `frames` of the input (the microphone), or with RESAMPLE what Silt itself
+      // plays. No host transport here, so it starts at once, as with a stopped host.
+      case 'capture': this.capture = { left: new Float32Array(m.frames), right: new Float32Array(m.frames), at: 0, resample: m.resample }; break;
+      case 'captureCancel': this.capture = null; this.port.postMessage({ type: 'captureCancelled' }); break;
       case 'transport':
         if (m.playing && !this.playing) this.ppq = 0;   // PLAY starts from bar 1
         this.playing = m.playing;
@@ -71,7 +76,27 @@ class SiltProcessor extends AudioWorkletProcessor {
     }
 
     silt.transport(this.playing, this.ppq, this.bpm);
+    // The take hears the input before Silt plays over it (the two may share memory in the plug-in).
+    const take = this.capture;
+    if (take && !take.resample) {
+      const n = Math.min(frames, take.left.length - take.at);
+      for (let i = 0; i < n; i++) {
+        take.left[take.at + i] = channels > 0 ? input[0][i] : 0;
+        take.right[take.at + i] = channels > 0 ? input[Math.min(1, channels - 1)][i] : 0;
+      }
+      take.at += n;
+    }
     const [left, right] = silt.process(frames, channels);
+    if (take && take.resample) {
+      const n = Math.min(frames, take.left.length - take.at);
+      take.left.set(left.subarray(0, n), take.at);
+      take.right.set(right.subarray(0, n), take.at);
+      take.at += n;
+    }
+    if (take && take.at >= take.left.length) {
+      this.capture = null;
+      this.port.postMessage({ type: 'captured', channels: [take.left, take.right], sampleRate, resample: take.resample }, [take.left.buffer, take.right.buffer]);
+    }
     out[0].set(left);
     if (out[1]) out[1].set(right);
     for (let i = 0; i < frames; i++) this.outputPeak = Math.max(this.outputPeak, Math.abs(left[i]), Math.abs(right[i]));
@@ -81,7 +106,8 @@ class SiltProcessor extends AudioWorkletProcessor {
     if (this.sinceDisplay >= DISPLAY_EVERY) {
       this.sinceDisplay = 0;
       this.port.postMessage({ type: 'display', values: silt.display(this.paramCount), grains: silt.activeGrains(),
-                              inputPeak: this.inputPeak, outputPeak: this.outputPeak, ppq: this.ppq });
+                              inputPeak: this.inputPeak, outputPeak: this.outputPeak, ppq: this.ppq,
+                              capture: this.capture ? this.capture.at / this.capture.left.length : -1 });
       this.inputPeak = 0;
       this.outputPeak = 0;
     }

@@ -172,6 +172,43 @@ const typedGrains = await grainsWhile({});
 await page.keyboard.up('a');
 check('the computer\'s A key plays grains', typedGrains > 0, String(typedGrains));
 
+// RESAMPLE: a note held, one bar at 120 BPM (2 s) of Silt's own output becomes the sample.
+await page.getByText('RESAMPLE', { exact: true }).click({ force: true });
+await page.getByText('2 BARS', { exact: true }).click();
+await page.locator('.popup-item', { hasText: '1 BAR' }).first().click();
+await page.keyboard.down('a');
+await page.getByText('ARM', { exact: true }).click({ force: true });
+await page.mouse.move(600, 20);   // off ARM: its hover help outranks the progress, as in the plug-in
+await page.waitForTimeout(600);
+const during = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+check('RESAMPLE shows its progress', /RESAMPLE REC \d+%/.test(during));
+await page.waitForFunction(() => /RESAMPLE-\d\d:\d\d:\d\d/.test(document.body.innerText), null, { timeout: 6000 }).catch(() => {});
+await page.keyboard.up('a');
+check('the take becomes the sample', /RESAMPLE-\d\d:\d\d:\d\d/.test(await page.evaluate(() => document.body.innerText)));
+
+// MIDI: a note plays; LEARN takes a knob; the controller picks SIZE up only when it reaches it.
+const midiGrains = await page.evaluate(async () => {
+  const seen = []; const port = window.siltAudio.node.port; const prev = port.onmessage;
+  port.onmessage = (e) => { prev(e); if (e.data.type === 'display') seen.push(e.data.grains); };
+  window.siltMidi([0x90, 64, 100]);
+  await new Promise((r) => setTimeout(r, 600));
+  window.siltMidi([0x80, 64, 0]);
+  port.onmessage = prev;
+  return Math.max(0, ...seen);
+});
+check('a MIDI note plays grains', midiGrains > 0, String(midiGrains));
+await page.getByText('LEARN', { exact: true }).click({ force: true });
+check('LEARN asks for knob 1', await page.evaluate(() => document.body.innerText.includes('LEARN: TURN KNOB 1')));
+await page.evaluate(() => window.siltMidi([0xb0, 21, 10]));
+await page.waitForTimeout(50);
+check('a CC moves LEARN on to knob 2', await page.evaluate(() => document.body.innerText.includes('LEARN: TURN KNOB 2')));
+await page.getByText('LEARN', { exact: true }).click({ force: true });
+const sizeBefore = await valueText(1);
+await page.evaluate(() => window.siltMidi([0xb0, 71, 127]));   // knob 2's default CC, far from SIZE: no pickup yet
+check('a far-off controller knob doesn\'t jump SIZE', (await valueText(1)) === sizeBefore, await valueText(1));
+await page.evaluate(() => { window.siltMidi([0xb0, 71, 0]); window.siltMidi([0xb0, 71, 90]); });   // crosses it: picked up
+check('crossing the value takes SIZE over', (await valueText(1)) !== sizeBefore, `${sizeBefore} -> ${await valueText(1)}`);
+
 check('no page errors', errors.length === 0, errors.join('; '));
 await browser.close();
 process.exitCode = failed ? 1 : 0;

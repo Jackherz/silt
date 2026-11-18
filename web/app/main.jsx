@@ -351,13 +351,13 @@ function TypedValue({ id, text, style }) {
 
 // --- the strip ---------------------------------------------------------------------------
 
-function Source({ g, onLoad, monitor, onMonitor }) {
+function Source({ g, onLoad, monitor, onMonitor, onArm, capturing, bars, onBars, resample, onResample }) {
   return (
     <>
       <StripPanel r={g.sourcePanel} name="SOURCE" />
-      <Key r={g.arm} text="ARM" led={false} help="!arm" />
-      <Menu r={g.bars} text="2 BARS" help="!bars" />
-      <Key r={g.resample} text="RESAMPLE" led={false} help="!resample" />
+      <Key r={g.arm} text="ARM" led={false} accent={capturing} help="!arm" onClick={onArm} />
+      <Menu r={g.bars} text={BAR_CHOICES[bars]} items={BAR_CHOICES} selected={bars} onPick={onBars} help="!bars" />
+      <Key r={g.resample} text="RESAMPLE" led={resample} help="!resample" onClick={onResample} />
       <Key r={g.load} text="LOAD" help="!load" onClick={onLoad} />
       <div data-help="!monitor" onClick={onMonitor} style={{ cursor: 'pointer' }}><Switch r={g.monitor} text="MONITOR" on={monitor} /></div>
     </>
@@ -365,6 +365,7 @@ function Source({ g, onLoad, monitor, onMonitor }) {
 }
 
 const MODULE_PAGES = [4, 5, 6, 7];
+const BAR_CHOICES = ['1 BAR', '2 BARS', '4 BARS', '8 BARS'];
 const SHORT = ['RES', 'FILTER', 'COLOR', 'SPACE'];
 
 // The 24 chain orders, in permutation order (Instrument::chainOrder): 0 is RES, FILTER, COLOR, SPACE.
@@ -1188,6 +1189,14 @@ function App() {
   const [octave, setOctave] = useState(0);               // the computer keys' octave shift
   const traces = useRef([[], [], [], []]);                // the rail's modulator traces
   const fileInput = useRef(null);
+  const [capture, setCapture] = useState(null);           // ARM's take: { progress, resample }
+  const capturedRef = useRef(null);
+  const midiRef = useRef(null);
+  const [learnStep, setLearnStep] = useState(-1);         // −1 idle; 0–7 knob n; 8 previous page; 9 next
+  const controller = useRef({
+    ...readStored('silt-controller-v1', { knobs: [70, 71, 72, 73, 74, 75, 76, 77], previous: 78, next: 79 }),
+    learned: [], pageLast: [0, 0], picked: [], last: [], target: [], pickupPage: -1,
+  });
   const [randomAmount, setRandomAmount] = useState(0.5);
   const [randomCharacter, setRandomCharacter] = useState(0);
   const [randomExcluded, setRandomExcluded] = useState(() => new Set(['m1Type', 'm2Type', 'm3Type', 'm4Type']));
@@ -1218,7 +1227,9 @@ function App() {
           for (let m = 0; m < 4; m++) { const t = traces.current[m]; t.push(d.values[params.length + m]); if (t.length > 96) t.shift(); }
           setDisplay(d);
         },
-        onState: (st) => setAudioState(st === 'ready' ? 'running' : st === 'closed' ? 'off' : st) });
+        onState: (st) => setAudioState(st === 'ready' ? 'running' : st === 'closed' ? 'off' : st),
+        onCaptured: (take) => capturedRef.current?.(take),
+        onMidi: (bytes) => midiRef.current?.(bytes) });
       window.siltAudio = audio;
       setData({ params, layout, help, presets, silt, audio, byId: Object.fromEntries(params.map((p) => [p.id, p])) });
     })().catch((err) => console.error(err));
@@ -1285,14 +1296,20 @@ function App() {
     const { audio, silt, byId } = data;
     const bytes = factory != null ? await fetch(`samples/${SAMPLES[factory].file}`).then((r) => r.arrayBuffer()) : await file.arrayBuffer();
     const decoded = await audio.decode(bytes);
+    const name = factory != null ? SAMPLES[factory].name : file.name.replace(/\.[^.]+$/, '');
+    installSample(decoded, name, factory ?? -1, factory != null ? SAMPLES[factory].root : 60);
+    if (decoded.cut) showFlashRef.current?.(`FIRST ${30} S OF ${name.toUpperCase()}`);
+  }
+  // Any sample in: analysed here, installed by the audio; ROOT set if given (a take keeps it).
+  function installSample(decoded, name, factory, root) {
+    const { audio, silt, byId } = data;
     const analysis = silt.analyse(decoded.channels, decoded.sampleRate);
     audio.sendSample(decoded, analysis);
-    const root = factory != null ? SAMPLES[factory].root : 60;
-    silt.setParam(byId.root.index, root);
-    audio.setParam(byId.root.index, silt.getParam(byId.root.index));
-    const name = factory != null ? SAMPLES[factory].name : file.name.replace(/\.[^.]+$/, '');
-    setSample({ name, factory: factory ?? -1, ...decoded });
-    if (decoded.cut) showFlashRef.current?.(`FIRST ${30} S OF ${name.toUpperCase()}`);
+    if (root != null) {
+      silt.setParam(byId.root.index, root);
+      audio.setParam(byId.root.index, silt.getParam(byId.root.index));
+    }
+    setSample({ name, factory, ...decoded, seconds: decoded.channels[0].length / decoded.sampleRate });
     setVersion((n) => n + 1);
   }
 
@@ -1337,6 +1354,15 @@ function App() {
     setVersion((n) => n + 1);
   };
   const step = (name, fn) => { if (h.pending) { fn(); return; } beginStep(name); fn(); endStep(); };
+  // A controller knob sends a message per move: moves of one parameter close together are one
+  // step (SiltProcessor's ParameterChange merging).
+  const mergedStep = (key, name, fn) => {
+    const top = h.undo[h.undo.length - 1], now = performance.now();
+    if (top && top.key === key && now - top.time < 1000) { fn(); top.after = snapshot(); top.time = now; setVersion((n) => n + 1); return; }
+    step(name, fn);
+    const added = h.undo[h.undo.length - 1];
+    if (added && added !== top) { added.key = key; added.time = now; }
+  };
   const undo = () => { endStep(); const st = h.undo.pop(); if (st) { restore(st.before); h.redo.push(st); } };
   const redo = () => { endStep(); const st = h.redo.pop(); if (st) { restore(st.after); h.undo.push(st); } };
 
@@ -1458,11 +1484,96 @@ function App() {
         routes: targets.flatMap((t) => [0, 1, 2, 3].map((m) => [m, t, silt.routeAmount(m, t), silt.routePolarity(m, t)])).filter((r) => r[2] !== 0),
       });
       data.audio.transport(false, tempo);
+      data.audio.midiOn();
     } catch (err) {
       setAudioState('off');
       showFlash(String(err.message ?? err).toUpperCase());
     }
   };
+  // ARM: the bars at TEMPO (4/4, as a stopped host), up to 30 s; again to cancel (SiltProcessor::armCapture).
+  const arm = async () => {
+    if (capture) { data.audio.cancelCapture(); setCapture(null); return; }
+    if (audioState !== 'running') await startStop();
+    const bars = [1, 2, 4, 8][Math.max(0, Math.min(3, Math.round(value('captureBars'))))];
+    const resample = value('captureFeed') > 0.5;
+    data.audio.capture(Math.min(30, bars * 4 * 60 / Math.max(20, Math.min(400, tempo))), resample);
+    setCapture({ progress: 0, resample });
+  };
+  capturedRef.current = (take) => {
+    setCapture(null);
+    if (!take) return;
+    const time = new Date().toTimeString().slice(0, 8);
+    installSample({ channels: take.channels, sampleRate: take.sampleRate }, `${take.resample ? 'RESAMPLE' : 'CAPTURE'} ${time}`, -1, null);
+  };
+
+  // The 8-knob controller (SiltProcessor::handleController, applyControllerMoves): its knobs move
+  // the open page's eight slots, taking over once they reach the value; two buttons step pages.
+  const slotParameter = (p, slot) => data.layout.instrument.find((e) => e.page === p && e.slot === slot
+    && !['underButton', 'underMenu'].includes(e.kind) && isShown(e, context))?.id ?? '';
+  const handleController = (number, cc) => {
+    const ct = controller.current;
+    if (learnStep >= 0) {
+      if (ct.learned.slice(0, Math.min(learnStep, 8)).includes(number) || (learnStep === 9 && number === ct.previous)) return;
+      if (learnStep < 8) { ct.knobs[learnStep] = number; ct.learned[learnStep] = number; }
+      else if (learnStep === 8) ct.previous = number;
+      else ct.next = number;
+      writeStored('silt-controller-v1', { knobs: ct.knobs, previous: ct.previous, next: ct.next });
+      setLearnStep(learnStep < 9 ? learnStep + 1 : -1);
+      return;
+    }
+    if (number === ct.previous || number === ct.next) {
+      const which = number === ct.next ? 1 : 0;
+      if (cc > 63 && ct.pageLast[which] <= 63) {
+        if (page === 4 && half < 3 && which === 1) setHalf(half + 1);
+        else if (page === 4 && half > 0 && which === 0) setHalf(half - 1);
+        else {
+          const to = (page + (which ? 1 : 9)) % 10;
+          if (to === 4) setHalf(which ? 0 : 3);
+          setPage(to);
+        }
+      }
+      ct.pageLast[which] = cc;
+      return;
+    }
+    const slot = ct.knobs.indexOf(number);
+    if (slot < 0) return;
+    if (ct.pickupPage !== page) { ct.pickupPage = page; ct.picked = []; ct.last = []; }
+    const id = slotParameter(page, slot);
+    if (id !== ct.target[slot]) { ct.target[slot] = id; ct.picked[slot] = false; ct.last[slot] = -1; }
+    if (!id) return;
+    const last = ct.last[slot] ?? -1;
+    if (armed >= 0 && page !== 8 && !id.startsWith('!')) {   // ASSIGN: the armed modulator's depth here, centre = none
+      if (ui.isTarget(id)) mergedStep(`route${armed}${id}`, 'MODULATION', () => setRoute(armed, id, Math.max(-1, Math.min(1, (cc - 64) / 63))));
+      ct.last[slot] = cc;
+      return;
+    }
+    if (id === '!modSelect') { setModShown(Math.max(0, Math.min(3, Math.floor(cc * 4 / 128)))); ct.last[slot] = cc; return; }
+    if (id === '!assign') { if (cc > 63 && last <= 63) setArmed((a) => (a >= 0 ? -1 : modShown)); ct.last[slot] = cc; return; }
+    if (id === '!newPattern') { if (cc > 63 && last <= 63) ui.setParam('patternSeed', 1 + Math.floor(Math.random() * 9999)); ct.last[slot] = cc; return; }
+    const p = byId[id];
+    if (!p) return;
+    const target = cc / 127;
+    if (!ct.picked[slot]) {
+      const current = silt.to01(p.index, value(id)), previous = last >= 0 ? last / 127 : target;
+      ct.picked[slot] = Math.abs(target - current) < 0.04 || (previous - current) * (target - current) <= 0;
+      ct.last[slot] = cc;
+      if (!ct.picked[slot]) return;
+    }
+    ct.last[slot] = cc;
+    mergedStep(`param${id}`, p.name, () => setParam(id, silt.from01(p.index, target)));
+  };
+  // Web MIDI: everything to the sound (notes, pedal, wheel, pressure, bend); controllers but the
+  // pedal and all-notes-off also to the controller above.
+  window.siltMidi = (bytes) => midiRef.current?.(bytes);   // the same path a MIDI device takes (tests use it)
+  midiRef.current = (bytes) => {
+    const [status, d1 = 0, d2 = 0] = bytes;
+    const kind = status & 0xf0;
+    if (kind === 0x90 && d2 > 0) noteOn(d1, d2);
+    else if (kind === 0x80 || kind === 0x90) noteOff(d1);
+    else data.audio.midi(bytes);
+    if (kind === 0xb0 && d1 !== 64 && d1 !== 120 && d1 !== 123) handleController(d1, d2);
+  };
+
   const toggleMic = async () => {
     if (micOn) { data.audio.micOff(); setMicOn(false); return; }
     try { await data.audio.micOn(); setMicOn(true); } catch (err) { showFlash(String(err.message ?? err).toUpperCase()); }
@@ -1592,7 +1703,9 @@ function App() {
 
   // The readout: hover help first, then an armed modulator, then the standing figure (statusText).
   const helpLine = hover ? helpFor({ ...data.help, ...WEB_HELP }, hover) : '';
-  const status = depthReadout || flash || helpLine || (armed >= 0 ? `MOD ${armed + 1} ARMED: DRAG A KNOB'S OUTER RING` : statusFigure(micOn ? 'MIC' : null, display && micOn ? 20 * Math.log10(Math.max(1e-6, display.inputPeak)) : -100, tempo));
+  const learnText = learnStep < 0 ? '' : learnStep < 8 ? `LEARN: TURN KNOB ${learnStep + 1}` : learnStep === 8 ? 'LEARN: PRESS PREVIOUS PAGE' : 'LEARN: PRESS NEXT PAGE';
+  const captureText = capture ? `${capture.resample ? 'RESAMPLE ' : ''}REC ${Math.round(Math.max(0, display?.capture ?? 0) * 100)}%` : '';
+  const status = depthReadout || flash || learnText || helpLine || captureText || (armed >= 0 ? `MOD ${armed + 1} ARMED: DRAG A KNOB'S OUTER RING` : statusFigure(micOn ? 'MIC' : null, display && micOn ? 20 * Math.log10(Math.max(1e-6, display.inputPeak)) : -100, tempo));
 
   const over = (e) => {
     const el = e.target.closest?.('[data-help]');
@@ -1618,7 +1731,8 @@ function App() {
           <Key r={g.tour} text="?" help="!tour" />
 
           {/* Strip */}
-          <Source g={g} onLoad={loadMenu} monitor={value('monitor') > 0.5} onMonitor={() => ui.setParam('monitor', value('monitor') > 0.5 ? 0 : 1)} />
+          <Source g={g} onLoad={loadMenu} onArm={arm} capturing={!!capture} bars={Math.round(value('captureBars'))} onBars={(i) => ui.setParam('captureBars', i)}
+                  resample={value('captureFeed') > 0.5} onResample={() => ui.setParam('captureFeed', value('captureFeed') > 0.5 ? 0 : 1)} monitor={value('monitor') > 0.5} onMonitor={() => ui.setParam('monitor', value('monitor') > 0.5 ? 0 : 1)} />
           <Chain g={g} value={value} openModule={page >= 4 && page <= 7 ? page - 4 : -1} half={half} chainOpen={page === 9} />
           <Readout r={g.lcd} title="SILT" status={status} />
 
@@ -1646,7 +1760,12 @@ function App() {
               )}
             </React.Fragment>
           ))}
-          <Key r={g.learn} text="LEARN" led={false} help="!learn" />
+          <Key r={g.learn} text="LEARN" led={learnStep >= 0} help="!learn" onClick={() => { controller.current.learned = []; setLearnStep(learnStep >= 0 ? -1 : 0); }} />
+          {learnStep >= 0 && learnStep < 8 && (
+            // While learning, the slot whose knob to turn.
+            <At r={[g.slots[learnStep].column[0] + 2, g.slots[learnStep].column[1] + 2, g.slots[learnStep].column[2] - 4, g.slots[learnStep].column[3] - 4]}
+                style={{ border: `3px solid ${css(S.accent)}`, pointerEvents: 'none', zIndex: 3 }} />
+          )}
           <Key r={g.random} text="RANDOM" help="!random" onClick={randomise} onMenu={randomMenu} />
           <AmountBox r={g.amount} amount={randomAmount} set={setRandomAmount} />
           <Key r={g.routes} text="MOD ROUTES" help="!routes" on={routesOpen} onClick={() => setRoutesOpen(!routesOpen)} />
