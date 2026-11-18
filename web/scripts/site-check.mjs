@@ -13,7 +13,9 @@ for (const [label, viewport, mobile] of [['desktop', { width: 1440, height: 900 
   await page.goto(`${site}#silt`);
   const frame = page.frameLocator('#silt-frame');
   await frame.locator('canvas[data-sample="AHHH-PROGRESSION"]').waitFor({ timeout: 15000 });
-  await page.waitForTimeout(400);
+  // The frame grows to fit once Silt has drawn (slower on the live site than locally).
+  await page.waitForFunction(() => { const f = document.getElementById('silt-frame'); return Math.abs(f.getBoundingClientRect().height - f.contentDocument.body.scrollHeight) < 2; }, null, { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(800);
   const fit = await page.evaluate(() => { const f = document.getElementById('silt-frame'); return { h: f.getBoundingClientRect().height, w: f.getBoundingClientRect().width, body: f.contentDocument.body.scrollHeight }; });
   // The panel's own shape: 1200 x 820 on a desktop, the phone layout's 390 wide on a phone.
   const stage = await frame.locator('.stage').evaluate((e) => [parseFloat(e.style.width), parseFloat(e.style.height)]);
