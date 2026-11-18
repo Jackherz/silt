@@ -17,18 +17,19 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 300
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           fetch-depth: 0
           submodules: recursive
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .deps
           key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
 
       - name: ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@dbeefd73e8e2ffc1bbc412570072735eb4db3607   # v1.2.25
         with:
           key: ccache-release-${{ runner.os }}
           max-size: 1G
@@ -45,7 +46,7 @@ jobs:
             -DCMAKE_OBJC_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
         run: bash scripts/package-macos.sh "${{ steps.version.outputs.version }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Silt-macOS
           path: release/*.pkg

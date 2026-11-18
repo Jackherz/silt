@@ -20,13 +20,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# The token can read the repository and nothing else.
+permissions:
+  contents: read
+
 jobs:
   # The JUCE-free core and its tests on Linux (libstdc++): a cheap portability check.
   core-linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           submodules: recursive
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSILT_CORE_ONLY=ON
@@ -42,14 +48,18 @@ jobs:
         # windows-2022 returns once the Windows build is fixed (its own branch).
         os: [macos-15]
     runs-on: ${{ matrix.os }}
+    # A clean build takes well under an hour; since 2026-11-06 the Build step has hung
+    # until GitHub's 6-hour limit, so stop it long before that.
+    timeout-minutes: 90
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           submodules: recursive
 
       # JUCE, clap-juce-extensions and Catch2, fetched once per CMakeLists.txt change.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .deps
           key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
@@ -57,7 +67,7 @@ jobs:
       # Compiler cache on macOS, where runner minutes cost the most.
       - name: ccache (macOS)
         if: runner.os == 'macOS'
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@dbeefd73e8e2ffc1bbc412570072735eb4db3607   # v1.2.25
         with:
           key: ccache-${{ runner.os }}
           max-size: 500M
@@ -70,6 +80,7 @@ jobs:
             ${{ runner.os == 'macOS' && '-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OBJC_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache' || '' }}
 
       - name: Build
+        timeout-minutes: 60
         run: cmake --build build --config Release --parallel
 
       - name: Unit tests
@@ -78,14 +89,14 @@ jobs:
       - name: Fetch pluginval (macOS)
         if: runner.os == 'macOS'
         run: |
-          curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+          curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
           unzip -q pluginval.zip
 
       - name: Fetch pluginval (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Invoke-WebRequest https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip -OutFile pluginval.zip
+          Invoke-WebRequest https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip -OutFile pluginval.zip
           Expand-Archive pluginval.zip -DestinationPath .
 
       - name: Validate VST3 (macOS)
@@ -111,7 +122,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: silt-${{ runner.os }}
           retention-days: 7
