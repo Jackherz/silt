@@ -1,0 +1,9 @@
+/* The page around the panel. The panel draws itself (main.jsx) on Graphite. */
+:root { --page: #262a27; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--page); overflow: hidden; }
+#root { display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; }
+.frame { position: relative; overflow: hidden; }
+.stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.at { position: absolute; line-height: 1; user-select: none; }
+.spine { display: flex; align-items: center; justify-content: center; }
