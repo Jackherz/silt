@@ -19,6 +19,7 @@ class SiltProcessor extends AudioWorkletProcessor {
     this.paramCount = 0;
     this.capture = null;         // { left, right, at, resample }: ARM's take, being recorded
     this.liveTick = 0;
+    this.insetPage = -1;
     this.port.onmessage = (e) => this.message(e.data);
   }
 
@@ -48,6 +49,7 @@ class SiltProcessor extends AudioWorkletProcessor {
       case 'slices': silt.setSlices(m.marks); break;   // SLICE BY MANUAL's starts
       // The scope: the module it taps (RESONATOR, FILTER, COLOR; -1 none), read with the display.
       case 'scope': silt.scopeModule(m.module); this.scopeOn = m.module >= 0; break;
+      case 'inset': this.insetPage = m.page; this.insetMod = m.mod; break;   // the open page's corner picture
       case 'sample': silt.setSampleAnalysed(m.channels, m.sampleRate, m.analysis); break;
       case 'midi': silt.midi(0, m.bytes[0], m.bytes[1] ?? 0, m.bytes[2] ?? 0); break;
       // ARM: record `frames` of the input (the microphone), or with RESAMPLE what Silt itself
@@ -112,7 +114,8 @@ class SiltProcessor extends AudioWorkletProcessor {
       this.port.postMessage({ type: 'display', values: silt.display(this.paramCount), grains: silt.activeGrains(),
                               inputPeak: this.inputPeak, outputPeak: this.outputPeak, ppq: this.ppq,
                               capture: this.capture ? this.capture.at / this.capture.left.length : -1,
-                              screen: silt.screen(), live: null });
+                              screen: silt.screen(), live: null,
+                              inset: this.insetPage >= 0 ? silt.inset(this.insetPage, this.insetMod ?? 0) : null });
       if (++this.liveTick % 4 === 0) this.port.postMessage({ type: 'live', peaks: silt.livePeaks() });
       // The scope, 30 times a second: the latest 4096 samples in and out (SiltEditor::updateScope).
       if (this.scopeOn && this.liveTick % 2 === 0) {

@@ -369,6 +369,8 @@ const MODULE_PAGES = [4, 5, 6, 7];
 // The scope taps the module of RESONATOR, FILTER and COLOR's pages (SiltEditor::updateScope).
 const SCOPE_MODULE = { 4: 0, 5: 1, 6: 2 };
 const MODULE_NAMES = ['RESONATOR', 'FILTER', 'COLOR', 'SPACE'];
+// A synced note value in quarter notes (silt::params::divisionQuarters).
+const DIVISION_QUARTERS = [1 / 16, 1 / 8, 1 / 6, 1 / 4, 1 / 3, 3 / 8, 1 / 2, 2 / 3, 3 / 4, 1, 4 / 3, 3 / 2, 2, 3, 4, 8, 16];
 const BAR_CHOICES = ['1 BAR', '2 BARS', '4 BARS', '8 BARS'];
 const SHORT = ['RES', 'FILTER', 'COLOR', 'SPACE'];
 
@@ -1224,6 +1226,8 @@ function App() {
   const transientMemo = useRef({});
   // The scope taps RESONATOR, FILTER or COLOR while its page is open.
   useEffect(() => { data?.audio.scope(SCOPE_MODULE[page] ?? -1); }, [data, page]);
+  // The corner picture's numbers from the running engine, for PITCH, RESONATOR, FILTER, SPACE, MOD.
+  useEffect(() => { data?.audio.inset([2, 4, 5, 7, 8].includes(page) ? page : -1, modShown); }, [data, page, modShown]);
   const overview = useMemo(() => makeOverview(sample), [sample]);
   const [tempo, setTempo] = useState(120);
   const [micOn, setMicOn] = useState(false);
@@ -1813,6 +1817,17 @@ function App() {
     return Array.from({ length: count }, (_, i) => start + length * i / count);
   })();
   sliceMarksRef.current = sliceMarks;
+  // What the screen's pictures read: the values as the sound has them (modulated), their texts,
+  // the tempo, RESONATOR's quarter, the shown modulator with its colour and trace.
+  const liveValue = (id) => {
+    const p = byId[id], m = data.audio.lastDisplay?.values?.[p.index];
+    return m >= 0 ? silt.from01(p.index, m) : value(id);
+  };
+  const picture = {
+    v: liveValue, text: (id, v) => text(id, v).toUpperCase(), tempo, half, mod: modShown, modColour: MOD[modShown].base,
+    trace: traces.current[modShown], quarters: (i) => DIVISION_QUARTERS[Math.max(0, Math.min(DIVISION_QUARTERS.length - 1, i))],
+    raw: value,
+  };
   // SNAP to hits: the transients it can land on, ticked along the waveform's top.
   if (transientMemo.current.sample !== sample) {
     const a = sample?.analysis, frames = sample?.channels[0].length;
@@ -1879,6 +1894,7 @@ function App() {
                   gain={Math.pow(10, value('sampleGain') / 20)} live={mode === 1 || mode === 2} feed={mode === 2} frozen={value('freeze') > 0.5}
                   fontPx={screenFont} transients={Math.round(value('snap')) > 1.5 ? transients : null}
                   scope={SCOPE_MODULE[page] !== undefined ? MODULE_NAMES[SCOPE_MODULE[page]] : null}
+                  page={page} picture={picture}
                   zoomBox={[g.screen[0] + g.screen[2] - 30 - 200 - 78, g.screen[1] + 22, 78, 16]}
                   sliceEdits={{ begin: () => beginStep('SLICES'), end: endStep, ...sliceEdits,
                                 add: (share) => step('SLICES', () => sliceEdits.add(share)), remove: (i) => step('SLICES', () => sliceEdits.remove(i)) }} />

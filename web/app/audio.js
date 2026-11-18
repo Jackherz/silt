@@ -100,6 +100,7 @@ export class Audio {
   setParam(index, value) { this.post({ type: 'param', index, value }); }
   setRoute(m, index, amount, polarity) { this.post({ type: 'route', m, index, amount, polarity }); }
   setSlices(marks) { this.post({ type: 'slices', marks: [...marks] }); }
+  inset(page, mod) { this.post({ type: 'inset', page, mod }); }
   scope(module) { if (module < 0) this.lastScope = null; this.post({ type: 'scope', module }); }
   midi(bytes) { this.post({ type: 'midi', bytes }); }
   noteOn(note, velocity = 100) { this.midi([0x90, note, velocity]); }

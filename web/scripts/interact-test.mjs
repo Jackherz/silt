@@ -274,6 +274,26 @@ await page.getByText('START AUDIO', { exact: true }).click({ force: true });
 await page.waitForFunction(() => window.siltAudio?.lastScope?.input?.length === 4096, null, { timeout: 5000 }).catch(() => {});
 check('FILTER\'s page: the scope reads the module', await page.evaluate(() => window.siltAudio?.lastScope?.input?.length === 4096));
 
+// The corner pictures: each page with one draws it, while a note plays, without an error.
+for (const [n, name] of [[2, 'PITCH'], [4, 'RESONATOR'], [5, 'FILTER'], [6, 'COLOR'], [7, 'SPACE'], [8, 'MOD']]) {
+  await page.goto(`${url}?page=${n}`);
+  await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
+  await page.getByText('START AUDIO', { exact: true }).click({ force: true });
+  await page.waitForFunction(() => window.siltAudio?.lastDisplay, null, { timeout: 5000 }).catch(() => {});
+  await page.evaluate(() => window.siltAudio.noteOn(60));
+  await page.waitForTimeout(400);
+  // The picture's ground (deepBack) fills its frame, bottom right of the screen.
+  const ground = await page.evaluate(() => {
+    const c = document.querySelector('canvas[data-sample]'), k = c.width / parseFloat(c.style.width);
+    const w = parseFloat(c.style.width), h = parseFloat(c.style.height);
+    const top = 12 + (h - 24) - (Math.round((h - 24 - 36) * 0.36) + 20);   // insetArea's top: by the title, right of it
+    const d = c.getContext('2d').getImageData(Math.round((w - 30) * k), Math.round((top + 5) * k), 1, 1).data;
+    return [d[0], d[1], d[2]];
+  });
+  const errorsBefore = errors.length;
+  check(`${name}'s corner picture draws`, ground[0] < 20 && ground[1] < 25 && ground[2] < 25 && errors.length === errorsBefore, ground.join());
+}
+
 check('no page errors', errors.length === 0, errors.join('; '));
 await browser.close();
 process.exitCode = failed ? 1 : 0;

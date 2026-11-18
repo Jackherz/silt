@@ -4,6 +4,8 @@
 // the audio's latest report itself, 60 times a second, without redrawing the rest of the panel.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { C, font } from './theme.js';
+import { INSET_PAGES, deepBack, drawInset, liveScope } from './insets.js';
+import { SpaceScene, sceneVisible, spaceSettings } from './space.js';
 
 const COLUMNS = 32768;   // the overview's columns (SiltProcessor's overviewColumns)
 const hex = (rgb) => `#${rgb.toString(16).padStart(6, '0')}`;
@@ -50,20 +52,27 @@ function layout(w, h, fieldShare) {
   const content = [16, 12, w - 32, h - 24];
   const insetW = Math.round(content[2] * 0.33), insetH = Math.round((content[3] - 36) * fieldShare) + 20;
   const inset = [content[0] + content[2] - insetW, content[1] + content[3] - insetH, insetW, insetH];
-  const scope = [roll[0], roll[1], Math.min(roll[0] + roll[2], inset[0] - 10) - roll[0], roll[3]];
+  // GrainScreen::rollArea measures from 30 across and 22 down (not the paint's 16 and 12).
+  const area = [30, 22 + 16, w - 60, h - 44 - 16 - 20];
+  const areaRollH = Math.round(area[3] * fieldShare);
+  const scopeRoll = [area[0], area[1] + area[3] - areaRollH, area[2], areaRollH];
+  const scope = [scopeRoll[0], scopeRoll[1], Math.min(scopeRoll[0] + scopeRoll[2], inset[0] - 10) - scopeRoll[0], scopeRoll[3]];
   return { glass, top, bottom, roll, wave, inset, scope };
 }
 
-export function Screen({ r, scale, audio, overview, region, slices, gain, live, frozen, feed, fontPx, transients, scope, zoomBox, sliceEdits }) {
+export function Screen({ r, scale, audio, overview, region, slices, gain, live, frozen, feed, fontPx, transients, scope, zoomBox, sliceEdits, page, picture }) {
   const canvas = useRef(null);
   const field = useRef(null);   // the grain field with its trails, at 2× the roll's size
   const state = useRef({});
-  state.current = { overview, region, slices, gain, live, frozen, feed, transients, scope };
+  state.current = { overview, region, slices, gain, live, frozen, feed, transients, scope, page, picture };
+  const scene = useRef(null);       // SPACE's sky, made when first shown
+  const sceneState = useRef({ duck: 1, at: 0 });
   const [x0, y0, w, h] = r;
   const L = useMemo(() => layout(w, h, 0.36), [w, h]);
 
   // The waveform at this zoom and gain: drawn once per sample, gain, size and view.
   const waveCache = useRef(null);
+  const waveEnvelope = useRef([]);   // the waveform's height per pixel across (0…1 of half), for SPACE's sparkles
   useEffect(() => { waveCache.current = null; }, [overview, gain, scale]);
 
   // Zoom: the part of the sample in view, as shares (the screen's own: not saved).
@@ -117,6 +126,36 @@ export function Screen({ r, scale, audio, overview, region, slices, gain, live, 
       roundRect(g, 0, 0, w, h, 6);
       g.fill();
 
+      // SPACE: the sky behind everything on the glass, fading in with DELAY and REVERB (not in
+      // LIVE, or with no sample), moved on by the time since the last frame.
+      const insetData = audio?.lastDisplay?.inset;
+      let sky = null;
+      {
+        const nowMs = performance.now(), st = sceneState.current;
+        const seconds = Math.max(0, Math.min(0.1, (nowMs - (st.at || nowMs)) * 0.001));
+        st.at = nowMs;
+        if (s.page === 7 && !isLive && ov && s.picture) {
+          const settings = spaceSettings(s.picture.raw, s.picture.tempo, s.picture.quarters);
+          if (sceneVisible(settings)) {
+            const rate = audio?.context?.sampleRate ?? 48000;
+            const [count = 0, peak = 0] = s.page === 7 && insetData ? insetData : [];
+            settings.wet = Math.max(0, Math.min(1, ((peak > 0 ? Math.max(-60, 20 * Math.log10(peak)) : -60) + 54) / 48));
+            settings.sinceNote = count * 64 / rate;
+            const sounding = heads.find((p) => p >= 0);
+            st.notePlace = sounding !== undefined ? sounding : st.notePlace ?? 0.5;
+            settings.notePlace = st.notePlace;
+            // DUCK: dips while a note sounds, back over about half a second.
+            const target = sounding !== undefined ? 1 - 0.8 * settings.duckAmount : 1;
+            st.duck += (target - st.duck) * Math.min(1, seconds * (target < st.duck ? 30 : 7));
+            settings.duck = st.duck;
+            if (!scene.current) scene.current = new SpaceScene();
+            scene.current.advance(settings, seconds, waveEnvelope.current);
+            scene.current.drawBehind(g, glass, settings);
+            sky = settings;
+          }
+        }
+      }
+
       g.font = `${fontPx(12)}px "B612 Mono"`;
       g.textBaseline = 'middle';
       const text = (t, box, align = 'left', colour = '#ffffff') => {
@@ -144,7 +183,7 @@ export function Screen({ r, scale, audio, overview, region, slices, gain, live, 
       } else {
         text(ov.name.toUpperCase(), top);
         text(`${ov.seconds.toFixed(2)} S  ${(ov.sampleRate / 1000).toFixed(ov.sampleRate >= 100000 ? 0 : 1)}K ${ov.mono ? 'MONO' : 'ST'}`, top, 'right');
-        if (!waveCache.current) waveCache.current = drawWaveCache(ov, wave, px, s.gain, v);
+        if (!waveCache.current) [waveCache.current, waveEnvelope.current] = drawWaveCache(ov, wave, px, s.gain, v);
         g.drawImage(waveCache.current, wave[0], wave[1], wave[2], wave[3]);
         if (span < 0.999) {
           // Zoomed: a bar along the bottom shows which part is in view; drag it (or click along
@@ -247,6 +286,8 @@ export function Screen({ r, scale, audio, overview, region, slices, gain, live, 
         g.fillRect(x - 0.5, wave[1], 1, wave[3]);
       }
 
+      if (sky) scene.current.drawOver(g, glass, wave, sky);
+
       // The line at the bottom: what's sounding (FULL a moment after grains had to make way), in the
       // guides' face, as the plug-in draws it.
       if (over !== overSeen) { if (overSeen >= 0) fullUntil = performance.now() + 1000; overSeen = over; }
@@ -258,6 +299,9 @@ export function Screen({ r, scale, audio, overview, region, slices, gain, live, 
       // RESONATOR, FILTER, COLOR: the scope over the roll, left of the corner picture.
       if (s.scope) drawScope(g, L.scope, s.scope, audio?.lastScope, scopeState.current, audio?.context?.sampleRate ?? 48000, fontPx);
       else scopeState.current.seen = null;
+      // The open page's corner picture, bottom right.
+      if (INSET_PAGES.has(s.page) && s.picture)
+        drawInset(g, L.inset, s.page, { ...s.picture, fontPx, inset: insetData, scope: liveScope(audio?.lastScope, audio?.context?.sampleRate) });
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
@@ -416,8 +460,7 @@ function drawScope(g, area, title, report, st, sampleRate, fontPx) {
   }
   const [x, y, w, h] = area;
   // As the corner pictures' ground: insetBack, 55% of the way to black.
-  const ground = (C.insetBack >> 16 & 255) * 0.45 << 16 | (C.insetBack >> 8 & 255) * 0.45 << 8 | (C.insetBack & 255) * 0.45;
-  g.fillStyle = hex(ground);
+  g.fillStyle = hex(deepBack());
   g.fillRect(x, y - 2, w, h + 4);
   g.fillStyle = rgba(C.screenLight, 0.35);
   g.fillRect(x, Math.trunc(y + h / 2), w, 1);
@@ -464,6 +507,7 @@ function shareAt(x, writeShare) { const s = writeShare - (1 - x); return s - Mat
 function xOf(share, writeShare) { const age = writeShare - share; return 1 - (age - Math.floor(age)); }
 
 function drawWaveCache(ov, wave, px, gain, v) {
+  const envelope = new Float32Array(Math.max(1, Math.round(wave[2])));
   const width = Math.max(1, Math.round(wave[2] * px)), height = Math.max(1, Math.round(wave[3] * px));
   const c = document.createElement('canvas');
   c.width = width; c.height = height;
@@ -478,11 +522,13 @@ function drawWaveCache(ov, wave, px, gain, v) {
     for (let k = c0; k < c1; k++) { if (ov.max[k] > hi) hi = ov.max[k]; if (ov.min[k] < lo) lo = ov.min[k]; }
     hi *= gain; lo *= gain;
     const clipped = hi > 1 || lo < -1;
+    const e = Math.max(0, Math.min(envelope.length - 1, Math.trunc(x * envelope.length / width)));
+    envelope[e] = Math.max(envelope[e], Math.min(1, Math.max(hi, -lo)));
     const top = mid - Math.min(1, hi) * half, bottom = mid - Math.max(-1, lo) * half;
     g.fillStyle = clipped ? '#c8342b' : hex(C.screenPale);
     g.fillRect(x, top, 1, Math.max(1, bottom - top));
   }
-  return c;
+  return [c, envelope];
 }
 
 function drawLiveWave(g, wave, peaks, writeShare, frozen) {

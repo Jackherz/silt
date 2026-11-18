@@ -73,6 +73,8 @@ export async function loadSilt(bytes) {
     },
     // The scope: which module it taps (-1 none); read gives { written, input, output }.
     scopeModule: (m) => x.silt_scope_module(m),
+    // The open page's corner picture: what it needs from the running engine (SiltWeb.cpp's silt_inset).
+    inset: (page, modulator) => floats(x.silt_inset_data(), x.silt_inset(page, modulator)).slice(),
     readScope(count) {
       const written = x.silt_read_scope(count) >>> 0;
       return { written, input: floats(x.silt_scope_in(), count).slice(), output: floats(x.silt_scope_out(), count).slice() };

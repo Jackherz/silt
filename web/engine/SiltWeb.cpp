@@ -7,10 +7,15 @@
 // tests can drive the same functions.
 
 #include <silt/Dsp.h>
+#include <silt/Filter.h>
 #include <silt/Instrument.h>
+#include <silt/Modulator.h>
+#include <silt/Resonator.h>
 #include <silt/Snap.h>
 
 #include <algorithm>
+#include <cmath>
+#include <complex>
 #include <array>
 #include <memory>
 #include <string>
@@ -386,4 +391,147 @@ SILT_EXPORT unsigned silt_read_scope (int count)
 {
     count = std::clamp (count, 0, (int) scopeIn.size());
     return web->instrument.readScope (scopeIn.data(), scopeOut.data(), count);
+}
+
+// The screen's corner pictures (plugin/ScreenInsets.cpp): what each needs from the engine as it
+// runs, read in the worklet with the modulated values, packed for the page to draw.
+//   page 2 PITCH:     [scale mask, 16 pattern steps]
+//   page 4 RESONATOR: [bands, root note, then per band: ratio, level, ring seconds, pan side]
+//   page 5 FILTER:    [open, 121 levels in dB from 20 Hz to 20 kHz]
+//   page 7 SPACE:     [trace count, SPACE's latest peak]
+//   page 8 MOD:       [type, bipolar, retrig, backwards, phase, sym, curve, attack, decay, sustain,
+//                      release, now phase, now output, stage, stage ms, released from,
+//                      release level, 161 points of one cycle]
+namespace { std::vector<float> inset (8 + 128 * 4); }
+SILT_EXPORT float* silt_inset_data() { return inset.data(); }
+SILT_EXPORT int silt_inset (int page, int modulator)
+{
+    auto& in = web->instrument;
+    const auto v = [&] (int id) { return in.value (id); };
+    inset.clear();
+    switch (page)
+    {
+        case 2:
+        {
+            inset.push_back ((float) silt::scaleMask ((silt::Scale) std::clamp ((int) std::lround (v (sp::scale)), 0, silt::scaleCount - 1)));
+            silt::Random r (0x9e3779b97f4a7c15ull ^ (std::uint64_t) (int) std::lround (v (sp::patternSeed)));
+            for (int i = 0; i < 16; ++i)
+                inset.push_back (r.nextBipolar());
+            break;
+        }
+        case 4:
+        {
+            silt::ResonatorParams p;
+            p.rootNote = in.resonatorRootNow.load (std::memory_order_relaxed);
+            p.chordSize = std::clamp (in.resonatorChordSizeNow.load (std::memory_order_relaxed), 0, (int) p.chord.size());
+            for (int c = 0; c < p.chordSize; ++c)
+                p.chord[(size_t) c] = in.resonatorChordNow[(size_t) c].load (std::memory_order_relaxed);
+            p.notes = (silt::ResonatorNotes) std::clamp ((int) std::lround (v (sp::resNotes)), 0, 3);
+            p.sampleCount = std::clamp (in.samplePitchCount.load(), 0, (int) p.sampleHz.size());
+            for (int i = 0; i < p.sampleCount; ++i)
+            {
+                p.sampleHz[(size_t) i] = in.samplePitchHz[(size_t) i].load() * std::pow (2.0f, (p.rootNote - 48.0f) / 12.0f);
+                p.sampleLevel[(size_t) i] = in.samplePitchLevel[(size_t) i].load();
+            }
+            p.scale = (silt::Scale) std::clamp ((int) std::lround (v (sp::scale)), 0, silt::scaleCount - 1);
+            p.key = (int) std::lround (v (sp::key));
+            p.rangeOctaves = v (sp::resRange);
+            p.decaySeconds = v (sp::resDecay);
+            p.bright = v (sp::resBright) * 0.01f;
+            p.bandCount = (int) std::lround (v (sp::resBands));
+            p.stretch = v (sp::resStretch) * 0.01f;
+            p.stretchCurve = v (sp::resCurve) * 0.01f;
+            p.snap = v (sp::resSnap) * 0.01f;
+            p.offset = v (sp::resOffset);
+            p.ripple = v (sp::resRipple);
+            p.rippleDepth = v (sp::resDepth) * 0.01f;
+            p.sweep = v (sp::resSweep) * 0.01f;
+            const float oddEven = v (sp::resOddEven) * 0.01f, damp = v (sp::resDamp) * 0.01f;
+            static std::array<silt::Resonator::BankMode, silt::Resonator::maxBands> modes {};
+            const int n = silt::Resonator::bankModes (p, modes);
+            inset.push_back ((float) n);
+            inset.push_back (p.rootNote);
+            for (int i = 0; i < n; ++i)
+            {
+                const auto& mode = modes[(size_t) i];
+                const float against = mode.partial % 2 == 0 ? std::max (0.0f, oddEven) : std::max (0.0f, -oddEven);
+                const float level = std::clamp ((float) (mode.weight * silt::Resonator::levelAt (mode.own, p.bright)
+                                                         * silt::Resonator::rippleAt (mode.ratio, modes[(size_t) n - 1].ratio, p)) * (1.0f - against), 0.0f, 1.0f);
+                inset.push_back ((float) mode.ratio);
+                inset.push_back (level);
+                inset.push_back (std::max (0.02f, p.decaySeconds * (float) silt::Resonator::ringAt (mode.own, p.bright, damp)));
+                inset.push_back ((mode.partial + mode.note) % 2 == 0 ? -1.0f : 1.0f);
+            }
+            break;
+        }
+        case 5:
+        {
+            const float cutoffF = v (sp::filterCutoff), resoF = v (sp::filterReso) * 0.01f, morphF = v (sp::filterMorph), mixF = v (sp::filterMix) * 0.01f;
+            // As drawFilter passes them: the values in double, the percentages scaled in double.
+            const double cutoff = cutoffF, reso = (double) v (sp::filterReso) * 0.01, morph = morphF, mix = (double) v (sp::filterMix) * 0.01;
+            const bool steep = std::lround (v (sp::filterMode)) == 1;
+            const bool open = silt::Instrument::filterIsOpen (cutoffF, resoF, morphF, v (sp::filterDrive) * 0.01f, v (sp::filterEnv) * 0.01f, v (sp::filterKey) * 0.01f, mixF);
+            inset.push_back (open ? 1.0f : 0.0f);
+            for (int i = 0; i <= 120; ++i)
+            {
+                const double hz = 20.0 * std::pow (1000.0, i / 120.0);
+                const double slope = steep ? 1.0 : 0.0;
+                const std::complex<double> pole = 1.0 / (1.0 + std::complex<double> (0.0, hz / cutoff));
+                const auto fourPoles = pole * pole * pole * pole;
+                std::complex<double> tap = 1.0 / (1.0 + silt::Filter::feedbackFor (reso, slope) * fourPoles), h = 0.0;
+                for (const double amount : silt::Filter::tapMixFor (morph, slope, reso, cutoff))
+                {
+                    h += amount * tap;
+                    tap *= pole;
+                }
+                const double magnitude = std::abs ((1.0 - mix) + mix * h);
+                inset.push_back (open ? 0.0f : (float) (20.0 * std::log10 (std::max (1.0e-6, magnitude))));
+            }
+            break;
+        }
+        case 7:
+        {
+            const unsigned count = in.spaceTraceCount.load (std::memory_order_acquire);
+            float peak = 0.0f;
+            for (unsigned i = count > 8 ? count - 8 : 0; i < count; ++i)
+                peak = std::max (peak, in.spaceTraceAt (i));
+            inset.push_back ((float) count);
+            inset.push_back (peak);
+            break;
+        }
+        case 8:
+        {
+            const int m = std::clamp (modulator, 0, silt::Instrument::numModulators - 1);
+            auto p = in.readModulatorParams (m);
+            const bool backwards = p.sync ? p.reverse : p.rateHz < 0.0f;
+            inset.insert (inset.end(), { (float) p.type, silt::Modulator::isBipolar (p) ? 1.0f : 0.0f, p.retrigger ? 1.0f : 0.0f,
+                                         backwards ? 1.0f : (! p.sync && p.rateHz == 0.0f ? 2.0f : 0.0f),
+                                         p.phase, p.symmetry, p.curve, p.attackMs, p.decayMs, p.sustain, p.releaseMs,
+                                         in.modPhases[(size_t) m].load(), in.modOutputs[(size_t) m].load(),
+                                         (float) in.modStages[(size_t) m].load(), in.modStageMs[(size_t) m].load(),
+                                         (float) in.modReleasedFrom[(size_t) m].load(), in.modReleaseLevel[(size_t) m].load() });
+            if (p.type == silt::ModType::wave)
+            {
+                // One cycle from PHASE, as ScreenInsets draws it: a copy restarted there, stepped 1/160 at a time.
+                constexpr int n = 160;
+                silt::Modulator copy;
+                copy.reset();
+                p.rateHz = backwards ? -1.0f : 1.0f;
+                p.sync = false;
+                p.retrigger = true;
+                silt::ModContext c;
+                c.sampleRate = n;
+                c.numSamples = 0;
+                c.noteStarted = true;
+                inset.push_back (copy.advance (p, c));
+                c.numSamples = 1;
+                c.noteStarted = false;
+                for (int i = 1; i <= n; ++i)
+                    inset.push_back (copy.advance (p, c));
+            }
+            break;
+        }
+        default: break;
+    }
+    return (int) inset.size();
 }
