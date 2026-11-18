@@ -12,7 +12,7 @@ const page = await browser.newPage({ viewport: { width: 1200, height: 820 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.body.innerText.includes('AHHH-PROGRESSION'), null, { timeout: 10000 });
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 10000 });
 
 let failed = 0;
 const check = (what, ok, detail = '') => {
@@ -66,7 +66,7 @@ check('hover help reads the plug-in\'s line', help);
 
 // Modulation, on a fresh page.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.body.innerText.includes('AHHH-PROGRESSION'), null, { timeout: 10000 });
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 10000 });
 const routeCount = () => page.evaluate(() => document.querySelectorAll('.route-row').length);
 // Alt-drag on SIZE: a route from MOD 1 (the last used, at first).
 b = await knob(1);
@@ -100,7 +100,7 @@ check('CLEAR ALL, twice, clears them', (await routeCount()) === 0);
 
 // RANDOM, UNDO and REDO.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.body.innerText.includes('AHHH-PROGRESSION'), null, { timeout: 10000 });
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 10000 });
 const allValues = () => page.evaluate(() => [...document.querySelectorAll('.knob-hit')].map((k) => k.parentElement.innerText.trim()).join('|'));
 const start = await allValues();
 await page.getByText('RANDOM', { exact: true }).click();
@@ -114,7 +114,7 @@ check('REDO brings RANDOM back', (await allValues()) === randomised);
 
 // Presets: the arrows, the edited mark, the browser and SAVE.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.body.innerText.includes('AHHH-PROGRESSION'), null, { timeout: 10000 });
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 10000 });
 const arrows = page.locator('[data-help="!preset"] .key .plate');
 await arrows.nth(2).click({ force: true });   // next
 check('the next arrow loads GLASS CLOUD', (await page.getByText('GLASS CLOUD', { exact: true }).count()) === 1);
@@ -141,7 +141,7 @@ await page.keyboard.press('Escape');
 
 // Sound: START AUDIO, the keys, LOAD.
 await page.goto(url);
-await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.body.innerText.includes('AHHH-PROGRESSION'), null, { timeout: 10000 });
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8 && document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 10000 });
 await page.getByText('START AUDIO', { exact: true }).click({ force: true });
 await page.waitForFunction(() => window.siltAudio?.context?.state === 'running', null, { timeout: 5000 }).catch(() => {});
 check('START AUDIO starts it', await page.evaluate(() => window.siltAudio?.context?.state === 'running'));
@@ -162,8 +162,8 @@ await page.mouse.up();
 check('an on-screen key plays grains', keyGrains > 0, String(keyGrains));
 await page.getByText('LOAD', { exact: true }).click();
 await page.locator('.popup-item', { hasText: 'Keys Drone' }).click();
-await page.waitForFunction(() => document.body.innerText.includes('KEYS-DRONE'), null, { timeout: 5000 }).catch(() => {});
-check('LOAD → Keys Drone shows it', (await page.getByText('KEYS-DRONE').count()) === 1);
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'KEYS-DRONE', null, { timeout: 5000 }).catch(() => {});
+check('LOAD → Keys Drone shows it', (await page.evaluate(() => document.querySelector('canvas[data-sample]')?.dataset.sample)) === 'KEYS-DRONE');
 await page.getByText('PLAY', { exact: true }).click();
 check('its ROOT is G2 (MIDI 55)', (await page.getByText('G2', { exact: true }).count()) === 1);
 await page.getByText('GRAIN', { exact: true }).click();
@@ -182,9 +182,9 @@ await page.mouse.move(600, 20);   // off ARM: its hover help outranks the progre
 await page.waitForTimeout(600);
 const during = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
 check('RESAMPLE shows its progress', /RESAMPLE REC \d+%/.test(during));
-await page.waitForFunction(() => /RESAMPLE-\d\d:\d\d:\d\d/.test(document.body.innerText), null, { timeout: 6000 }).catch(() => {});
+await page.waitForFunction(() => /RESAMPLE-\d\d:\d\d:\d\d/.test(document.querySelector('canvas[data-sample]')?.dataset.sample ?? ''), null, { timeout: 6000 }).catch(() => {});
 await page.keyboard.up('a');
-check('the take becomes the sample', /RESAMPLE-\d\d:\d\d:\d\d/.test(await page.evaluate(() => document.body.innerText)));
+check('the take becomes the sample', /RESAMPLE-\d\d:\d\d:\d\d/.test(await page.evaluate(() => document.querySelector('canvas[data-sample]')?.dataset.sample ?? '')));
 
 // MIDI: a note plays; LEARN takes a knob; the controller picks SIZE up only when it reaches it.
 const midiGrains = await page.evaluate(async () => {
@@ -215,24 +215,24 @@ check('crossing the value takes SIZE over', (await valueText(1)) !== sizeBefore,
 
 // Samples undo: LOAD is a step (with ROOT); five loads, and only the last four undo.
 await page.goto(url);
-await page.waitForFunction(() => document.body.innerText.includes('AHHH-PROGRESSION'), null, { timeout: 8000 });
+await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
 const loadFactory = async (name) => {
   await page.getByText('LOAD', { exact: true }).click();
   await page.locator('.popup-item', { hasText: name }).click();
-  await page.waitForFunction((n) => document.body.innerText.includes(n), name.toUpperCase().replace(/ /g, '-'), { timeout: 8000 });
+  await page.waitForFunction((n) => document.querySelector('canvas[data-sample]')?.dataset.sample === n, name.toUpperCase().replace(/ /g, '-'), { timeout: 8000 });
 };
 await loadFactory('Keys Drone');
 await page.getByText('UNDO', { exact: true }).click();
-check('UNDO after LOAD brings the sample back', await page.evaluate(() => document.body.innerText.includes('AHHH-PROGRESSION')));
+check('UNDO after LOAD brings the sample back', await page.evaluate(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION'));
 await page.getByText('PLAY', { exact: true }).click();
 check('and its ROOT (E3)', (await page.getByText('E3', { exact: true }).count()) === 1);
 await page.getByText('REDO', { exact: true }).click();
-check('REDO loads it again', await page.evaluate(() => document.body.innerText.includes('KEYS-DRONE')) && (await page.getByText('G2', { exact: true }).count()) === 1);
+check('REDO loads it again', await page.evaluate(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'KEYS-DRONE') && (await page.getByText('G2', { exact: true }).count()) === 1);
 for (const n of ['Rain Bells', 'Guitar Harmonics', 'Ahhh Progression', 'Keys Drone']) await loadFactory(n);   // five loads in all
 let undos = 0;
 while (undos < 10 && !(await page.locator('.key.disabled', { hasText: 'UNDO' }).count())) { await page.getByText('UNDO', { exact: true }).click(); undos++; }
 check('five loads: four undo', undos === 4, String(undos));
-check('back to the first kept: Keys Drone', await page.evaluate(() => document.body.innerText.includes('KEYS-DRONE')));
+check('back to the first kept: Keys Drone', await page.evaluate(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'KEYS-DRONE'));
 
 check('no page errors', errors.length === 0, errors.join('; '));
 await browser.close();

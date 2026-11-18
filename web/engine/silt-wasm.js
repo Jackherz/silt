@@ -63,6 +63,14 @@ export async function loadSilt(bytes) {
       x.silt_sample_end_analysed();
     },
     display: (count) => floats(x.silt_display(), count + 4).slice(),
+    screen: () => floats(x.silt_screen_data(), x.silt_screen()).slice(),
+    livePeaks: () => floats(x.silt_live_peaks(), 1024).slice(),
+    // Region edges snapped as the engine plays them, given the sample's analysis.
+    snapRegion(begin, end, frames, snap, analysis) {
+      floats(x.silt_analysis_in(analysis.length), analysis.length).set(analysis);
+      const r = floats(x.silt_snap_region(begin, end, frames, snap), 2);
+      return [r[0], r[1]];
+    },
     midi: (offset, b0, b1 = 0, b2 = 0) => x.silt_midi(offset, b0, b1, b2),
     transport: (playing, ppq, bpm, numerator = 4, denominator = 4) =>
       x.silt_transport(playing ? 1 : 0, ppq, bpm, numerator, denominator),

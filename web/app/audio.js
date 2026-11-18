@@ -50,7 +50,11 @@ export class Audio {
       });
       node.connect(context.destination);
       node.port.onmessage = (e) => {
-        if (e.data.type === 'display') this.onDisplay?.(e.data);
+        if (e.data.type === 'display') {
+          this.lastDisplay = e.data;   // the screen reads this itself, every frame
+          if ((this.displays = (this.displays ?? 0) + 1) % 2 === 0) this.onDisplay?.(e.data);   // the panel: 30 a second
+        }
+        if (e.data.type === 'live') this.livePeaks = e.data.peaks;
         if (e.data.type === 'ready') this.onState?.('ready');
         if (e.data.type === 'captured') this.onCaptured?.(e.data);
         if (e.data.type === 'captureCancelled') this.onCaptured?.(null);

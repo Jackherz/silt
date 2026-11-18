@@ -3,7 +3,7 @@
 // the notes, the tempo and the microphone, and sends back what the panel draws.
 import { loadSilt } from '../engine/silt-wasm.js';
 
-const DISPLAY_EVERY = 1 / 30;   // seconds between display messages
+const DISPLAY_EVERY = 1 / 60;   // seconds between display messages (the plug-in's grain views: 60 a second)
 
 class SiltProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -18,6 +18,7 @@ class SiltProcessor extends AudioWorkletProcessor {
     this.outputPeak = 0;
     this.paramCount = 0;
     this.capture = null;         // { left, right, at, resample }: ARM's take, being recorded
+    this.liveTick = 0;
     this.port.onmessage = (e) => this.message(e.data);
   }
 
@@ -107,7 +108,9 @@ class SiltProcessor extends AudioWorkletProcessor {
       this.sinceDisplay = 0;
       this.port.postMessage({ type: 'display', values: silt.display(this.paramCount), grains: silt.activeGrains(),
                               inputPeak: this.inputPeak, outputPeak: this.outputPeak, ppq: this.ppq,
-                              capture: this.capture ? this.capture.at / this.capture.left.length : -1 });
+                              capture: this.capture ? this.capture.at / this.capture.left.length : -1,
+                              screen: silt.screen(), live: null });
+      if (++this.liveTick % 4 === 0) this.port.postMessage({ type: 'live', peaks: silt.livePeaks() });
       this.inputPeak = 0;
       this.outputPeak = 0;
     }

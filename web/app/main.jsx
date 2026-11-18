@@ -8,6 +8,7 @@ import { C, S, MOD, css, rgba, pageColour, font } from './theme.js';
 import { isShown, isDimmed, roundToInt, helpFor } from './rules.js';
 import { loadSilt } from '../engine/silt-wasm.js';
 import { Audio, SAMPLES } from './audio.js';
+import { Screen, makeOverview } from './screen.jsx';
 
 const PAGE_NAMES = ['GRAIN', 'SHAPE', 'PITCH', 'PLAY', 'RESONATOR', 'FILTER', 'COLOR', 'SPACE', 'MOD', 'CHAIN'];
 
@@ -1130,6 +1131,37 @@ const WEB_HELP = {
   '!keys': 'KEYS: play notes here, or on the computer: A to K, Z and X for octaves',
 };
 
+// The screen's GAIN (SampleGainBox): the sample's own level. Drag (Shift finer), scroll,
+// double-click for 0 dB, right-click to normalise.
+function GainBox({ r, text, db, set, step, beginStep, endStep, normalise, openMenu }) {
+  const ui = useContext(UI);
+  const down = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    let running = db, lastY = e.clientY;
+    beginStep('SAMPLE GAIN');
+    const move = (m) => { running = Math.max(-24, Math.min(24, running + (lastY - m.clientY) / ui.scale * (m.shiftKey ? 0.02 : 0.15))); lastY = m.clientY; set(running); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); endStep(); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  return (
+    <At r={r} className="gain-box" data-help="!gain" onPointerDown={down}
+        onDoubleClick={() => step('SAMPLE GAIN', () => set(0))}
+        onWheel={(e) => step('SAMPLE GAIN', () => set(Math.max(-24, Math.min(24, db + (e.deltaY < 0 ? 0.5 : -0.5)))))}
+        onContextMenu={(e) => { e.preventDefault(); openMenu({ r, items: [
+          { text: 'Normalise (peak at -1 dB)', pick: () => step('SAMPLE GAIN', () => set(normalise())) },
+          { text: 'Reset to 0 dB', pick: () => step('SAMPLE GAIN', () => set(0)) },
+        ] }); }}
+        style={{ ...font.screen(12 * 1.1), color: Math.abs(db) < 0.05 ? '#ffffff' : css(C.screenLime), display: 'flex', alignItems: 'center', justifyContent: 'flex-end', cursor: 'ns-resize' }}>
+      {text}
+    </At>
+  );
+}
+
+// The screen's face in canvas pixels: monoFont(size) is B612 Mono at 1.1× the size, by JUCE height.
+const screenFont = (size) => (size * 1.1) / 1.215;
+
 // What any RANDOM CHARACTER leaves where it is (everything that sets or shifts tuning), and
 // what each keeps to, in the parameter's own units (SiltProcessor's characterLimit).
 const SETS_TUNING = new Set(['pitch', 'randPitch', 'scale', 'key', 'root', 'keyMode', 'patternDepth', 'patternSteps', 'resTune', 'resShift',
@@ -1184,6 +1216,7 @@ function App() {
   const [display, setDisplay] = useState(null);           // what the audio sends back, 30 times a second
   const [sample, setSample] = useState(null);             // { name, factory, channels, sampleRate, seconds, analysis }
   const sampleRef = useRef(null);                          // the same, now (undo reads it mid-step)
+  const overview = useMemo(() => makeOverview(sample), [sample]);
   const [tempo, setTempo] = useState(120);
   const [micOn, setMicOn] = useState(false);
   const [held, setHeld] = useState(() => new Set());     // notes down, from any keyboard
@@ -1193,6 +1226,7 @@ function App() {
   const [capture, setCapture] = useState(null);           // ARM's take: { progress, resample }
   const capturedRef = useRef(null);
   const stepRef = useRef(null);
+  const regionMemo = useRef({});
   const midiRef = useRef(null);
   const [learnStep, setLearnStep] = useState(-1);         // −1 idle; 0–7 knob n; 8 previous page; 9 next
   const controller = useRef({
@@ -1700,6 +1734,37 @@ function App() {
   };
 
   const context = { value, modShown, resonatorHalf: half, delayForced: false };
+
+  // The region as it will play, snapped (SiltProcessor::shownRegion), and SLICE's starts
+  // (sliceMarks: equal, at the sample's hits, by hand).
+  const mode = Math.round(value('keyMode'));
+  const regionKey = `${value('start')}|${value('length')}|${Math.round(value('snap'))}`;
+  if (regionMemo.current.sample !== sample || regionMemo.current.key !== regionKey) {
+    let reg = [value('start') * 0.01, value('length') * 0.01];
+    if (sample) {
+      const frames = sample.channels[0].length;
+      const begin = reg[0] * (frames - 1), end = Math.min(frames, begin + Math.max(1, reg[1] * frames));
+      const [b, e] = silt.snapRegion(begin, end, frames, Math.round(value('snap')), sample.analysis);
+      reg = [b / frames, (e - b) / frames];
+    }
+    regionMemo.current = { sample, key: regionKey, region: reg };
+  }
+  const shownRegion = regionMemo.current.region;
+  const sliceMarks = (() => {
+    if (mode !== 3 || !sample) return [];
+    const [start, length] = shownRegion;
+    if (Math.round(value('sliceMode')) === 1) {
+      const frames = sample.channels[0].length, a = sample.analysis, nz = a[0], nt = a[1];
+      const minimum = 256 / frames, end = start + length, marks = [start];
+      for (let i = 0; i < nt; i++) {
+        const at = a[3 + nz + i] / frames;
+        if (at > marks[marks.length - 1] + minimum && at < end - minimum && marks.length < 128) marks.push(at);
+      }
+      return marks;
+    }
+    const count = Math.max(1, Math.min(128, Math.round(value('sliceCount'))));
+    return Array.from({ length: count }, (_, i) => start + length * i / count);
+  })();
   const wordWidth = Math.ceil(measure('SILT', `${font.wordmark(48).fontSize}px "Glyph Grotesque"`)) + 4;
   const shapes = ['SINE', 'TRIANGLE', 'SAW', 'SQUARE'];
   // Every route, in target order then modulator (SiltProcessor::allRoutes).
@@ -1755,11 +1820,17 @@ function App() {
           <Chain g={g} value={value} openModule={page >= 4 && page <= 7 ? page - 4 : -1} half={half} chainOpen={page === 9} />
           <Readout r={g.lcd} title="SILT" status={status} />
 
-          {/* Screen (step 6 draws what's on it) */}
-          <div data-help="!screen">
-            <Surface r={g.screen} colour={C.screenBlue} />
-            <At r={[g.screen[0] + 26, g.screen[1] + 18, 400, 20]} style={{ ...font.screen(17), color: css(C.screenPale) }}>{(sample?.name ?? '').toUpperCase().replace(/ /g, '-')}</At>
-          </div>
+          {/* The screen: the waveform, the grains, LIVE's ring (screen.jsx). */}
+          <Screen r={g.screen} scale={scale} audio={data.audio} overview={overview} region={shownRegion} slices={sliceMarks}
+                  gain={Math.pow(10, value('sampleGain') / 20)} live={mode === 1 || mode === 2} feed={mode === 2} frozen={value('freeze') > 0.5}
+                  fontPx={screenFont} />
+          {(
+            <GainBox r={[g.screen[0] + g.screen[2] - 30 - 200 - 78 - 130, g.screen[1] + 22, 130, 16]} text={`GAIN ${text('sampleGain', value('sampleGain')).toUpperCase()}`}
+                     db={value('sampleGain')} set={(db) => setParam('sampleGain', db)} step={step} beginStep={beginStep} endStep={endStep}
+                     normalise={() => { let peak = 0; for (const ch of sample?.channels ?? []) for (let i = 0; i < ch.length; i++) peak = Math.max(peak, Math.abs(ch[i]));
+                                        return peak > 1e-6 ? Math.max(-24, Math.min(24, -1 - 20 * Math.log10(peak))) : 0; }}
+                     openMenu={setMenu} />
+          )}
 
           {/* The grip between the screen and the keys (screenDivider): three short dashes. */}
           <div data-help="!grip">

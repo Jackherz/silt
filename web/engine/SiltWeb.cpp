@@ -8,6 +8,7 @@
 
 #include <silt/Dsp.h>
 #include <silt/Instrument.h>
+#include <silt/Snap.h>
 
 #include <algorithm>
 #include <array>
@@ -303,6 +304,59 @@ SILT_EXPORT float* silt_display()
     for (int m = 0; m < 4; ++m)
         display[(size_t) sp::count + (size_t) m] = in.modOutputs[(size_t) m].load (std::memory_order_relaxed);
     return display.data();
+}
+
+// For the screen: [grains, LIVE?, the ring's write head (share), grains ever over the limit,
+// the 16 voices' playheads (< 0: silent), then per grain: position, pan, level, reversed,
+// voice, slot]. Returns how many floats.
+namespace { std::array<float, 4 + silt::Engine::numVoices + 6 * silt::Instrument::maxGrainViews> screen {};
+            std::array<silt::GrainView, silt::Instrument::maxGrainViews> views {}; }
+SILT_EXPORT float* silt_screen_data() { return screen.data(); }
+SILT_EXPORT int silt_screen()
+{
+    auto& in = web->instrument;
+    const int n = in.getEngine().collectGrainViews (views.data(), (int) views.size());
+    screen[0] = (float) n;
+    screen[1] = in.liveMode.load (std::memory_order_relaxed) ? 1.0f : 0.0f;
+    screen[2] = in.liveWriteShare.load (std::memory_order_relaxed);
+    screen[3] = (float) in.grainsOverLimit.load (std::memory_order_relaxed);
+    for (int v = 0; v < silt::Engine::numVoices; ++v)
+        screen[(size_t) (4 + v)] = in.voicePlayheads[(size_t) v].load (std::memory_order_relaxed);
+    size_t at = 4 + silt::Engine::numVoices;
+    for (int i = 0; i < n; ++i)
+    {
+        const auto& g = views[(size_t) i];
+        screen[at++] = g.position;
+        screen[at++] = g.pan;
+        screen[at++] = g.level;
+        screen[at++] = g.reversed ? 1.0f : 0.0f;
+        screen[at++] = (float) g.voice;
+        screen[at++] = (float) g.slot;
+    }
+    return (int) at;
+}
+
+// LIVE's ring, as the screen shows it: its peak by position, 1024 columns.
+namespace { std::array<float, silt::Instrument::liveColumns> peaks {}; }
+SILT_EXPORT float* silt_live_peaks()
+{
+    peaks = web->instrument.getLivePeaks();
+    return peaks.data();
+}
+
+// The region as it will play (silt::snapRegion with the sample's analysis, put in with
+// silt_analysis_in): writes begin and end (frames) to silt_analysis()[0..1].
+namespace { std::array<float, 2> region {}; }
+SILT_EXPORT float* silt_snap_region (double begin, double end, int frames, int snap)
+{
+    const size_t nz = (size_t) analysis[0], nt = (size_t) analysis[1];
+    std::vector<int> z (nz), t (nt);
+    size_t at = 3;
+    for (auto& i : z) i = (int) analysis[at++];
+    for (auto& i : t) i = (int) analysis[at++];
+    const auto r = silt::snapRegion (begin, end, frames, (silt::Snap) std::clamp (snap, 0, 2), z, t);
+    region = { (float) r.begin, (float) r.end };
+    return region.data();
 }
 
 SILT_EXPORT int silt_max_block() { return maxBlock; }
