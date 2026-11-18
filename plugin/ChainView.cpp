@@ -25,12 +25,11 @@ juce::Colour moduleColour (int module)
     return pageColour (pages[juce::jlimit (0, 3, module)]);
 }
 
-// The switch takes the right of a block, the rest opens its page.
-constexpr float switchShare = 0.36f;
-
-juce::Rectangle<float> switchIn (juce::Rectangle<float> block)
+// The light at a block's top left is its ON switch; the rest opens its page.
+juce::Rectangle<float> lightIn (juce::Rectangle<float> face)
 {
-    return block.withTrimmedLeft (block.getWidth() * (1.0f - switchShare)).reduced (3.0f, 4.0f);
+    const auto inner = face.reduced (8.0f, 5.0f);
+    return juce::Rectangle<float> (11.0f, 11.0f).withCentre ({ inner.getX() + 5.5f, inner.getY() + inner.getHeight() * 0.25f });
 }
 } // namespace
 
@@ -151,7 +150,8 @@ juce::Rectangle<float> ChainView::blockArea (int position) const
 
 juce::Rectangle<float> ChainView::switchArea (int position) const
 {
-    return switchIn (blockArea (position).withTrimmedRight (2.0f).withTrimmedBottom (2.0f));
+    // The light, with room round it to hit.
+    return lightIn (blockArea (position).withTrimmedRight (2.0f).withTrimmedBottom (2.0f)).expanded (7.0f);
 }
 
 int ChainView::positionAt (float x) const
@@ -196,61 +196,51 @@ void ChainView::paint (juce::Graphics& g)
         const bool on = shownOn[i], open = module == openModule;
         const bool working = shownActive[i] || (on && changeShown[i] > 0.0f);   // the meter knows about modulated mixes too
         const auto face = r.withTrimmedRight (2.0f).withTrimmedBottom (2.0f);
-        // Standing out is for a block that's doing something: the rest sit back, fainter.
+        // These are the effects' page keys. Only the open one wears its page's colour;
+        // the rest are plain, a shade lighter while they're changing the sound.
         const juce::Graphics::ScopedSaveState saved (g);
         juce::Path shape;
         shape.addRoundedRectangle (face, 5.0f);
         g.reduceClipRegion (shape);
-        g.setColour (lifted ? ink : ink.withAlpha (working || open ? 0.14f : 0.06f));
+        g.setColour (open ? moduleColour (module) : lifted ? ink.withAlpha (0.2f) : ink.withAlpha (working ? 0.12f : 0.07f));
         g.fillRect (face);
-        // The left of it opens its page, so the open page's block shows as a held key, in its colour.
-        const auto colour = moduleColour (module);
-        const auto openArea = face.withTrimmedRight (face.getWidth() * switchShare);
-        if (open)
+        const auto onTop = open ? stock().panel : ink;
+
+        // Top: the light (its ON switch), the name, and for RES which of its pages is showing.
+        auto inner = face.reduced (8.0f, 5.0f);
+        auto top = inner.removeFromTop (inner.getHeight() * 0.5f);
+        const auto light = lightIn (face);
+        if (on)
         {
-            g.setColour (colour);
-            g.fillRect (openArea);
+            g.setColour (onTop);
+            g.fillEllipse (light);
         }
-        else if (on)
-        {
-            g.setColour (working ? colour : colour.withAlpha (0.45f));
-            g.fillRect (face.withWidth (3.0f));
-        }
-        const auto onTop = lifted || open ? stock().panel : ink;
-        // Below the name: why it's idle, or how much it's changing the sound.
-        auto text = openArea.withTrimmedLeft (5.0f).withTrimmedRight (2.0f);
-        const auto nameArea = text.removeFromTop (text.getHeight() * 0.56f);
-        g.setFont (kit::label (16.0f));
-        g.setColour (working || lifted || open ? onTop : inkSoft);
-        const juce::String half = open && module == SiltProcessor::moduleResonator ? " " + juce::String (openHalf + 1) + "/" + juce::String (SiltProcessor::numResonatorHalves) : "";
-        g.drawFittedText (shortName (module) + half, nameArea.toNearestInt(), juce::Justification::centredBottom, 1, 0.8f);
-        if (working)
-        {
-            const auto track = text.withSizeKeepingCentre (text.getWidth() - 4.0f, 5.0f);
-            g.setColour (onTop.withAlpha (0.25f));
-            g.fillRect (track);
-            g.setColour (open || lifted ? onTop : colour);
-            g.fillRect (track.withWidth (track.getWidth() * changeShown[i]));
-        }
-        else if (on)
-        {
-            g.setFont (kit::label (11.0f));
-            g.setColour (open || lifted ? onTop.withAlpha (0.8f) : inkSoft);
-            g.drawFittedText (idleReason (silt, module), text.toNearestInt(), juce::Justification::centred, 1, 0.8f);
-        }
-        // The switch says one thing: on or off.
-        const auto box = switchIn (face);
-        g.setColour (lifted ? stock().panel : on ? ink : inkSoft);
-        if (on && ! lifted)
-            g.fillRoundedRectangle (box.reduced (2.0f), 3.0f);
         else
         {
-            g.setColour ((lifted ? stock().panel : ink).withAlpha (0.12f));
-            g.fillRoundedRectangle (box.reduced (2.0f), 3.0f);
+            g.setColour (onTop.withAlpha (open ? 0.7f : 0.45f));
+            g.drawEllipse (light, 1.2f);
         }
-        g.setFont (kit::label (14.0f));
-        g.setColour (lifted ? stock().panel : on ? stock().panel : inkSoft);
-        g.drawText (on ? "ON" : "OFF", box, juce::Justification::centred);
+        top.removeFromLeft (light.getRight() - top.getX() + 6.0f);
+        g.setFont (kit::label (15.0f));
+        g.setColour (on || open ? onTop : inkSoft);
+        const juce::String half = open && module == SiltProcessor::moduleResonator ? " " + juce::String (openHalf + 1) + "/" + juce::String (SiltProcessor::numResonatorHalves) : "";
+        g.drawFittedText (shortName (module) + half, top.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+
+        // Below: how much it's changing the sound; or, on but idle, why; or OFF.
+        if (working)
+        {
+            const auto track = inner.withSizeKeepingCentre (inner.getWidth(), 4.0f);
+            g.setColour (onTop.withAlpha (0.2f));
+            g.fillRoundedRectangle (track, 2.0f);
+            g.setColour (onTop);
+            g.fillRoundedRectangle (track.withWidth (track.getWidth() * changeShown[i]), 2.0f);
+        }
+        else
+        {
+            g.setFont (kit::label (11.0f));
+            g.setColour (open ? onTop.withAlpha (0.8f) : inkSoft);
+            g.drawFittedText (on ? idleReason (silt, module) : juce::String ("OFF"), inner.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+        }
     };
 
     const int draggedModule = dragging >= 0 ? shownOrder[(size_t) dragging] : -1;
@@ -278,7 +268,7 @@ void ChainView::mouseDown (const juce::MouseEvent& e)
         return;
     }
     for (int p = 0; p < SiltProcessor::numModules; ++p)
-        if (switchArea (p).expanded (2.0f).contains (e.position))
+        if (switchArea (p).contains (e.position))
         {
             // The switch: one gesture, so it undoes like any button.
             auto* parameter = silt.params.getParameter (SiltProcessor::moduleOnId (shownOrder[(size_t) p]));

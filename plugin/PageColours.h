@@ -4,8 +4,9 @@
 
 #include <iterator>
 
-// Each page's colour: one meaning everywhere (its key, the band and labels on the well, its
-// module in the chain). They walk from warm for the grains to cool for the effects, and stay
+// Each page's colour: shown only while that page is open (its key or its module in the
+// chain, the band and labels on the well), so the modulators' colours are the only others
+// on the panel. They walk from warm for the grains to cool for the effects, and stay
 // clear of the modulators' own four. MOD and CHAIN have none, since MOD's colours are the
 // modulators'. Never the only cue: the keys and tiles all carry the page's name.
 namespace silt::ui

@@ -372,6 +372,63 @@ TEST_CASE ("The tour lets clicks through to the parts it lights, and nowhere els
     CHECK_FALSE (tour->isRunning());
 }
 
+TEST_CASE ("The Pages step lights the whole row of page keys, GRAIN to MOD")
+{
+    EditorRig rig;
+    rig.editor->setSize (1100, 780);
+    rig.editor->startTour();
+    auto* tour = rig.editor->tourForTests();
+    REQUIRE (tour != nullptr);
+    tour->go (SiltProcessor::isInstrument ? 4 : 3);   // after Welcome, The screen, (Your own sounds,) Live input
+    const auto keys = rig.editor->pageKeysBounds();
+    REQUIRE_FALSE (keys.isEmpty());
+    // Lit parts let clicks through: both ends of the row are lit.
+    CHECK_FALSE (tour->hitTest (keys.getX() + 2, keys.getCentreY()));
+    CHECK_FALSE (tour->hitTest (keys.getRight() - 3, keys.getCentreY()));
+    tour->go (99);
+}
+
+TEST_CASE ("Happy accidents ticks only for a RANDOM, then an UNDO, during the step")
+{
+    EditorRig rig;
+    rig.editor->setSize (1100, 780);
+    // History from before: a RANDOM already undone, so redo is waiting.
+    rig.silt.randomisePage (silt::layout::grain);
+    REQUIRE (rig.silt.undoRoutes());
+    REQUIRE (rig.silt.canRedoRoutes());
+
+    rig.editor->startTour();
+    auto* tour = rig.editor->tourForTests();
+    REQUIRE (tour != nullptr);
+    tour->go (SiltProcessor::isInstrument ? 10 : 8);
+    CHECK_FALSE (tour->stepDone());   // the old redo doesn't count
+
+    rig.silt.randomisePage (silt::layout::grain);
+    CHECK_FALSE (tour->stepDone());   // RANDOM alone isn't the task
+    REQUIRE (rig.silt.undoRoutes());
+    CHECK (tour->stepDone());
+    tour->go (99);
+}
+
+TEST_CASE ("Paging by controller through MOD, CHAIN and GRAIN always shows the open page")
+{
+    EditorRig rig;
+    rig.editor->setSize (1100, 780);
+    for (const int p : { silt::layout::mod, silt::layout::chain, silt::layout::grain, silt::layout::filter })
+    {
+        INFO ("page " << silt::layout::pageName (p));
+        rig.silt.currentPage.store (p);
+        rig.editor->showPage (p);
+        CHECK (rig.editor->shownPage() == p);
+        const auto cue = rig.editor->openPageKeyBounds();
+        CHECK_FALSE (cue.isEmpty());
+        CHECK (rig.editor->getLocalBounds().contains (cue));
+        // CHAIN and the effects have no key in the row: their cue is in the chain strip.
+        const bool inRow = p != silt::layout::chain && p != silt::layout::filter;
+        CHECK (rig.editor->pageKeysBounds().intersects (cue) == inRow);
+    }
+}
+
 TEST_CASE ("A theme changes the palette, and Cream puts it back")
 {
     const auto cream = juce::Colour (silt::ui::themes()[0].chassis);
@@ -799,7 +856,7 @@ TEST_CASE ("A value box being typed into stays the capsule: see-through, unoutli
     CHECK (ed->findColour (juce::TextEditor::outlineColourId).getAlpha() == 0);
     CHECK (ed->findColour (juce::TextEditor::focusedOutlineColourId).getAlpha() == 0);
     CHECK (ed->getJustificationType() == juce::Justification::centred);
-    CHECK (ed->getFont().getTypefacePtr() == kit::label (12.0f).getTypefacePtr());
+    CHECK (ed->getFont().getTypefacePtr() == kit::value (12.0f).getTypefacePtr());   // typed in the value face, as shown
     box->hideEditor (true);
 }
 
@@ -1166,47 +1223,46 @@ TEST_CASE ("Frame rate: pictures that move keep moving with no notes playing", "
     editor.removeFromDesktop();
 }
 
-TEST_CASE ("Every page has its key beside the others, and RES pressed again shows its other half")
+TEST_CASE ("The key row holds the grain pages and MOD; the chain's blocks open the effects, RES again its next half")
 {
     EditorRig rig;
     std::vector<juce::TextButton*> keys;
+    silt::ui::ChainView* chain = nullptr;
     for (auto* child : rig.editor->getChildren())
+    {
         if (auto* b = dynamic_cast<juce::TextButton*> (child); b != nullptr && b->getRadioGroupId() == 1 && b->isVisible())
             keys.push_back (b);
-    REQUIRE (keys.size() == 9);
-    const char* const names[] { "GRAIN", "SHAPE", "PITCH", "PLAY", "RES", "FILTER", "COLOR", "SPACE", "MOD" };
+        if (auto* c = dynamic_cast<silt::ui::ChainView*> (child))
+            chain = c;
+    }
+    REQUIRE (chain != nullptr);
+    REQUIRE (keys.size() == 5);
+    const char* const names[] { "GRAIN", "SHAPE", "PITCH", "PLAY", "MOD" };
     std::sort (keys.begin(), keys.end(), [] (auto* a, auto* b) { return a->getX() < b->getX(); });
     for (size_t i = 0; i < keys.size(); ++i)
     {
         CHECK (keys[i]->getButtonText() == names[i]);
-        CHECK (keys[i]->getWidth() > 40);
+        CHECK (keys[i]->getWidth() > 60);
     }
-    // Three groups: the grains', the effects', MOD. Together within a group, a little apart between.
+    // Two groups: the grains', then MOD. Together within a group, a little apart between.
     for (size_t i = 0; i + 1 < keys.size(); ++i)
     {
         const int gap = keys[i + 1]->getX() - keys[i]->getRight();
         INFO (names[i] << " to " << names[i + 1]);
-        if (i == 3 || i == 7)
+        if (i == 3)
             CHECK (gap >= 6);
         else
             CHECK (gap <= 1);
     }
 
     rig.silt.resonatorHalf.store (0);
-    keys[4]->triggerClick();
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
-    CHECK (rig.silt.currentPage.load() == silt::layout::resonator);
-    CHECK (rig.silt.resonatorHalf.load() == 0);
-    keys[4]->triggerClick();
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
-    CHECK (rig.silt.resonatorHalf.load() == 1);
-    keys[4]->triggerClick();
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
-    CHECK (rig.silt.resonatorHalf.load() == 2);
-    keys[4]->triggerClick();
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
-    CHECK (rig.silt.resonatorHalf.load() == 3);
-    keys[4]->triggerClick();
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
-    CHECK (rig.silt.resonatorHalf.load() == 0);
+    for (int expected : { 0, 1, 2, 3, 0 })
+    {
+        chain->onOpen (SiltProcessor::moduleResonator);
+        CHECK (rig.silt.currentPage.load() == silt::layout::resonator);
+        CHECK (rig.silt.resonatorHalf.load() == expected);
+    }
+    chain->onOpen (SiltProcessor::moduleFilter);
+    CHECK (rig.silt.currentPage.load() == silt::layout::filter);
+    CHECK (rig.editor->openPageKeyBounds() == chain->moduleBounds (SiltProcessor::moduleFilter));
 }

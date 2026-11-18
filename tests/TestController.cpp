@@ -91,6 +91,19 @@ TEST_CASE ("Page buttons step pages on each press, wrapping")
     CHECK (rig.silt.currentPage.load() == SiltProcessor::numPages - 1);   // wrapped from GRAIN back to the last page
 }
 
+TEST_CASE ("The page buttons reach CHAIN after MOD, then wrap to GRAIN")
+{
+    Rig rig;
+    rig.silt.currentPage.store (silt::layout::mod);
+    rig.cc (79, 127);
+    rig.cc (79, 0);
+    CHECK (rig.silt.currentPage.load() == silt::layout::chain);
+    CHECK (rig.silt.slotParameter (silt::layout::chain, 0) == "chainOrder");
+    rig.cc (79, 127);
+    rig.cc (79, 0);
+    CHECK (rig.silt.currentPage.load() == silt::layout::grain);
+}
+
 TEST_CASE ("Slots follow the modes: a knob moves whichever control is shown")
 {
     Rig rig;

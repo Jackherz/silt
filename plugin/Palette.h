@@ -104,17 +104,22 @@ inline void applyTheme (int index)
     k.lit = rust;
 }
 
-// Two faces: names and labels in the system's sans-serif, a little tracked for capitals;
-// values and readouts in the kit's VT323, a monospace, scaled because it reads small for
-// its height.
+// Two faces: names and labels in the sans (Overpass Medium once the editor has handed the kit
+// its faces, else the system's), a little tracked for capitals; values and readouts in the
+// kit's screen face, a monospace (B612 Mono, else VT323).
 enum class Weight { light, regular, medium };
 
 inline juce::Font panelFont (float size, Weight = Weight::regular, float tracking = 0.12f)
 {
+    if (auto face = kit::faces().name)
+        return juce::Font (juce::FontOptions (face).withHeight (size * 1.08f)).withExtraKerningFactor (tracking * 0.5f);
     return juce::Font (juce::FontOptions().withName (juce::Font::getDefaultSansSerifFontName()).withHeight (size * 1.08f))
         .withExtraKerningFactor (tracking * 0.5f);
 }
-inline juce::Font monoFont (float size, Weight = Weight::regular) { return kit::label (size * 1.4f); }
+// The screen face: VT323 reads small for its height, so it's scaled up; B612 Mono much less.
+inline juce::Font monoFont (float size, Weight = Weight::regular) { return kit::label (size * (kit::faces().screen != nullptr ? 1.1f : 1.4f)); }
+// Figures in the value boxes: Chivo Mono once the faces are in, as on Brood's paper; else the screen face.
+inline juce::Font valueFont (float size) { return kit::faces().value != nullptr ? kit::value (size * 1.2f + 2.0f) : monoFont (size); }
 
 // A surface: a filled, rounded shape with no frame and no shadow. What panels, tiles and
 // windows are drawn as.

@@ -3,10 +3,10 @@
 #include "PluginProcessor.h"
 
 // The chain, always on the panel: the four modules in the order they run, from any
-// page. Drag a module to move it (one undo step); click one to open its page, or its
-// switch to turn it on or off. The switch only says ON or OFF. A module that's on says in
-// words why it's idle (MIX 0, OPEN…); otherwise a meter shows how much it's changing the
-// sound, measured, and the arrow after it lights while sound is leaving it.
+// page, and the keys of their pages. Drag a module to move it (one undo step); click one
+// to open its page, or its light to turn it on or off. A module that's off says OFF; one
+// that's on says in words why it's idle (MIX 0, OPEN…), or a meter shows how much it's
+// changing the sound, measured, and the arrow after it lights while sound is leaving it.
 namespace silt::ui
 {
 class ChainView final : public juce::Component
@@ -32,7 +32,7 @@ public:
     static bool moduleOn (const SiltProcessor&, int module);
     // Why a module that's on isn't doing anything, or nothing if it is.
     static juce::String idleReason (const SiltProcessor&, int module);
-    juce::Rectangle<float> switchArea (int position) const;   // a block's ON switch
+    juce::Rectangle<float> switchArea (int position) const;   // a block's light: its ON switch
 
 private:
     std::array<int, SiltProcessor::numModules> currentOrder() const;

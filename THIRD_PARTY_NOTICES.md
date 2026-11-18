@@ -10,6 +10,7 @@ Silt's own code is licensed under the GNU General Public License, version 3
 | [clap-juce-extensions](https://github.com/free-audio/clap-juce-extensions) | MIT | [clap-juce-extensions-LICENSE.md](licenses/clap-juce-extensions-LICENSE.md) |
 | [CLAP](https://github.com/free-audio/clap), inside clap-juce-extensions | MIT | [CLAP-LICENSE.txt](licenses/CLAP-LICENSE.txt) |
 | VT323 and Glyph Grotesque fonts, in `kit/fonts/` | SIL Open Font License 1.1 | `kit/fonts/OFL-*.txt` |
+| B612 Mono, Overpass Medium and Chivo Mono fonts, in `resources/fonts/` | SIL Open Font License 1.1 | `resources/fonts/OFL-*.txt` |
 
 Silt uses JUCE under the AGPLv3, so the plug-ins built from this repository are subject
 to the AGPLv3's terms as well as the GPLv3's. JUCE's licence file lists the further

@@ -52,8 +52,8 @@ public:
 
     // A key is a filled, rounded plate with no frame: faint at rest, stronger under the
     // mouse, solid while it's on. "accent" fills it in the accent; "led" keeps it faint with
-    // a light that says whether it's on; a page's key ("page") wears its colour, as a strip
-    // along the top and the whole key while it's open.
+    // a light that says whether it's on; a page's key ("page") wears its colour only while
+    // it's open, so the open page is the one coloured thing on the row.
     void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool hover, bool down) override
     {
         const auto& properties = b.getProperties();
@@ -65,11 +65,6 @@ public:
         g.setColour (on || accent ? tint.interpolatedWith (s.panel, down ? 0.2f : hover ? 0.1f : 0.0f)
                                   : s.ink.withAlpha (! enabled ? 0.04f : down ? 0.22f : hover ? 0.14f : 0.08f));
         g.fillRoundedRectangle (r, corner);
-        if (page && ! on)
-        {
-            g.setColour (tint.withAlpha (0.85f));
-            g.fillRoundedRectangle (r.withHeight (3.0f), 1.5f);
-        }
         if (led)
         {
             g.setColour (b.getToggleState() ? s.lit : s.ink.withAlpha (0.25f));
@@ -125,7 +120,7 @@ public:
         drawSunkBox (g, label.getLocalBounds().toFloat(), background, label.findColour (juce::Label::outlineColourId));
         if (! label.isBeingEdited())
         {
-            const auto font = monoFont (juce::jmin (12.0f, (float) label.getHeight() * 0.7f));
+            const auto font = valueFont (juce::jmin (12.0f, (float) label.getHeight() * 0.7f));
             g.setColour (label.findColour (juce::Label::textColourId));
             g.setFont (font);
             const auto area = getLabelBorderSize (label).subtractedFrom (label.getLocalBounds());
@@ -152,7 +147,7 @@ public:
             ed->setColour (juce::TextEditor::highlightColourId, rust.withAlpha (0.35f));
             ed->setColour (juce::TextEditor::highlightedTextColourId, lcdText);
             ed->setColour (juce::CaretComponent::caretColourId, lcdText);
-            ed->applyFontToAllText (monoFont (juce::jmin (12.0f, (float) getHeight() * 0.7f)));
+            ed->applyFontToAllText (valueFont (juce::jmin (12.0f, (float) getHeight() * 0.7f)));
             return ed;
         }
     };
@@ -162,7 +157,7 @@ public:
         auto* l = new ValueBox();
         l->setJustificationType (juce::Justification::centred);
         l->setKeyboardType (juce::TextInputTarget::decimalKeyboard);
-        l->setFont (monoFont (11.5f));
+        l->setFont (valueFont (11.5f));
         l->setColour (juce::Label::textColourId, slider.findColour (juce::Slider::textBoxTextColourId));
         l->setColour (juce::Label::backgroundColourId, slider.findColour (juce::Slider::textBoxBackgroundColourId));
         l->setColour (juce::Label::outlineColourId, slider.findColour (juce::Slider::textBoxOutlineColourId));

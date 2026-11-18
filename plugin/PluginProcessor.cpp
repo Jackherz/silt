@@ -1939,6 +1939,7 @@ int SiltProcessor::randomisePage (int page)
 {
     const float amount = juce::jlimit (0.0f, 1.0f, randomAmount.load());
     routeUndo.beginNewTransaction ("RANDOM " + juce::String (silt::layout::pageName (page)));
+    ++randomPresses;
     lastGestureParameter = -1;
     int changed = 0;
     for (const auto* e : randomisable (page))

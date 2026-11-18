@@ -275,6 +275,7 @@ public:
     bool canUndoRoutes() const { return routeUndo.canUndo(); }
     bool canRedoRoutes() const { return routeUndo.canRedo(); }
     juce::String undoDescription() const { return routeUndo.getUndoDescription(); }
+    int randomsDone() const noexcept { return randomPresses; }   // RANDOM presses so far (the tour counts them)
     juce::String redoDescription() const { return routeUndo.getRedoDescription(); }
     void clearUndoHistory() { routeUndo.clearUndoHistory(); }
     float modulatedValue01 (int target) const noexcept;             // where modulation has it now
@@ -471,6 +472,7 @@ private:
     bool replaying = false;                    // undo/redo or a preset is setting values: don't record
     std::map<int, float> gestureStart;         // parameter index → value when its gesture began
     int lastGestureParameter = -1;
+    int randomPresses = 0;
     juce::uint32 lastGestureTime = 0;
     std::vector<float> routeSnapshot() const;
     void restoreRoutes (const std::vector<float>&) noexcept;

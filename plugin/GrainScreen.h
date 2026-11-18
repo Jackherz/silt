@@ -32,12 +32,16 @@ public:
 
     void paint (juce::Graphics& g) override
     {
+        // At 1x it stays out of the way until the mouse is on the screen, where it can be dragged.
+        const bool zoomed = zoom > 1.01f;
+        const auto* screen = getParentComponent();
+        if (! zoomed && ! isMouseButtonDown() && (screen == nullptr || ! screen->isMouseOver (true)))
+            return;
         if (isMouseOver (true))
         {
             g.setColour (screenLight.withAlpha (0.35f));
             g.fillRect (getLocalBounds());
         }
-        const bool zoomed = zoom > 1.01f;
         g.setColour (zoomed ? screenLime : screenPale.withAlpha (0.6f));
         g.setFont (monoFont (12.0f));
         g.drawText ("ZOOM " + juce::String (zoom, zoom < 10.0f ? 1 : 0) + "X", getLocalBounds(), juce::Justification::centred);
@@ -328,6 +332,9 @@ public:
         else if (onSliceAdd)
             onSliceAdd (waveShareAt (e.position.x));
     }
+    // The ZOOM label shows while the mouse is on the screen.
+    void mouseEnter (const juce::MouseEvent&) override { zoomBox.repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { zoomBox.repaint(); }
     void mouseMove (const juce::MouseEvent& e) override
     {
         setMouseCursor (onScrollBar (e.position) ? juce::MouseCursor::DraggingHandCursor
@@ -559,9 +566,9 @@ private:
         }
 
         g.drawText (overview.name.toUpperCase(), top, juce::Justification::centredLeft);
-        // Length, rate, mono or stereo, and the memory it takes.
+        // Length, rate, and mono or stereo.
         g.drawText (juce::String (overview.seconds, 2) + " S  " + juce::String (overview.sampleRate / 1000.0, overview.sampleRate >= 100000.0 ? 0 : 1) + "K "
-                        + (overview.mono ? "MONO" : "ST") + "  " + juce::String (overview.megabytes, overview.megabytes < 10.0 ? 1 : 0) + " MB",
+                        + (overview.mono ? "MONO" : "ST"),
                     top, juce::Justification::centredRight);
 
         drawWave (g, waveArea);

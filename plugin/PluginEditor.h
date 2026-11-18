@@ -67,6 +67,10 @@ public:
     juce::String displayText() const { return statusText(); }     // for tests: what the LCD says
     void showHelpFor (const juce::String& id);                     // hover help for a part (empty: none)
     juce::Slider* findKnob (const juce::String& parameterId);     // for tests
+    juce::Rectangle<int> pageKeysBounds() const;                   // the row of page keys there are (CHAIN has none)
+    juce::Rectangle<int> openPageKeyBounds() const;                // what shows the open page: its key, or CHAIN's label
+    int shownPage() const noexcept { return page; }                // for tests
+    silt::ui::Tour* tourForTests() const { return tour.get(); }
     void dragScreenEdge (int pixels);                              // the same, between the screen and the knobs
     void sendMoment();                                             // the Bench's SEND: bars of the output, or the sample
     void updateBench();                                            // from the timer; also for tests
@@ -277,7 +281,7 @@ private:
     juce::String hoverHelp;
     std::uint64_t overLimitSeen = 0;
     int editedCheck = 0;
-    std::array<juce::Rectangle<int>, 3> keyGroups;   // the page keys' three groups
+    std::array<juce::Rectangle<int>, 2> keyGroups;   // the page keys' two groups
     int seenCheck = 0;
     bool windowSeen = true;
     juce::uint32 fullUntil = 0;
@@ -307,7 +311,8 @@ private:
     float layoutAtDragStart = 0.0f;
     struct SlotParts { juce::Rectangle<int> label, control, under; };
     SlotParts slotParts (int slot) const;
-    static bool pageHasKey (int p) { return p != silt::layout::chain; }   // the chain is on the panel
+    // The key row holds the grain pages and MOD; the effects' keys are the chain's blocks.
+    static bool pageHasKey (int p) { return p <= silt::layout::play || p == silt::layout::mod; }
     SlotParts partsOf (const silt::layout::Entry&) const;
     void makeGrips();
     static void drawSunk (juce::Graphics&, juce::Rectangle<float> area, juce::Colour face);

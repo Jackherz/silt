@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "SiltFonts.h"
 #include "WindowVisibility.h"
 #include "ChainView.h"
 #include "GrainScreen.h"
@@ -238,8 +239,26 @@ juce::Component& SiltEditor::Control::component() const
 
 // --- editor -------------------------------------------------------------------------------
 
+// Silt's faces for the kit, the same as Brood's so the two read as one family: B612 Mono on the
+// screen and readouts, Overpass Medium for names, Chivo Mono two sizes down for values, and four
+// lines of help, since B612 Mono is wider than VT323.
+static void installFaces()
+{
+    static const bool once = []
+    {
+        auto& f = kit::faces();
+        f.screen = juce::Typeface::createSystemTypefaceFor (SiltFonts::B612MonoRegular_ttf, (size_t) SiltFonts::B612MonoRegular_ttfSize);
+        f.name = juce::Typeface::createSystemTypefaceFor (SiltFonts::OverpassMedium_ttf, (size_t) SiltFonts::OverpassMedium_ttfSize);
+        f.value = juce::Typeface::createSystemTypefaceFor (SiltFonts::ChivoMonoRegular_ttf, (size_t) SiltFonts::ChivoMonoRegular_ttfSize);
+        f.valueShrink = 2.0f;
+        f.readoutLines = 4;
+        return true;
+    }();
+    juce::ignoreUnused (once);
+}
+
 SiltEditor::SiltEditor (SiltProcessor& p)
-    : AudioProcessorEditor (p), silt (p),
+    : AudioProcessorEditor ((installFaces(), p)), silt (p),   // the faces first: members set fonts as they're built
       look (std::make_unique<PanelLook>()), screen (std::make_unique<GrainScreen>())
 {
     applyTheme (startTheme >= 0 ? startTheme : settingsFile()->getIntValue ("theme", defaultTheme));
@@ -393,7 +412,7 @@ SiltEditor::SiltEditor (SiltProcessor& p)
 
     // The Bench: SEND records what you hear and passes it on. An effect can send here,
     // too, and the instrument can take that as its sample. Silt FX has no sample to take into.
-    benchStrip = std::make_unique<kit::bench::Strip> (stock(), SiltProcessor::isInstrument ? "I-01" : "I-01 FX", SiltProcessor::isInstrument ? "SILT" : "SILT FX", "SILT");
+    benchStrip = std::make_unique<kit::bench::Strip> (stock(), SiltProcessor::isInstrument ? "SILT" : "SILT FX", "", "SILT");   // by name, no catalogue chip
     benchStrip->frameless = true;
     benchStrip->reservedRight = 132;
     benchStrip->onTake = [this] { takeMoment(); };
@@ -1026,11 +1045,26 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
             r = r.isEmpty() ? c->getBounds() : r.getUnion (c->getBounds());
         return r;
     };
-    const int generation = silt.getSampleGeneration();
-    const float input = SiltProcessor::isInstrument ? 0.0f : param ("inputGain");
-    const float spray = param ("spray"), bits = param ("colorBits"), order = param ("chainOrder");
-    const auto routes = silt.allRoutes().size();
-    const auto preset = silt.presetName;
+    // Where things stood when the open step began: each TRY IT counts only what's done during it.
+    struct Before
+    {
+        int generation = 0, randoms = 0;
+        float input = 0.0f, spray = 0.0f, bits = 0.0f, order = 0.0f;
+        size_t routes = 0;
+        juce::String preset;
+    };
+    const auto at = std::make_shared<Before>();
+    tour->onStepStart = [this, at]
+    {
+        at->generation = silt.getSampleGeneration();
+        at->randoms = silt.randomsDone();
+        at->input = SiltProcessor::isInstrument ? 0.0f : param ("inputGain");
+        at->spray = param ("spray");
+        at->bits = param ("colorBits");
+        at->order = param ("chainOrder");
+        at->routes = silt.allRoutes().size();
+        at->preset = silt.presetName;
+    };
 
     std::vector<Tour::Step> steps;
     steps.push_back ({ "Welcome to Silt",
@@ -1054,7 +1088,7 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
                            "or press ARM to record from your DAW's sidechain input (for the number of bars beside it).",
                            [this, boundsOf] { return Spots (boundsOf ({ &armButton, &loadButton })); }, -1,
                            "Click LOAD and pick a different factory sample.",
-                           [this, generation] { return silt.getSampleGeneration() != generation; } });
+                           [this, at] { return silt.getSampleGeneration() != at->generation; } });
     if constexpr (SiltProcessor::isInstrument)
         steps.push_back ({ "Live input",
                            "Silt can also make grains from audio as it arrives. In your DAW, pick a track in Silt's sidechain "
@@ -1077,11 +1111,12 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
                            "reach and NO NOTES what plays when no notes arrive. For samples, slices and FEED, use Silt, the instrument.",
                            [this] { Spots s (lcdArea); s.add (levelsPanel); return s; }, layout::play,
                            "Turn INPUT up or down while your track plays.",
-                           [this, input] { return std::abs (param ("inputGain") - input) > 1.0f; } });
+                           [this, at] { return std::abs (param ("inputGain") - at->input) > 1.0f; } });
     steps.push_back ({ "Pages",
                        "Each tab is a page of up to eight controls, the same eight your MIDI controller's knobs move. GRAIN and "
-                       "SHAPE make the grains, PITCH and PLAY decide how notes play them, and MOD is movement.",
-                       [this, boundsOf] { return Spots (boundsOf ({ &pageTabs.front(), &pageTabs.back() })); }, layout::grain,
+                       "SHAPE make the grains, PITCH and PLAY decide how notes play them, and MOD is movement. The effects' pages "
+                       "open from the chain above the screen.",
+                       [this] { return Spots (pageKeysBounds()); }, layout::grain,
                        "Click another tab to look around.",
                        [this] { return page != layout::grain; } });
     steps.push_back ({ "Spray",
@@ -1089,7 +1124,7 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
                        "Drag a knob up or down to turn it, hold Shift for fine moves, and double-click to put it back.",
                        [this] { Spots s (screen->getBounds()); s.add (slotBounds (3)); return s; }, layout::grain,
                        "Drag SPRAY up while you play, and watch the grains spread out across the waveform.",
-                       [this, spray] { return std::abs (param ("spray") - spray) > 5.0f; } });
+                       [this, at] { return std::abs (param ("spray") - at->spray) > 5.0f; } });
     if constexpr (SiltProcessor::isInstrument)
         steps.push_back ({ "Slices",
                            "MODE: SLICE cuts the sample into pieces, one per key: C1 plays the first, C#1 the next, and keys "
@@ -1112,31 +1147,31 @@ std::vector<Tour::Step> SiltEditor::tourSteps()
                        [this] { Spots s (screen->scopeArea().translated (screen->getX(), screen->getY())); s.add (slotBounds (2)); return s; },
                        layout::color,
                        "Play a note and turn BITS down: the bright line breaks into steps as the sound gets crunchier.",
-                       [this, bits] { return param ("colorBits") < bits - 1.0f; } });
+                       [this, at] { return param ("colorBits") < at->bits - 1.0f; } });
     steps.push_back ({ "Chain",
                        "The effects run in this order, and a switch only lights up while its effect is changing the sound. Moving "
                        "one changes the sound too: grit added after the reverb is harsher than grit the reverb smooths over.",
                        [this] { return Spots (chainView->getBounds()); }, layout::chain,
                        "Drag COLOR to the end of the chain. Click a block to open its page.",
-                       [this, order] { return ! juce::approximatelyEqual (param ("chainOrder"), order); } });
+                       [this, at] { return ! juce::approximatelyEqual (param ("chainOrder"), at->order); } });
     steps.push_back ({ "Movement",
                        "These four are modulators: waves, random, envelopes and more. Connect one to a knob and the knob moves "
                        "by itself. Rings round a knob show what's moving it, and MOD ROUTES lists every connection.",
                        [this] { Spots s (railArea); s.add (controlRow); return s; }, layout::mod,
                        "Drag MOD 1 from the left onto any knob.",
-                       [this, routes] { return silt.allRoutes().size() > routes; } });
+                       [this, at] { return silt.allRoutes().size() > at->routes; } });
     steps.push_back ({ "Happy accidents",
                        "RANDOM shakes up the page that's open. The box beside it sets how far, from a nudge to anything goes. "
                        "Right-click a knob to keep RANDOM away from it.",
                        [this, boundsOf] { return Spots (boundsOf ({ &randomButton, randomAmountBox.get(), &undoButton, &redoButton })); }, -1,
                        "Press RANDOM, listen, then press UNDO to go back.",
-                       [this] { return silt.canRedoRoutes() || silt.undoDescription().startsWith ("RANDOM"); } });
+                       [this, at] { return silt.randomsDone() > at->randoms && silt.redoDescription().startsWith ("RANDOM"); } });
     steps.push_back ({ "Sounds",
                        "Step through the factory presets with the arrows, or SAVE your own. A preset keeps every setting and the "
                        "modulation, but not the sample, so the same preset sounds new on each sample.",
                        [this] { return Spots (presetBar->getBounds()); }, -1,
                        "Click the right arrow to hear the next preset.",
-                       [this, preset] { return silt.presetName != preset; } });
+                       [this, at] { return silt.presetName != at->preset; } });
     steps.push_back ({ "That's the tour",
                        "A good way in: pick a preset, play a chord, then press RANDOM at 25% on a page and keep what you like.\n\n"
                        "This ? button brings the tour back any time, and changes the colour theme.",
@@ -1450,6 +1485,25 @@ void SiltEditor::drawModulation (juce::Graphics& g, juce::Slider& slider, juce::
     g.drawEllipse (juce::Rectangle<float> (5.0f, 5.0f).withCentre (dot), 1.0f);
 }
 
+juce::Rectangle<int> SiltEditor::pageKeysBounds() const
+{
+    juce::Rectangle<int> r;
+    for (int p = 0; p < layout::numPages; ++p)
+        if (pageHasKey (p))
+            r = r.isEmpty() ? pageTabs[(size_t) p].getBounds() : r.getUnion (pageTabs[(size_t) p].getBounds());
+    return r;
+}
+
+juce::Rectangle<int> SiltEditor::openPageKeyBounds() const
+{
+    if (pageHasKey (page))
+        return pageTabs[(size_t) page].getBounds();
+    if (page == layout::chain)
+        return chainPanel.withWidth (spineWidth).reduced (1);
+    static constexpr int modules[] { SiltProcessor::moduleResonator, SiltProcessor::moduleFilter, SiltProcessor::moduleColor, SiltProcessor::moduleSpace };
+    return chainView->moduleBounds (modules[juce::jlimit (0, 3, page - layout::resonator)]);
+}
+
 void SiltEditor::showPage (int p)
 {
     page = juce::jlimit (0, layout::numPages - 1, p);
@@ -1462,6 +1516,7 @@ void SiltEditor::showPage (int p)
     if (page == layout::color) open = modules[2];
     if (page == layout::space) open = modules[3];
     chainView->setOpen (open, silt.resonatorHalf.load());
+    repaint (chainPanel);   // its label is CHAIN's key
     updateVisibility();
 }
 
@@ -1912,6 +1967,25 @@ void SiltEditor::timerCallback()
     }
 }
 
+// The masthead: the wordmark, two lines saying what it is, and the rule under it all. Like
+// Brood's, it has no catalogue chip: the kit's own masthead would draw one.
+static void drawMasthead (juce::Graphics& g, juce::Rectangle<int> area, const kit::Stock& s, const juce::String& word,
+                          const juce::String& line1, const juce::String& line2)
+{
+    g.setColour (s.ink);
+    g.fillRect (area.getX(), area.getBottom() - 2, area.getWidth(), 2);
+    auto row = area.withTrimmedBottom (10);
+    const auto wordFont = kit::wordmark (48.0f);
+    g.setFont (wordFont);
+    g.drawText (word, row.removeFromLeft (kit::textWidth (wordFont, word) + 4), juce::Justification::centredLeft);
+    row.removeFromLeft (14);
+    g.setColour (s.soft);
+    g.setFont (panelFont (15.5f, Weight::regular, 0.06f));   // the name face, as Brood's masthead
+    auto lines = row.withSizeKeepingCentre (row.getWidth(), 34);
+    g.drawText (line1, lines.removeFromTop (17), juce::Justification::centredLeft);
+    g.drawText (line2, lines, juce::Justification::centredLeft);
+}
+
 // One of the strip's panels: a surface with its name turned up its left edge, to spend the
 // height on the controls.
 static void drawStripPanel (juce::Graphics& g, juce::Rectangle<int> r, const kit::Stock& s, const juce::String& name)
@@ -2053,15 +2127,16 @@ void SiltEditor::resized()
         tray = keys;
     }
 
-    // The page keys, in three groups with room between: what makes the grains, the effects,
-    // then movement. Each key is the same width whichever group it's in.
+    // The page keys, in two groups with room between: what makes the grains, then movement.
+    // The effects' keys are the chain's blocks. Each key is the same width.
     {
         constexpr int groupGap = 10, border = 1;
         int count = 0;
         for (size_t t = 0; t < pageTabs.size(); ++t)
             count += pageHasKey ((int) t) ? 1 : 0;
         const int groups = (int) keyGroups.size();
-        const int room = tray.getWidth() - (groups - 1) * groupGap - 2 * groups * border;
+        // Five keys would stretch across the whole row: they stop at a comfortable width.
+        const int room = juce::jmin (count * 104, tray.getWidth() - (groups - 1) * groupGap - 2 * groups * border);
         const auto row = tray.reduced (0, border);
         size_t group = 0;
         int shown = 0, groupLeft = tray.getX(), lastRight = tray.getX();
@@ -2070,7 +2145,7 @@ void SiltEditor::resized()
         {
             if (! pageHasKey ((int) t))
                 continue;
-            if ((int) t == layout::resonator || (int) t == layout::mod)
+            if ((int) t == layout::mod)
             {
                 keyGroups[group++] = tray.withLeft (groupLeft).withRight (lastRight + border);
                 groupLeft = lastRight + border + groupGap;
@@ -2162,7 +2237,7 @@ void SiltEditor::updateBench()
                             : recording == Recorder::State::recording ? "RECORDING " + juce::String (juce::roundToInt (silt.outputRecorder.progress() * 100.0f)) + "%"
                             : fresh && waiting->fromChip == benchChip() && momentSent != 0 && waiting->stamp >= momentSent - 5000
                                   ? "SENT " + juce::String (waiting->seconds, 2) + " S. TAKE TO RESAMPLE"   // what this Silt just sent
-                            : fresh ? "FROM " + waiting->fromChip + " " + waiting->fromName + " / " + juce::String (waiting->seconds, 2) + " S"
+                            : fresh ? "FROM " + waiting->fromName + " / " + juce::String (waiting->seconds, 2) + " S"
                             : momentSent != 0 ? juce::String ("SENT: IT'S IN THE FOLDER") : juce::String ("NOTHING WAITING");
     benchStrip->set (state, text, busy ? "STOP" : "SEND >", busy || bars || silt.getOverview().seconds > 0.0 || silt.liveMode.load(), fresh);
 }
@@ -2306,8 +2381,7 @@ void SiltEditor::paint (juce::Graphics& g)
         const auto& s = stock();
         b.fillAll (s.page);
         const bool instrument = SiltProcessor::isInstrument;
-        kit::drawMasthead (b, header, s, instrument ? "I-01" : "I-01 FX", s.accent, s.onAccent, juce::String (JucePlugin_Name).toUpperCase() + ".",
-                           "GLYPH AUDIO", instrument ? "GRANULAR SAMPLER" : "GRANULAR, LIVE");
+        drawMasthead (b, header, s, juce::String (JucePlugin_Name).toUpperCase(), "GLYPH AUDIO", instrument ? "GRANULAR SAMPLER" : "GRANULAR, LIVE");
         if constexpr (SiltProcessor::isInstrument)
             drawStripPanel (b, sourcePanel, s, "SOURCE");
         if (! instrument)
@@ -2328,11 +2402,25 @@ void SiltEditor::paint (juce::Graphics& g)
 
     // The open page's colour: its key runs down into a band along the top of the well.
     const auto pageInk = pageColour (page);
-    if (pageHasKey (page))
+    if (page == layout::chain)
     {
-        const auto key = pageTabs[(size_t) page].getBounds();
+        // CHAIN has no key (the controller reaches it): the chain's own label shows as the held key.
+        const auto spine = openPageKeyBounds().toFloat();
         g.setColour (pageInk);
-        g.fillRect (key.getX() + 1, key.getBottom() - 4, key.getWidth() - 2, wellArea.getY() - key.getBottom() + 5);
+        g.fillRoundedRectangle (spine, 3.0f);
+        const juce::Graphics::ScopedSaveState saved (g);
+        g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, spine.getCentreX(), spine.getCentreY()));
+        g.setColour (stock().panel);
+        g.setFont (kit::label (15.0f));
+        g.drawText ("CHAIN", spine.withSizeKeepingCentre (spine.getHeight(), spine.getWidth()), juce::Justification::centred);
+    }
+    {
+        g.setColour (pageInk);
+        if (pageHasKey (page))
+        {
+            const auto key = pageTabs[(size_t) page].getBounds();
+            g.fillRect (key.getX() + 1, key.getBottom() - 4, key.getWidth() - 2, wellArea.getY() - key.getBottom() + 5);
+        }
         juce::Path band;   // the well's own rounded top edge
         band.addRoundedRectangle ((float) wellArea.getX(), (float) wellArea.getY(), (float) wellArea.getWidth(), 3.0f + surfaceCorner,
                                   surfaceCorner, surfaceCorner, true, true, false, false);

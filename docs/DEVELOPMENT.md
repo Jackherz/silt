@@ -21,11 +21,15 @@ resources/  the factory sample
 ## The engine
 
 16 MIDI-played voices, each a playhead moving through a region of the sample (START and
-LENGTH) with an ADSR, a grain scheduler, a 64-grain pool, cubic or linear interpolation,
+LENGTH) with an ADSR, a grain scheduler, room for 256 grains, cubic or linear interpolation,
 and a grain envelope after GRM Play's Fade, Slant and Ease with a declick floor.
 
-- **Grains latch their settings** when they start; a full pool drops new grains rather
-  than cutting old ones off.
+- **Grains latch their settings** when they start.
+- **A shared grain budget:** 384 grains at once at 48 kHz across all voices (scaled down at
+  higher rates so the cost stays the same, `Engine::grainBudget48k`), split evenly between
+  the voices playing, never fewer than 4 a voice. A voice at its share retires its oldest
+  grain with a 5 ms fade to make room; a new grain is skipped only when every slot is
+  already fading out.
 - **Buffer swaps are lock-free:** grains already playing finish on the old buffer, which
   then goes back to the message thread to be freed.
 - Grains never read across the seam between a sample's end and its start, and the

@@ -185,7 +185,7 @@ inline juce::String helpFor (const juce::String& id)
         { "!chip", "MOD: click to arm, drag onto a knob, double-click for its page" },
         { "!grip", "GRIP: drag to share space; double-click resets" },
         { "!preset", "PRESETS: click the name to browse; SAVE yours" },
-        { "!chain", "CHAIN: drag to reorder; click to open; ON cuts it" },
+        { "!chain", "CHAIN: click an effect for its page; drag to reorder; its light turns it on or off" },
         { "!bench", "THE BENCH: SEND records what you hear; TAKE what an effect sent; FOLDER shows it all" },
     };
 

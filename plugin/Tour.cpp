@@ -56,6 +56,8 @@ void Tour::go (int index)
     step = juce::jmax (0, index);
     if (steps[(size_t) step].page >= 0 && showPage)
         showPage (steps[(size_t) step].page);
+    if (onStepStart)
+        onStepStart();
     doneShown = false;
     back.setEnabled (step > 0);
     next.setButtonText (step + 1 == (int) steps.size() ? "DONE" : "NEXT");
@@ -66,12 +68,20 @@ void Tour::go (int index)
     startTimerHz (10);
 }
 
+bool Tour::stepDone() const
+{
+    if (step >= (int) steps.size())
+        return false;
+    const auto& done = steps[(size_t) step].done;
+    return done != nullptr && done();
+}
+
 // Ticks the card once its TRY IT has been done.
 void Tour::timerCallback()
 {
     if (step >= (int) steps.size() || doneShown)
         return;
-    if (const auto& done = steps[(size_t) step].done; done != nullptr && done())
+    if (stepDone())
     {
         doneShown = true;
         repaint();

@@ -30,8 +30,10 @@ public:
     bool isRunning() const noexcept { return isVisible(); }
     int currentStep() const noexcept { return step; }
     void go (int index);   // past the end: finish
+    bool stepDone() const;   // whether the open step's TRY IT has been done (what ticks the card)
 
     std::function<void (int page)> showPage;
+    std::function<void()> onStepStart;   // each time a step opens, after its page: TRY IT counts from here
     std::function<void()> onFinish;   // finished or skipped
 
     void paint (juce::Graphics&) override;

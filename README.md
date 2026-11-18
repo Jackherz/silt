@@ -13,9 +13,9 @@ Silt is built twice from one codebase:
 
 ## Features
 
-- **Grains:** 16 voices, each a playhead through the sample with its own ADSR, up to 64
-  grains at once, with size, rate, spray, reverse, pitch scatter and a shaped grain
-  envelope.
+- **Grains:** 16 voices, each a playhead through the sample with its own ADSR, sharing a
+  budget of 384 grains at once (at 48 kHz), with size, rate, spray, reverse, pitch scatter
+  and a shaped grain envelope.
 - **Four ways to play** (Silt): **PITCH** plays the sample from the keys, **LIVE** grains
   the incoming audio a moment behind, **FEED** keeps re-granulating its own output, and
   **SLICE** puts a slice on each key, cut equally, at the sample's hits or by hand.
@@ -27,7 +27,9 @@ Silt is built twice from one codebase:
 - **Modulation:** four modulators (wave, random, envelope, input follower, MIDI, macro,
   or a fresh value for every grain), routed by dragging onto any knob, per voice if you
   like, and able to modulate each other.
-- **51 factory sounds** and a preset browser with search, categories and favourites.
+- **41 factory presets** (35 in Silt FX, which leaves out the ones played from a sample or
+  notes) plus Init, four factory samples, and a preset browser with search, categories and
+  favourites.
 - **Eight controls a page**, so any 8-knob MIDI controller plays every page, with pickup
   so values never jump.
 - **The Bench:** send a few bars of output to another Glyph Audio plug-in, or take what

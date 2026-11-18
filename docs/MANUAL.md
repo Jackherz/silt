@@ -33,10 +33,11 @@ Under the masthead, a strip holds, left to right in signal order: **SOURCE** (Si
 **LEVELS**), **CHAIN** and the **readout**, which explains whatever the mouse rests on.
 The screen below runs the full width: the sample or the live input, the grains and
 voices, and in its bottom-right corner a picture of the open page. Under it are the page
-keys, in three groups (the grains: GRAIN, SHAPE, PITCH, PLAY; the effects: RES, FILTER,
-COLOR, SPACE; and MOD), then the open page's eight controls beside the mod rail, and the
-Bench along the bottom. Each page has its own colour, on its key, along the top of its
-controls and on its chain tile. Shift-drag any knob for 10x finer moves, click its value
+keys for the grains (GRAIN, SHAPE, PITCH, PLAY) and MOD, with LEARN, RANDOM, MOD ROUTES,
+UNDO and REDO beside them; the effects' pages open from their blocks in CHAIN. Then the
+open page's eight controls beside the mod rail, and the Bench along the bottom. The open
+page wears its own colour, on its key or chain block, along the top of its controls and on
+their names; everything else stays plain, so the modulators' colours stand out. Shift-drag any knob for 10x finer moves, click its value
 to type one, double-click to reset it.
 
 **LEVELS** (Silt FX, always on screen): **INPUT** (-24 to +24 dB, how loud the track
@@ -117,9 +118,10 @@ along), drag the bar under it or the ZOOM label, double-click the label to see i
 
 ## The effects
 
-**CHAIN:** always on the panel, from any page. Each module's switch says ON or OFF. A module that's on but has nothing to do says why (MIX 0, OPEN, NEUTRAL, LEVELS 0); otherwise a meter shows how much it's changing the sound, measured, modulation included. The arrow after a module lights while sound is leaving it. Drag the four effects into any order, click
-one to open its page. Each has an ON switch that cuts it at once, fading over 5 ms so it
-doesn't click. A controller can still page to CHAIN for ORDER and the four switches.
+**CHAIN:** always on the panel, from any page; its blocks are the effects' page keys. The light before each name is its ON switch: lit when on, an empty ring and OFF when off. A module that's on but has nothing to do says why (MIX 0, OPEN, NEUTRAL, LEVELS 0); otherwise a meter shows how much it's changing the sound, measured, modulation included. The arrow after a module lights while sound is leaving it. Drag the four effects into any order, click
+one to open its page (RES again for its next page of controls). Switching one off cuts it at once, fading over 5 ms so it
+doesn't click. A controller can still page to CHAIN for ORDER and the four switches: CHAIN has no
+page key, so while it's the page, the CHAIN label on the panel lights up as the held key.
 
 **RESONATOR** (four pages: press RES again for the next): a modal bank of up to 128
 ringing modes. A hit rings each mode as hard at any decay, and retuning one mid-ring
@@ -268,7 +270,7 @@ move it to the Trash.
 
 **RANDOM and RESET:** RANDOM's menu (right-click) sets a CHARACTER: ANYTHING, TONAL (stays in tune), RHYTHMIC (short and regular) or TEXTURE (dense and scattered); the last three never touch anything that sets tuning, on any page: PITCH, RND PITCH, SCALE, KEY, PATTERN, ROOT, MODE, or the RESONATOR's TUNE, NOTES, FOLLOW, SPREAD and DRIFT, and COLOR's WOW. RANDOM moves the open page's controls by the amount beside it
 (right-click: amounts, which controls to leave out; right-click a knob to leave it out).
-RESET (right-click a page key, or RANDOM's menu) puts a page, or every page, back to its
+RESET (right-click a page key or chain block, or RANDOM's menu) puts a page, or every page, back to its
 defaults, keeping the routes, the sample and ROOT. Both are one undo step.
 
 ## Undo
@@ -286,7 +288,7 @@ and opening a project (which starts its own history).
 ## 8-knob controller
 
 A controller's 8 knobs move the 8 slots of the current page
-(GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER / COLOR / SPACE / MOD), following the modes
+(GRAIN / SHAPE / PITCH / PLAY / RESONATOR / FILTER / COLOR / SPACE / MOD / CHAIN), following the modes
 (the editor and the controller read the same page table, and a test checks they agree); two buttons step pages; works with
 the window closed. Defaults: knobs CC 70–77, pages CC 78/79. **LEARN**: turn knobs 1–8,
 then press previous and next page. A knob takes over only when it reaches the
