@@ -40,6 +40,13 @@ for (const [label, viewport, mobile] of [['desktop', { width: 1440, height: 900 
   const grains = await frame.locator('body').evaluate(() => window.siltAudio?.lastDisplay?.grains ?? 0);
   await page.keyboard.up('a');
   check(`${label}: a key plays grains in the frame`, grains > 0, String(grains));
+  // LOAD's FROM BROOD: a loop from Brood's copy on the site.
+  if (!mobile) {
+    await frame.getByText('LOAD', { exact: true }).click();
+    await frame.locator('.popup-item', { hasText: 'Nylon tines' }).click();
+    await frame.locator('canvas[data-sample="NYLON-TINES"]').waitFor({ timeout: 10000 }).catch(() => {});
+    check(`${label}: a Brood loop loads from the site`, (await frame.locator('canvas[data-sample="NYLON-TINES"]').count()) === 1);
+  }
   check(`${label}: no page errors`, errors.length === 0, errors.join('; '));
   await page.close();
 }
