@@ -771,7 +771,7 @@ namespace
 // Session and sample settings (ROOT is the sample's key, INPUT the track's level), not part of a sound.
 bool inPresets (const juce::String& id)
 {
-    return id != "monitor" && id != "captureBars" && id != "captureFeed" && id != "sampleGain" && id != "inputGain" && id != "root";
+    return silt::params::inPresets (silt::params::find (id.toStdString()));
 }
 } // namespace
 

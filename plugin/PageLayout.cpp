@@ -1,5 +1,6 @@
 #include "PageLayout.h"
 
+#include <algorithm>
 #include <tuple>
 
 namespace silt::layout
@@ -11,14 +12,48 @@ const char* pageName (int page)
     return names[juce::jlimit (0, numPages - 1, page)];
 }
 
+bool Rule::operator() (const Context& c) const
+{
+    const auto value = [&]
+    {
+        if (id.startsWith ("@"))
+            return c.v ("m" + juce::String (c.modShown + 1) + id.substring (1));
+        return c.v (id);
+    };
+    switch (op)
+    {
+        case Op::none:          return true;
+        case Op::all:           return std::all_of (parts.begin(), parts.end(), [&] (const Rule& r) { return r (c); });
+        case Op::any:           return std::any_of (parts.begin(), parts.end(), [&] (const Rule& r) { return r (c); });
+        case Op::negate:        return ! parts.front() (c);
+        case Op::is:            return juce::roundToInt (value()) == values.front();
+        case Op::in:            { const int v = juce::roundToInt (value()); return std::find (values.begin(), values.end(), v) != values.end(); }
+        case Op::on:            return value() > 0.5f;
+        case Op::off:           return value() <= 0.5f;
+        case Op::atLeast:       return value() >= threshold;
+        case Op::modShown:      return c.modShown == values.front();
+        case Op::resonatorHalf: return c.resonatorHalf == values.front();
+        case Op::delayForced:   return c.delayForced;
+    }
+    return true;
+}
+
 namespace
 {
-using Shown = std::function<bool (const Context&)>;
+using Shown = Rule;
+using Op = Rule::Op;
 
-Shown is (juce::String id, int value) { return [=] (const Context& c) { return juce::roundToInt (c.v (id)) == value; }; }
-Shown on (juce::String id) { return [=] (const Context& c) { return c.v (id) > 0.5f; }; }
-Shown off (juce::String id) { return [=] (const Context& c) { return c.v (id) <= 0.5f; }; }
-Shown both (Shown a, Shown b) { return [=] (const Context& c) { return a (c) && b (c); }; }
+Shown is (juce::String id, int value) { return { Op::is, id, { value }, 0.0f, {} }; }
+Shown in (juce::String id, std::vector<int> values) { return { Op::in, id, std::move (values), 0.0f, {} }; }
+Shown on (juce::String id) { return { Op::on, id, {}, 0.0f, {} }; }
+Shown off (juce::String id) { return { Op::off, id, {}, 0.0f, {} }; }
+Shown atLeast (juce::String id, float threshold) { return { Op::atLeast, id, {}, threshold, {} }; }
+Shown both (Shown a, Shown b) { return { Op::all, {}, {}, 0.0f, { std::move (a), std::move (b) } }; }
+Shown either (Shown a, Shown b) { return { Op::any, {}, {}, 0.0f, { std::move (a), std::move (b) } }; }
+Shown isNot (Shown a) { return { Op::negate, {}, {}, 0.0f, { std::move (a) } }; }
+Shown modShownIs (int m) { return { Op::modShown, {}, { m }, 0.0f, {} }; }
+Shown halfIs (int h) { return { Op::resonatorHalf, {}, { h }, 0.0f, {} }; }
+const Shown delayForced { Op::delayForced, {}, {}, 0.0f, {} };
 
 std::vector<Entry> build (bool instrument)
 {
@@ -43,7 +78,7 @@ std::vector<Entry> build (bool instrument)
     // GRAIN: what the grains are. SIZE and RATE change with SYNC and the rate mode.
     const auto grainsMode = is ("rateMode", 2);
     knob (grain, 0, "pitch", "PITCH");
-    knob (grain, 1, "size", "SIZE", [] (const Context& c) { return c.v ("sizeSync") <= 0.5f && juce::roundToInt (c.v ("rateMode")) != 2; });
+    knob (grain, 1, "size", "SIZE", both (off ("sizeSync"), isNot (grainsMode)));
     knob (grain, 1, "sizeDiv", "SIZE", on ("sizeSync"));
     knob (grain, 1, "grainSize", "SIZE", both (off ("sizeSync"), grainsMode));
     knob (grain, 2, "rate", "RATE", is ("rateMode", 0));
@@ -82,16 +117,16 @@ std::vector<Entry> build (bool instrument)
     // per key (equal, or at its hits). LIVE and FEED (a ring of the input, or
     // of Silt's own output): how far back the grains read, feedback, freeze,
     // and what plays grains without notes.
-    const Shown sampleMode = [] (const Context& c) { const int m = juce::roundToInt (c.v ("keyMode")); return m == 0 || m == 3; };
-    const Shown liveMode = [] (const Context& c) { const int m = juce::roundToInt (c.v ("keyMode")); return m == 1 || m == 2; };
+    const Shown sampleMode = in ("keyMode", { 0, 3 });
+    const Shown liveMode = in ("keyMode", { 1, 2 });
     const auto pitchMode = is ("keyMode", 0), sliceMode = is ("keyMode", 3);
     if (! instrument)
     {
         // Silt FX: always LIVE, so no MODE, and LIVE's controls from the first slot.
         knob (play, 0, "liveDelay", "DELAY", off ("delaySync"));
-        e.back().dimmed = [] (const Context& c) { return c.delayForced; };
+        e.back().dimmed = delayForced;
         knob (play, 0, "delayDiv", "DELAY", on ("delaySync"));
-        e.back().dimmed = [] (const Context& c) { return c.delayForced; };
+        e.back().dimmed = delayForced;
         under (Kind::underButton, play, 0, "delaySync", 60, {}, "SYNC");
         knob (play, 1, "feedback", "FEEDBACK");
         button (play, 2, "freeze", "FREEZE", "FREEZE");
@@ -114,15 +149,15 @@ std::vector<Entry> build (bool instrument)
         knob (play, 3, "scanDiv", "SCAN", both (pitchMode, on ("scanSync")));
         under (Kind::underButton, play, 3, "scanSync", 60, {}, "SYNC", pitchMode);
         knob (play, 3, "sliceCount", "SLICES", both (sliceMode, is ("sliceMode", 0)));
-        const Shown notEqual = [] (const Context& c) { return juce::roundToInt (c.v ("sliceMode")) != 0; };
+        const Shown notEqual = isNot (is ("sliceMode", 0));
         knob (play, 3, "scan", "SCAN", both (sliceMode, notEqual));   // at hits or by hand, the count isn't a knob
         under (Kind::underMenu, play, 3, "sliceMode", 92, { "EQUAL", "AT HITS", "MANUAL" }, {}, sliceMode);
         menu (play, 4, "endMode", "AT THE END", { "LOOP", "HOLD", "STOP", "BOUNCE" }, sampleMode);
         under (Kind::underMenu, play, 1, "snap", 104, { "SNAP OFF", "SNAP ZERO", "SNAP TRANS" }, {}, sampleMode);
         knob (play, 1, "liveDelay", "DELAY", both (liveMode, off ("delaySync")));
-        e.back().dimmed = [] (const Context& c) { return c.delayForced; };
+        e.back().dimmed = delayForced;
         knob (play, 1, "delayDiv", "DELAY", both (liveMode, on ("delaySync")));
-        e.back().dimmed = [] (const Context& c) { return c.delayForced; };
+        e.back().dimmed = delayForced;
         knob (play, 2, "feedback", "FEEDBACK", liveMode);
         button (play, 3, "freeze", "FREEZE", "FREEZE", liveMode);
         menu (play, 4, "liveRun", "NO NOTES", { "OFF", "ALWAYS", "FOLLOW" }, liveMode);
@@ -136,10 +171,7 @@ std::vector<Entry> build (bool instrument)
     // RESONATOR: a bank of ringing bands on the grains. SCALE notes come from the
     // PITCH page's scale and key; FOLLOW tunes the bank to the note played.
     // RESONATOR, on four pages (its key, or the controller's page buttons, step between them).
-    const Shown firstHalf = [] (const Context& c) { return c.resonatorHalf == 0; };
-    const Shown secondHalf = [] (const Context& c) { return c.resonatorHalf == 1; };
-    const Shown thirdHalf = [] (const Context& c) { return c.resonatorHalf == 2; };
-    const Shown fourthHalf = [] (const Context& c) { return c.resonatorHalf == 3; };
+    const Shown firstHalf = halfIs (0), secondHalf = halfIs (1), thirdHalf = halfIs (2), fourthHalf = halfIs (3);
     knob (resonator, 0, "resTune", "TUNE", both (firstHalf, off ("resFollow")));
     knob (resonator, 0, "resShift", "SHIFT", both (firstHalf, on ("resFollow")));   // FOLLOW takes its tune from the notes
     menu (resonator, 1, "resNotes", "NOTES", { "SCALE", "HARMONICS", "BELL", "SAMPLE" }, firstHalf);
@@ -217,13 +249,13 @@ std::vector<Entry> build (bool instrument)
     for (int m = 0; m < 4; ++m)
     {
         const auto id = [m] (const char* suffix) { return "m" + juce::String (m + 1) + suffix; };
-        const Shown shownMod = [m] (const Context& c) { return c.modShown == m; };
-        const auto type = [=] (int t) { return Shown ([=] (const Context& c) { return c.modShown == m && juce::roundToInt (c.v (id ("Type"))) == t; }); };
+        const Shown shownMod = modShownIs (m);
+        const auto type = [=] (int t) { return both (shownMod, is (id ("Type"), t)); };
         const auto wave = type (0), random = type (1), envelope = type (2), follow = type (3), midi = type (4), macro = type (5);
-        const Shown timed = [=] (const Context& c) { return wave (c) || random (c); };
+        const Shown timed = either (wave, random);
 
         const auto perGrain = type (6);
-        const Shown notPerGrain = [=] (const Context& c) { return shownMod (c) && ! perGrain (c); };
+        const Shown notPerGrain = both (shownMod, isNot (perGrain));
         menu (mod, 1, id ("Type"), "TYPE", { "WAVE", "RANDOM", "ENVELOPE", "FOLLOW", "MIDI", "MACRO", "PER GRAIN" }, shownMod);
         under (Kind::underButton, mod, 1, id ("Enable"), 50, {}, "ON", shownMod);
         under (Kind::underButton, mod, 2, id ("Voice"), 64, {}, "VOICE", notPerGrain);
@@ -243,7 +275,7 @@ std::vector<Entry> build (bool instrument)
         knob (mod, 5, id ("Sym"), "SYM", wave);
         knob (mod, 6, id ("Curve"), "CURVE", wave);
         // A square's ±1 doesn't bend: CURVE greys out on it.
-        e.back().dimmed = [=] (const Context& c) { return c.v (id ("Shape")) >= 2.99f; };
+        e.back().dimmed = atLeast (id ("Shape"), 2.99f);
 
         knob (mod, 2, id ("Smooth"), "SMOOTH", random);
         knob (mod, 4, id ("Jitter"), "JITTER", random);
@@ -265,12 +297,8 @@ std::vector<Entry> build (bool instrument)
         knob (mod, 3, id ("Macro"), "MACRO", macro);
     }
     // A per-voice WAVE puts SPREAD in slot 7; otherwise it's the controller's ASSIGN.
-    const auto voiceWave = [] (const Context& c)
-    {
-        const auto id = "m" + juce::String (c.modShown + 1);
-        return juce::roundToInt (c.v (id + "Type")) == 0 && c.v (id + "Voice") > 0.5f;
-    };
-    e.push_back ({ mod, 7, Kind::action, "!assign", "CONTROLLER", {}, "ASSIGN", 0, [voiceWave] (const Context& c) { return ! voiceWave (c); }, {} });
+    const auto voiceWave = both (is ("@Type", 0), on ("@Voice"));
+    e.push_back ({ mod, 7, Kind::action, "!assign", "CONTROLLER", {}, "ASSIGN", 0, isNot (voiceWave), {} });
 
     // CHAIN: the modules' order. The screen shows it and lets you drag them;
     // the knob steps through all 24 orders.

@@ -33,6 +33,24 @@ struct Context
     float v (const juce::String& id) const { return value (id); }
 };
 
+// When an entry shows (or greys out), as data: the editor and the controller
+// evaluate it, and the browser version reads the same rules from layout.json.
+// A parameter id starting "@" is the shown modulator's ("@Type": m1Type for
+// modulator 1).
+struct Rule
+{
+    enum class Op { none, all, any, negate, is, in, on, off, atLeast, modShown, resonatorHalf, delayForced };
+    Op op = Op::none;          // none: no rule (always shown, never dimmed)
+    juce::String id;           // is, in, on, off, atLeast
+    std::vector<int> values;   // is (one), in (any of), modShown and resonatorHalf (one)
+    float threshold = 0.0f;    // atLeast
+    std::vector<Rule> parts;   // all, any, negate (one)
+
+    bool operator() (const Context&) const;
+    bool isNone() const noexcept { return op == Op::none; }
+};
+inline bool operator== (const Rule& r, std::nullptr_t) noexcept { return r.isNone(); }
+
 struct Entry
 {
     int page = 0, slot = 0;
@@ -42,8 +60,8 @@ struct Entry
     juce::StringArray items;   // menus
     juce::String text;         // button text
     int width = 0;             // under-slot controls
-    std::function<bool (const Context&)> shown;   // null: always
-    std::function<bool (const Context&)> dimmed;  // shown, but has no effect in the current state
+    Rule shown;                                   // none: always
+    Rule dimmed;                                  // shown, but has no effect in the current state
     int dx = 0;                                   // under-slot controls: offset from the slot's centre
     bool alwaysShown = false;                     // on the panel beside the screen, whatever the page; the controller still finds it in its slot
 

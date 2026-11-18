@@ -211,6 +211,11 @@ bool approximatelyEqual (float a, float b) noexcept
         || diff <= std::numeric_limits<float>::epsilon() * std::max (std::abs (a), std::abs (b));
 }
 
+bool inPresets (int id) noexcept
+{
+    return id != monitor && id != captureBars && id != captureFeed && id != sampleGain && id != inputGain && id != root;
+}
+
 double quartersFor (int index) noexcept
 {
     constexpr int last = (int) std::size (divisionQuarters) - 1;

@@ -364,6 +364,11 @@ int PresetManager::numFactoryPresets() { return (int) factories().size(); }
 juce::String PresetManager::factoryName (int index) const { return factories()[(size_t) index].name; }
 juce::String PresetManager::factoryCategory (int index) const { return categoryOfFactory (factories()[(size_t) index].name); }
 
+bool PresetManager::factoryIsInstrumentOnly (int index)
+{
+    return factories()[(size_t) juce::jlimit (0, numFactoryPresets() - 1, index)].instrumentOnly;
+}
+
 std::unique_ptr<juce::XmlElement> PresetManager::factoryPreset (int index)
 {
     const auto& f = factories()[(size_t) juce::jlimit (0, numFactoryPresets() - 1, index)];

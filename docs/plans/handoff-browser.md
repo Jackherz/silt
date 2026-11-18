@@ -259,6 +259,11 @@ private repo Jackherz/jackherz-site. It is plain HTML, CSS and JS on Cloudflare 
 8. **The site:** `silt-app/` build, the `#silt` embed, cache-busting, local preview. Then wait
    for approval.
 
+Progress (18 November 2026): steps 1 and 2 are done. The spike is `web/spike/`;
+the glue is `silt::Instrument` (core), parameters `silt::params`, the bridge and its
+checks `web/engine/` (see its README), the JSON export `tools/export-web/`, the layout
+rules' evaluator `web/app/rules.js`. Golden renders: `tools/golden/`. Next: step 3.
+
 Done means: Silt plays in the browser with the plug-in's sound, names and look; the plug-in's
 tests still pass; nothing is cut off on screen; the owner has approved the local preview of the
 site.

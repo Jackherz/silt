@@ -44,5 +44,11 @@ export async function loadSilt(bytes) {
       return [floats(ptr, frames), floats(ptr + maxBlock * 4, frames)];
     },
     activeGrains: () => x.silt_active_grains(),
+    // How a value reads, exactly as in the plug-in.
+    text(id, value) {
+      const ptr = x.silt_param_text(id, value);
+      const bytes = new Uint8Array(x.memory.buffer, ptr);
+      return new TextDecoder().decode(bytes.subarray(0, bytes.indexOf(0)));
+    },
   };
 }

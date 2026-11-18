@@ -10,7 +10,8 @@
 // Short enough for the LCD: a few words on what it does, not how it works.
 namespace silt::ui
 {
-inline juce::String helpFor (const juce::String& id)
+// Every line, by id (also exported to the browser version's help.json).
+inline const std::map<juce::String, const char*>& helpTable()
 {
     static const std::map<juce::String, const char*> help {
         // GRAIN
@@ -188,7 +189,12 @@ inline juce::String helpFor (const juce::String& id)
         { "!chain", "CHAIN: click an effect for its page; drag to reorder; its light turns it on or off" },
         { "!bench", "THE BENCH: SEND records what you hear; TAKE what an effect sent; FOLDER shows it all" },
     };
+    return help;
+}
 
+inline juce::String helpFor (const juce::String& id)
+{
+    const auto& help = helpTable();
     if (const auto it = help.find (id); it != help.end())
         return it->second;
     // A modulator's setting: m1Rate → mod:Rate.

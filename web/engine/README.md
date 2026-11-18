@@ -7,8 +7,17 @@ functions; `build.sh` compiles it to `build-web/silt.wasm` with Emscripten, and
 
 ```bash
 web/engine/build.sh                                   # build-web/silt.wasm
-cmake --build build --target silt_export_web && build/silt_export_web build-web   # params.json
+cmake --build build --target silt_export_web
+build/silt_export_web_artefacts/Release/silt_export_web build-web --check
+node web/app/check-exports.mjs build-web
 ```
+
+`silt_export_web` writes what the panel reads, from the plug-in's own sources:
+`params.json` (silt::params), `layout.json` (plugin/PageLayout.cpp, show and dim rules
+as data), `help.json` (plugin/Help.h, verbatim) and `presets.json` (the factory
+presets). With `--check` it also writes 2,000 random panel states with the C++ answers
+and the value text at 50 points per parameter; `check-exports.mjs` checks the browser's
+rule evaluator (`web/app/rules.js`) and the WebAssembly build's text against them.
 
 ## Checking it sounds like the plug-in
 

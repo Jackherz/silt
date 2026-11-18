@@ -23,6 +23,7 @@ public:
 
     static int numFactoryPresets();
     static std::unique_ptr<juce::XmlElement> factoryPreset (int index);
+    static bool factoryIsInstrumentOnly (int index);   // played from notes: not in Silt FX
 
     const juce::StringArray& categoryList() const override { return categories(); }
     int factoryCount() const override { return numFactoryPresets(); }

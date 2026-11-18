@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <memory>
+#include <string>
 #include <vector>
 
 #ifdef __EMSCRIPTEN__
@@ -149,6 +150,14 @@ SILT_EXPORT float* silt_process (int numSamples, int inputChannels)
     web->midiCount = 0;
     web->instrument.getEngine().collectGarbage();
     return web->output.data();
+}
+
+// How a value reads on the panel, exactly as in the plug-in (UTF-8, until the next call).
+SILT_EXPORT const char* silt_param_text (int id, float value)
+{
+    static std::string text;
+    text = sp::text (id, value);
+    return text.c_str();
 }
 
 SILT_EXPORT int silt_max_block() { return maxBlock; }

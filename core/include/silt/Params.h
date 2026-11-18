@@ -300,6 +300,10 @@ bool approximatelyEqual (float a, float b) noexcept;   // JUCE's
 // How a value reads, exactly as in the plug-in.
 std::string text (int id, float value);
 
+// Whether presets carry it: session and sample settings (ROOT is the sample's
+// key, INPUT the track's level) aren't part of a sound.
+bool inPresets (int id) noexcept;
+
 // Synced note values and SCAN's bars.
 double quartersFor (int divisionIndex) noexcept;
 } // namespace silt::params
