@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { panelGeometry, centred, box, SPINE } from './geometry.js';
 import { C, S, MOD, css, rgba, pageColour, font } from './theme.js';
-import { isShown, isDimmed } from './rules.js';
+import { isShown, isDimmed, roundToInt } from './rules.js';
 import { loadSilt } from '../engine/silt-wasm.js';
 
 const PAGE_NAMES = ['GRAIN', 'SHAPE', 'PITCH', 'PLAY', 'RESONATOR', 'FILTER', 'COLOR', 'SPACE', 'MOD', 'CHAIN'];
@@ -200,8 +200,8 @@ function Readout({ r, title, figure }) {
         {title}
       </At>
       <At r={[inner[0], inner[1] + 16, inner[2], inner[3] - 16]}
-          style={{ ...font.screen(28), color: css(S.onSunk), display: 'flex', alignItems: 'center', justifyContent: 'space-between', whiteSpace: 'nowrap', overflow: 'hidden' }}>
-        {figure}
+          style={{ ...font.screen(28), color: css(S.onSunk), display: 'flex', alignItems: 'center', whiteSpace: 'pre' }}>
+        <Fitted width={inner[2]} cssFont={`${font.screen(28).fontSize}px "B612 Mono"`} text={figure} minScale={0.6} />
       </At>
     </>
   );
@@ -281,6 +281,19 @@ function Well({ g, page, entries, context, value, text, params }) {
       })}
     </>
   );
+}
+
+// The readout's standing figure, as SiltEditor::statusText: the input and its level, then the
+// tempo. The browser's input is the microphone (MIC); none yet, the plug-in's own NO INPUT.
+function statusFigure(source, levelDb, bpm) {
+  const level = levelDb <= -60 ? '-INF' : String(roundToInt(levelDb));
+  return `${source ?? 'NO INPUT'} ${level} DB   ${bpm.toFixed(1)} BPM`;
+}
+
+// One line that never gets cut: squeezed sideways to fit, down to minScale (drawFittedText).
+function Fitted({ text, width, cssFont, minScale }) {
+  const k = Math.max(minScale, Math.min(1, width / Math.max(1, measure(text, cssFont))));
+  return <span style={{ display: 'inline-block', transform: `scaleX(${k})`, transformOrigin: '0 50%' }}>{text}</span>;
 }
 
 // Text width, as the plug-in measures it for placing the next thing.
@@ -404,7 +417,7 @@ function App() {
         {/* Strip */}
         <Source g={g} />
         <Chain g={g} idle={idle} openModule={-1} />
-        <Readout r={g.lcd} title="SILT" figure={<><span>MIC OFF</span><span>120.0 BPM</span></>} />
+        <Readout r={g.lcd} title="SILT" figure={statusFigure(null, -100, 120)} />
 
         {/* Screen (step 6 draws what's on it) */}
         <Surface r={g.screen} colour={C.screenBlue} />
