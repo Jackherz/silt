@@ -25,23 +25,6 @@ const std::array<FactorySample, 4>& factorySamples()
     return list;
 }
 
-// The 24 chain orders, in permutation order: 0 is RES, FILTER, COLOR, SPACE.
-using ChainOrder = std::array<int, SiltProcessor::numModules>;
-const std::array<ChainOrder, SiltProcessor::numChainOrders>& chainOrders()
-{
-    static const auto list = []
-    {
-        std::array<ChainOrder, SiltProcessor::numChainOrders> orders {};
-        ChainOrder order { 0, 1, 2, 3 };
-        for (auto& o : orders)
-        {
-            o = order;
-            std::next_permutation (order.begin(), order.end());
-        }
-        return orders;
-    }();
-    return list;
-}
 } // namespace
 
 namespace
@@ -51,15 +34,6 @@ using Float = juce::AudioParameterFloat;
 using Range = juce::NormalisableRange<float>;
 
 constexpr int stateMagic = 0x544c4953;   // "SILT"
-
-constexpr double maxDelayMs = 4000.0;
-constexpr int rateModeSync = 1, rateModeGrains = 2;   // "rateMode" choices; 0 is Free
-constexpr double maxSyncedSizeMs = 4000.0;
-
-double quartersFor (const std::atomic<float>* choice) noexcept
-{
-    return silt::params::quartersFor ((int) choice->load (std::memory_order_relaxed));
-}
 
 // The host's parameters, from silt::params (the JUCE-free table the browser
 // version reads too), in its order. The ranges are JUCE's own, built from the
@@ -129,73 +103,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
 
 bool isMonoOrStereo (const Set& set) { return set == Set::mono() || set == Set::stereo(); }
 
-// Linear to −1.9 dBFS, then a soft knee to full scale (plan gap 7: a safety
-// net for dense patches, not a sound).
-float safetyClip (float x) noexcept
-{
-    constexpr float knee = 0.8f;
-    const float a = std::abs (x);
-    if (a <= knee)
-        return x;
-    return std::copysign (knee + (1.0f - knee) * std::tanh ((a - knee) / (1.0f - knee)), x);
-}
 } // namespace
-
-struct SiltProcessor::RawParams
-{
-    // lookup: where each parameter's value is read from (its modulated value,
-    // for modulation targets).
-    explicit RawParams (const std::function<std::atomic<float>* (const char*)>& p)
-    {
-        pitch = p ("pitch"); size = p ("size"); rate = p ("rate"); spray = p ("spray"); jitter = p ("jitter");
-        reverse = p ("reverse"); randAmp = p ("randAmp"); randPan = p ("randPan"); fade = p ("fade"); slant = p ("slant"); ease = p ("ease");
-        sizeSync = p ("sizeSync"); sizeDiv = p ("sizeDiv"); rateMode = p ("rateMode"); rateDiv = p ("rateDiv"); grains = p ("grains"); grainSize = p ("grainSize");
-        start = p ("start"); length = p ("length"); scan = p ("scan"); scanSync = p ("scanSync"); scanDiv = p ("scanDiv"); endMode = p ("endMode"); snap = p ("snap");
-        attack = p ("attack"); decay = p ("decay"); sustain = p ("sustain"); release = p ("release"); root = p ("root");
-        captureBars = p ("captureBars"); gain = p ("gain");
-        sliceMode = p ("sliceMode"); sliceCount = p ("sliceCount");
-        keyMode = isInstrument ? p ("keyMode") : nullptr; liveDelay = p ("liveDelay"); delaySync = p ("delaySync"); delayDiv = p ("delayDiv");
-        feedback = p ("feedback"); freeze = p ("freeze"); liveRun = p ("liveRun");
-        randPitch = p ("randPitch"); scale = p ("scale"); key = p ("key"); patternDepth = p ("patternDepth");
-        patternSteps = p ("patternSteps"); patternSeed = p ("patternSeed"); heads = p ("heads"); headSpread = p ("headSpread");
-        resTune = p ("resTune"); resNotes = p ("resNotes"); resRange = p ("resRange"); resDecay = p ("resDecay");
-        resBright = p ("resBright"); resWidth = p ("resWidth"); resFollow = p ("resFollow"); resShift = p ("resShift"); resMix = p ("resMix");
-        resReso = p ("resReso"); resBands = p ("resBands"); resDrift = p ("resDrift");
-        resSpread = p ("resSpread"); resOddEven = p ("resOddEven"); resDrive = p ("resDrive"); resDamp = p ("resDamp");
-        resStretch = p ("resStretch"); resCurve = p ("resCurve"); resSnap = p ("resSnap"); resOffset = p ("resOffset");
-        resRipple = p ("resRipple"); resDepth = p ("resDepth"); resSweep = p ("resSweep");
-        resStrike = p ("resStrike"); resPosition = p ("resPosition"); resHardness = p ("resHardness");
-        resParticles = p ("resParticles"); resDensity = p ("resDensity"); resTop = p ("resTop"); resSaturate = p ("resSaturate");
-        filterMode = p ("filterMode"); filterCutoff = p ("filterCutoff"); filterReso = p ("filterReso"); filterMorph = p ("filterMorph");
-        filterDrive = p ("filterDrive"); filterEnv = p ("filterEnv"); filterKey = p ("filterKey"); filterMix = p ("filterMix");
-        colorDrive = p ("colorDrive"); colorTone = p ("colorTone"); colorBits = p ("colorBits"); colorRate = p ("colorRate");
-        colorComp = p ("colorComp"); colorNoise = p ("colorNoise"); colorWow = p ("colorWow"); colorMix = p ("colorMix");
-        spaceTime = p ("spaceTime"); spaceSync = p ("spaceSync"); spaceDiv = p ("spaceDiv"); spaceFeedback = p ("spaceFeedback");
-        spaceMode = p ("spaceMode"); spaceDelay = p ("spaceDelay"); spaceSize = p ("spaceSize"); spaceDecay = p ("spaceDecay");
-        spaceTone = p ("spaceTone"); spaceShimmer = p ("spaceShimmer"); spaceReverb = p ("spaceReverb"); spaceFreeze = p ("spaceFreeze"); spaceDuck = p ("spaceDuck");
-        monitor = p ("monitor"); mix = p ("mix"); inputGain = p ("inputGain");   // monitor, or inputGain: per build
-        chainOrder = p ("chainOrder");
-        for (int m = 0; m < SiltProcessor::numModules; ++m)
-            moduleOn[(size_t) m] = p (SiltProcessor::moduleOnId (m).toRawUTF8());
-    }
-
-    std::atomic<float>* pitch, *size, *rate, *spray, *jitter, *reverse, *randAmp, *randPan, *fade, *slant, *ease;
-    std::atomic<float>* sizeSync, *sizeDiv, *rateMode, *rateDiv, *grains, *grainSize;
-    std::atomic<float>* start, *length, *scan, *scanSync, *scanDiv, *endMode, *snap;
-    std::atomic<float>* attack, *decay, *sustain, *release, *root;
-    std::atomic<float>* captureBars, *gain, *monitor, *mix, *inputGain, *chainOrder;
-    std::atomic<float>* keyMode, *liveDelay, *delaySync, *delayDiv, *feedback, *freeze, *liveRun, *sliceMode, *sliceCount;
-    std::atomic<float>* randPitch, *scale, *key, *patternDepth, *patternSteps, *patternSeed, *heads, *headSpread;
-    std::atomic<float>* resTune, *resNotes, *resRange, *resDecay, *resBright, *resWidth, *resFollow, *resShift, *resMix;
-    std::atomic<float>* resReso, *resBands, *resDrift, *resSpread, *resOddEven, *resDrive, *resDamp;
-    std::atomic<float>* resStretch, *resCurve, *resSnap, *resOffset, *resRipple, *resDepth, *resSweep;
-    std::atomic<float>* resStrike, *resPosition, *resHardness, *resParticles, *resDensity, *resTop, *resSaturate;
-    std::atomic<float>* filterMode, *filterCutoff, *filterReso, *filterMorph, *filterDrive, *filterEnv, *filterKey, *filterMix;
-    std::atomic<float>* colorDrive, *colorTone, *colorBits, *colorRate, *colorComp, *colorNoise, *colorWow, *colorMix;
-    std::atomic<float>* spaceTime, *spaceSync, *spaceDiv, *spaceFeedback, *spaceMode, *spaceDelay, *spaceSize, *spaceDecay;
-    std::atomic<float>* spaceTone, *spaceShimmer, *spaceReverb, *spaceFreeze, *spaceDuck;
-    std::array<std::atomic<float>*, SiltProcessor::numModules> moduleOn {};
-};
 
 juce::AudioProcessor::BusesProperties SiltProcessor::makeBuses()
 {
@@ -223,87 +131,25 @@ juce::AudioProcessor::BusesProperties SiltProcessor::makeBuses()
 
 SiltProcessor::SiltProcessor()
     : AudioProcessor (makeBuses()),
-      params (*this, nullptr, "SILT", makeParameters()),
-      voiceModulation (*this)
+      instrument (isInstrument),
+      params (*this, nullptr, "SILT", makeParameters())
 {
-    // Modulation targets: continuous and stepped parameters (see the header).
-    // Each gets a modulated copy, which is what the audio code reads.
-    for (auto* parameter : getParameters())
-        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter))
-        {
-            const auto id = ranged->getParameterID();
-            // Modulators' own continuous settings are targets too (cross-modulation),
-            // except MACRO, which stays a plain knob.
-            const bool macro = id.length() > 1 && id[0] == 'm' && juce::CharacterFunctions::isDigit (id[1]) && id.endsWith ("Macro");
-            const bool switchLike = dynamic_cast<juce::AudioParameterChoice*> (ranged) != nullptr
-                                 || dynamic_cast<juce::AudioParameterBool*> (ranged) != nullptr;
-            // A division is a stepped choice, drawn as a knob: it can be modulated like one.
-            const bool division = id == "sizeDiv" || id == "rateDiv" || id == "delayDiv" || id == "spaceDiv" || id == "scanDiv";
-            if ((switchLike && ! division) || macro || id == "patternSeed" || id == "sampleGain")
-                continue;
-            if (targets.size() >= (size_t) maxTargets)
-            {
-                jassertfalse;   // raise maxTargets; past it, parameters simply aren't targets
-                break;
-            }
-            targetIndex[id] = (int) targets.size();
-            targets.push_back ({ ranged, params.getRawParameterValue (id) });
-        }
-    for (size_t t = 0; t < targets.size(); ++t)
-        modulated[t].store (targets[t].raw->load());
-
-    // Grain parameters: the ones voices read, so per-voice modulation reaches them.
-    for (const auto* id : { "pitch", "size", "rate", "spray", "jitter", "reverse", "randAmp", "randPan", "fade", "slant", "ease",
-                            "grains", "grainSize", "start", "length", "scan", "attack", "decay", "sustain", "release", "root",
-                            "randPitch", "patternDepth", "patternSteps", "heads", "headSpread", "liveDelay", "feedback" })
-        if (const int t = modulationTarget (id); t >= 0)
-            voiceTargets.push_back (t);
-
-    // What a PER GRAIN modulator reaches: the settings a grain takes up as it starts.
-    {
-        using GP = silt::GrainParams;
-        const std::tuple<const char*, double GP::*, double> scattered[] {
-            { "pitch", &GP::pitchSemitones, 1.0 }, { "size", &GP::sizeMs, 1.0 }, { "grainSize", &GP::sizeMs, 1.0 }, { "rate", &GP::rateHz, 1.0 },
-            { "spray", &GP::spray, 0.01 }, { "reverse", &GP::reverseChance, 0.01 }, { "randAmp", &GP::randomAmp, 0.01 }, { "randPan", &GP::randomPan, 0.01 },
-            { "fade", &GP::fade, 0.01 }, { "slant", &GP::slant, 0.01 }, { "ease", &GP::ease, 0.01 }, { "randPitch", &GP::randomPitch, 1.0 },
-            { "patternDepth", &GP::patternDepth, 1.0 }, { "headSpread", &GP::headSpread, 0.01 }, { "liveDelay", &GP::liveDelayMs, 1.0 },
-            { "resPosition", &GP::strikePosition, 0.01 } };
-        for (const auto& [id, field, scale] : scattered)
-            if (const int t = modulationTarget (id); t >= 0)
-                scatterTargets.push_back ({ t, field, scale });
-    }
-
-    for (int m = 0; m < numModulators; ++m)
-    {
-        // Modulated values where a setting is a target: modulators read each
-        // other (and themselves) as of the previous chunk, so order never matters.
-        const auto p = [this, m] (const char* suffix)
-        {
-            const auto id = "m" + juce::String (m + 1) + suffix;
-            if (const auto it = targetIndex.find (id); it != targetIndex.end())
-                return &modulated[(size_t) it->second];
-            return params.getRawParameterValue (id);
-        };
-        modulatorRaw[(size_t) m] = { p ("Type"), p ("Rate"), p ("Sync"), p ("Div"), p ("Shape"), p ("Phase"), p ("Retrig"), p ("Smooth"), p ("Jitter"),
-                                     p ("Attack"), p ("Decay"), p ("Sustain"), p ("Release"), p ("Repeat"), p ("FAttack"), p ("FRelease"), p ("Gain"), p ("Source"),
-                                     p ("Enable"), p ("Voice"), p ("Macro"), p ("Sym"), p ("Curve"), p ("Rev"), p ("Spread"), p ("GrainSpread") };
-    }
+    // The instrument reads every parameter straight from the host's values; the
+    // targets' JUCE parameters are kept for their text and the editor.
+    namespace sp = silt::params;
+    for (int id = 0; id < sp::count; ++id)
+        if (sp::inBuild (id, isInstrument))
+            instrument.bindParameter (id, params.getRawParameterValue (sp::info (id).id));
+    instrument.syncModulated();
+    for (int t = 0; t < instrument.numTargets(); ++t)
+        targetParameters.push_back (dynamic_cast<juce::RangedAudioParameter*> (params.getParameter (sp::info (instrument.targetParameter (t)).id)));
 
     for (auto* parameter : getParameters())
         parameter->addListener (this);
     sampleGain = params.getRawParameterValue ("sampleGain");
     captureFeedRaw = params.getRawParameterValue ("captureFeed");   // looked up once: a name lookup can allocate
 
-    raw = std::make_unique<RawParams> ([this] (const char* id) -> std::atomic<float>*
-    {
-        if (const auto it = targetIndex.find (id); it != targetIndex.end())
-            return &modulated[(size_t) it->second];
-        return params.getRawParameterValue (id);
-    });
-
     formats.registerBasicFormats();
-    for (auto& v : voicePlayheads)
-        v.store (-1.0f);
     for (size_t i = 0; i < knobCCs.size(); ++i)
         knobCCs[i].store (70 + (int) i);   // a common default for 8-knob controllers
     lastKnobValue.fill (-1);
@@ -327,34 +173,8 @@ SiltProcessor::~SiltProcessor()
 void SiltProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamplesPerBlock)
 {
     currentSampleRate = sampleRate;
-    engine.prepare (sampleRate, juce::jmax (1, maximumExpectedSamplesPerBlock));
-    voiceModulation.reset();
-    engine.setVoiceParams (&voiceModulation);
-    chainNow = juce::jlimit (0, numChainOrders - 1, (int) raw->chainOrder->load());
-    chainFade = 1.0f;
-    heldKeys.fill (false);
-    sustainedKeys.fill (false);
-    sustainDown = false;
-    for (int m = 0; m < numModules; ++m)
-        moduleLevel[(size_t) m] = raw->moduleOn[(size_t) m]->load() > 0.5f ? 1.0f : 0.0f;
-    resonator.prepare (sampleRate);
-    filter.prepare (sampleRate);
-    tapeInput.prepare (sampleRate);
-    color.prepare (sampleRate);
-    space.prepare (sampleRate);
-    for (size_t m = 0; m < modulators.size(); ++m)
-        modulators[m].reset (0x5117 + m);
-    modContext = {};
-    lastNote = -1;
-    followRoot = -1;
-    followChordSize = 0;
-    followLetGoIn = 0;
-    liveColumn = -1;
-    liveColumnPeak = 0.0f;
-    for (auto& c : livePeaks)
-        c.store (0.0f);
-    wet.setSize (2, juce::jmax (modulationInterval, maximumExpectedSamplesPerBlock));
-    noteEvents.reserve (1024);
+    instrument.prepare (sampleRate, maximumExpectedSamplesPerBlock);
+    midiEvents.reserve (2048);
     captureMeter.reset();
 }
 
@@ -396,222 +216,6 @@ juce::AudioBuffer<float> SiltProcessor::findCaptureBus (juce::AudioBuffer<float>
 
     source = CaptureSource::none;
     return {};
-}
-
-// voiceValues (one voice's modulated values, by target) stands in for the
-// shared modulated values when given.
-silt::GrainParams SiltProcessor::readParams (const float* voiceValues) const noexcept
-{
-    const auto* first = modulated.data();
-    const auto v = [first, voiceValues] (const std::atomic<float>* a)
-    {
-        if (voiceValues != nullptr && std::less_equal<>() (first, a) && std::less<>() (a, first + maxTargets))
-            return (double) voiceValues[a - first];
-        return (double) a->load (std::memory_order_relaxed);
-    };
-
-    silt::GrainParams p;
-    p.pitchSemitones = v (raw->pitch);
-    p.sizeMs = v (raw->size);
-    p.rateHz = v (raw->rate);
-    p.spray = v (raw->spray) * 0.01;
-    p.jitter = v (raw->jitter) * 0.01;
-    p.reverseChance = v (raw->reverse) * 0.01;
-    p.randomAmp = v (raw->randAmp) * 0.01;
-    p.randomPan = v (raw->randPan) * 0.01;
-    p.fade = v (raw->fade) * 0.01;
-    p.slant = v (raw->slant) * 0.01;
-    p.ease = v (raw->ease) * 0.01;
-    p.strikePosition = v (raw->resPosition) * 0.01;
-    p.start = v (raw->start) * 0.01;
-    p.length = v (raw->length) * 0.01;
-    p.scan = v (raw->scan);
-    p.endMode = (silt::EndMode) juce::jlimit (0, 3, (int) v (raw->endMode));
-    p.snap = (silt::Snap) juce::jlimit (0, 2, (int) v (raw->snap));
-    p.attackMs = v (raw->attack);
-    p.decayMs = v (raw->decay);
-    p.sustain = v (raw->sustain) * 0.01;
-    p.releaseMs = v (raw->release);
-    p.rootNote = (int) v (raw->root);
-
-    p.randomPitch = v (raw->randPitch);
-    p.scale = (silt::Scale) juce::jlimit (0, silt::scaleCount - 1, (int) v (raw->scale));
-    p.key = juce::jlimit (0, 11, (int) v (raw->key));
-    p.patternDepth = v (raw->patternDepth);
-    p.patternSteps = (int) v (raw->patternSteps);
-    p.patternSeed = (std::uint32_t) v (raw->patternSeed);
-    p.heads = juce::jlimit (1, 8, (int) v (raw->heads));
-    p.headSpread = v (raw->headSpread) * 0.01;
-
-    const int mode = isInstrument ? playModeFrom ((float) v (raw->keyMode)) : modeLive;   // PITCH, LIVE, FEED, SLICE (Silt FX: LIVE)
-    p.live = mode == 1 || mode == 2;
-    p.selfFeed = mode == 2;
-    p.slice = mode == 3;
-    p.sliceTransients = (int) v (raw->sliceMode) == 1;
-    p.sliceCount = (int) v (raw->sliceCount);
-    if (p.slice && (int) v (raw->sliceMode) == 2)
-        if (const int n = sliceCountManual.load (std::memory_order_acquire); n > 0)
-        {
-            for (int i = 0; i < n; ++i)
-                sliceScratch[(size_t) i] = sliceTable[(size_t) i].load (std::memory_order_relaxed);
-            p.sliceTable = sliceScratch.data();
-            p.sliceTableSize = n;
-        }
-    p.feedback = v (raw->feedback) * 0.01;
-    p.freeze = v (raw->freeze) > 0.5;
-    p.liveTrigger = (silt::LiveTrigger) juce::jlimit (0, 2, (int) v (raw->liveRun));
-
-    // Synced values follow the host tempo (the last one seen while stopped).
-    const double msPerQuarter = 60000.0 / juce::jlimit (20.0, 400.0, hostBpm.load (std::memory_order_relaxed));
-    p.liveDelayMs = v (raw->delaySync) > 0.5 ? juce::jlimit (10.0, maxDelayMs, quartersFor (raw->delayDiv) * msPerQuarter)
-                                              : v (raw->liveDelay);
-    if (v (raw->sizeSync) > 0.5)
-        p.sizeMs = juce::jlimit (10.0, maxSyncedSizeMs, quartersFor (raw->sizeDiv) * msPerQuarter);
-    switch ((int) v (raw->rateMode))
-    {
-        case rateModeSync:
-            p.gridDivision = quartersFor (raw->rateDiv);
-            p.rateHz = 1000.0 / (p.gridDivision * msPerQuarter);
-            break;
-        case rateModeGrains:
-            p.grainCount = (int) v (raw->grains);
-            if (v (raw->sizeSync) < 0.5)
-                p.sizeMs = v (raw->grainSize);
-            break;
-        default:
-            break;
-    }
-    if (v (raw->scanSync) > 0.5 && ! p.slice && ! p.live)
-    {
-        const double quartersPerBar = timeSigNumerator.load (std::memory_order_relaxed) * 4.0 / juce::jmax (1, timeSigDenominator.load (std::memory_order_relaxed));
-        const double perQuarter = 60.0 / juce::jlimit (20.0, 400.0, hostBpm.load (std::memory_order_relaxed));
-        p.scanPassSeconds = silt::params::scanBars[(size_t) juce::jlimit (0, (int) std::size (silt::params::scanBars) - 1, juce::roundToInt (v (raw->scanDiv)))] * quartersPerBar * perQuarter;
-    }
-    p.scatter = grainScatter.count > 0 ? &grainScatter : nullptr;
-    return p;
-}
-
-// Audio thread. The bands use the PITCH page's scale and key; FOLLOW tunes the
-// lowest band to the last note played (until one is, TUNE).
-silt::ResonatorParams SiltProcessor::readResonatorParams (const silt::GrainParams& grain) const noexcept
-{
-    const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
-    silt::ResonatorParams p;
-    const bool follow = v (raw->resFollow) > 0.5f && followRoot >= 0;
-    // SHIFT: every note FOLLOW is ringing, moved together without leaving the key.
-    const int shiftBy = juce::roundToInt (v (raw->resShift));
-    const auto inKey = [&] (int note) { return silt::shiftInKey (note, shiftBy, grain.scale, grain.key); };
-    const int shiftedRoot = follow ? inKey (followRoot) : 0;
-    p.rootNote = follow ? (float) shiftedRoot : v (raw->resTune);
-    resonatorRootNow.store (p.rootNote, std::memory_order_relaxed);
-    p.notes = (silt::ResonatorNotes) juce::jlimit (0, 3, (int) v (raw->resNotes));
-    if (follow)
-    {
-        for (int c = 0; c < followChordSize; ++c)
-            p.chord[(size_t) c] = (float) (inKey (followRoot + juce::roundToInt (followChord[(size_t) c])) - shiftedRoot);
-        p.chordSize = followChordSize;
-    }
-    for (int c = 0; c < p.chordSize; ++c)
-        resonatorChordNow[(size_t) c].store (p.chord[(size_t) c], std::memory_order_relaxed);
-    resonatorChordSizeNow.store (p.chordSize, std::memory_order_relaxed);
-
-    // SAMPLE: the sample's pitches, moved by TUNE from its default (C2), or
-    // with FOLLOW by the note played against ROOT (as the grains are).
-    const float shift = follow ? (float) shiftedRoot - v (raw->root) : v (raw->resTune) - 48.0f;
-    const float ratio = std::pow (2.0f, shift / 12.0f);
-    p.sampleCount = juce::jlimit (0, (int) p.sampleHz.size(), samplePitchCount.load (std::memory_order_relaxed));
-    for (int i = 0; i < p.sampleCount; ++i)
-    {
-        p.sampleHz[(size_t) i] = samplePitchHz[(size_t) i].load (std::memory_order_relaxed) * ratio;
-        p.sampleLevel[(size_t) i] = samplePitchLevel[(size_t) i].load (std::memory_order_relaxed);
-    }
-    p.scale = grain.scale;
-    p.key = grain.key;
-    p.rangeOctaves = v (raw->resRange);
-    p.decaySeconds = v (raw->resDecay);
-    p.bright = v (raw->resBright) * 0.01f;
-    p.width = v (raw->resWidth) * 0.01f;
-    p.mix = v (raw->resMix) * 0.01f;
-    p.resonance = v (raw->resReso) * 0.01f;
-    p.bandCount = juce::roundToInt (v (raw->resBands));
-    p.drift = v (raw->resDrift) * 0.01f;
-    // One knob for both: more DRIFT wanders further and a little faster (0.15 to 3 Hz).
-    p.driftRate = 0.15f * std::pow (20.0f, p.drift);
-    p.spread = v (raw->resSpread) * 0.01f;
-    p.oddEven = v (raw->resOddEven) * 0.01f;
-    p.drive = v (raw->resDrive) * 0.01f;
-    p.damp = v (raw->resDamp) * 0.01f;
-    p.stretch = v (raw->resStretch) * 0.01f;
-    p.stretchCurve = v (raw->resCurve) * 0.01f;
-    p.snap = v (raw->resSnap) * 0.01f;
-    p.offset = v (raw->resOffset);
-    p.ripple = v (raw->resRipple);
-    p.rippleDepth = v (raw->resDepth) * 0.01f;
-    p.sweep = v (raw->resSweep) * 0.01f;
-    p.strike = v (raw->resStrike) * 0.01f;
-    p.hardness = v (raw->resHardness) * 0.01f;
-    p.particles = v (raw->resParticles) * 0.01f;
-    p.particleDensity = v (raw->resDensity);
-    p.top = v (raw->resTop) * 0.01f;
-    p.saturate = v (raw->resSaturate) * 0.01f;
-    return p;
-}
-
-// Audio thread. KEY tracks the last note played around middle C.
-silt::FilterParams SiltProcessor::readFilterParams() const noexcept
-{
-    const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
-    silt::FilterParams p;
-    p.slope = (int) v (raw->filterMode) == 1 ? silt::FilterSlope::db24 : silt::FilterSlope::db12;
-    p.cutoffHz = v (raw->filterCutoff);
-    p.resonance = v (raw->filterReso) * 0.01f;
-    p.morph = v (raw->filterMorph);
-    p.drive = v (raw->filterDrive) * 0.01f;
-    p.envAmount = v (raw->filterEnv) * 0.01f;
-    p.keyOctaves = lastNote >= 0 ? v (raw->filterKey) * 0.01f * (float) (lastNote - 60) / 12.0f : 0.0f;
-    p.mix = v (raw->filterMix) * 0.01f;
-    // Wide open with nothing to add, it passes the sound through untouched.
-    if (filterIsOpen (p.cutoffHz, p.resonance, p.morph, p.drive, p.envAmount, v (raw->filterKey) * 0.01f, p.mix))
-        p.slope = silt::FilterSlope::off;
-    return p;
-}
-
-// Audio thread.
-silt::ColorParams SiltProcessor::readColorParams() const noexcept
-{
-    const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
-    silt::ColorParams p;
-    p.drive = v (raw->colorDrive) * 0.01f;
-    p.tone = v (raw->colorTone) * 0.01f;
-    p.bits = v (raw->colorBits);
-    p.rateHz = v (raw->colorRate);
-    p.comp = v (raw->colorComp) * 0.01f;
-    p.noise = v (raw->colorNoise) * 0.01f;
-    p.wow = v (raw->colorWow) * 0.01f;
-    p.mix = v (raw->colorMix) * 0.01f;
-    return p;
-}
-
-// Audio thread. A synced time follows the host tempo (the last one seen while stopped).
-silt::SpaceParams SiltProcessor::readSpaceParams() const noexcept
-{
-    const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
-    const double msPerQuarter = 60000.0 / juce::jlimit (20.0, 400.0, hostBpm.load (std::memory_order_relaxed));
-    silt::SpaceParams p;
-    p.delayMs = v (raw->spaceSync) > 0.5f ? (float) juce::jlimit (10.0, silt::Space::maxDelaySeconds * 1000.0, quartersFor (raw->spaceDiv) * msPerQuarter)
-                                          : v (raw->spaceTime);
-    p.feedback = v (raw->spaceFeedback) * 0.01f;
-    p.delayLevel = v (raw->spaceDelay) * 0.01f;
-    p.pingPong = (int) v (raw->spaceMode) == 0;
-    p.size = v (raw->spaceSize) * 0.01f;
-    p.decaySeconds = v (raw->spaceDecay);
-    p.tone = v (raw->spaceTone) * 0.01f;
-    p.shimmer = v (raw->spaceShimmer) * 0.01f;
-    p.reverbLevel = v (raw->spaceReverb) * 0.01f;
-    p.freeze = v (raw->spaceFreeze) > 0.5f;
-    static constexpr float duckAmounts[] { 0.0f, 0.35f, 0.65f, 1.0f };
-    p.duck = duckAmounts[juce::jlimit (0, 3, juce::roundToInt (v (raw->spaceDuck)))];
-    return p;
 }
 
 // Audio thread. Armed: wait for the next bar line (or start now when the host
@@ -681,74 +285,38 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     if (auto* playHead = getPlayHead())
         position = playHead->getPosition();
 
+    silt::Transport transport;
     if (position)
     {
+        transport.known = true;
+        transport.playing = position->getIsPlaying();
+        transport.ppq = position->getPpqPosition().orFallback (0.0);
         if (const auto bpm = position->getBpm())
-            hostBpm.store (*bpm, std::memory_order_relaxed);
+        {
+            transport.hasBpm = true;
+            transport.bpm = *bpm;
+        }
         if (const auto sig = position->getTimeSignature())
         {
-            timeSigNumerator.store (sig->numerator, std::memory_order_relaxed);
-            timeSigDenominator.store (sig->denominator, std::memory_order_relaxed);
+            transport.hasSignature = true;
+            transport.numerator = sig->numerator;
+            transport.denominator = sig->denominator;
         }
-        hostPlaying.store (position->getIsPlaying(), std::memory_order_relaxed);
     }
 
-    // MIDI on any channel. The sustain pedal (CC 64) holds back note-offs
-    // until it's let up; all-notes-off drops what came before it in the block.
-    noteEvents.clear();
-    bool allOff = false;
-    const auto addNote = [this] (int at, int note, float velocity, bool on)
-    {
-        if (noteEvents.size() < noteEvents.capacity())
-            noteEvents.push_back ({ at, note, velocity, on });
-    };
+    // MIDI goes to the instrument as it came. Controllers also move the 8-knob
+    // controller's slots and LEARN, all but the pedal and all-notes-off.
+    midiEvents.clear();
     for (const auto event : midi)
     {
-        const auto m = event.getMessage();
-        if (m.isNoteOn())
-        {
-            sustainedKeys[(size_t) m.getNoteNumber()] = false;   // down again: no longer only held by the pedal
-            addNote (event.samplePosition, m.getNoteNumber(), m.getFloatVelocity(), true);
-        }
-        else if (m.isNoteOff())
-        {
-            if (sustainDown)
-                sustainedKeys[(size_t) m.getNoteNumber()] = true;
-            else
-                addNote (event.samplePosition, m.getNoteNumber(), m.getFloatVelocity(), false);
-        }
-        else if (m.isAllNotesOff() || m.isAllSoundOff())
-        {
-            allOff = true;
-            noteEvents.clear();   // the notes before it in this block end with it
-            sustainedKeys.fill (false);
-        }
-        else if (m.isSustainPedalOn() || m.isSustainPedalOff())
-        {
-            sustainDown = m.isSustainPedalOn();
-            if (! sustainDown)
-                for (int note = 0; note < 128; ++note)
-                    if (std::exchange (sustainedKeys[(size_t) note], false))
-                        addNote (event.samplePosition, note, 0.0f, false);
-        }
-        else if (m.isController())
-        {
-            if (m.getControllerNumber() == 1)
-                modContext.modWheel = (float) m.getControllerValue() / 127.0f;
-            handleController (m.getControllerNumber(), m.getControllerValue());
-        }
-        else if (m.isChannelPressure())
-            modContext.aftertouch = (float) m.getChannelPressureValue() / 127.0f;
-        else if (m.isAftertouch())
-            modContext.aftertouch = (float) m.getAfterTouchValue() / 127.0f;
-        else if (m.isPitchWheel())
-            modContext.pitchBend = juce::jlimit (-1.0f, 1.0f, (float) (m.getPitchWheelValue() - 8192) / 8191.0f);
-    }
-    if (allOff)
-    {
-        engine.allNotesOff();
-        heldKeys.fill (false);
-        modContext.heldNotes = 0;
+        silt::MidiEvent e;
+        e.offset = event.samplePosition;
+        for (int i = 0; i < juce::jmin (3, event.numBytes); ++i)
+            e.bytes[i] = event.data[i];
+        if (midiEvents.size() < midiEvents.capacity())
+            midiEvents.push_back (e);
+        if (event.numBytes >= 3 && (e.bytes[0] & 0xf0) == 0xb0 && e.bytes[1] != 64 && e.bytes[1] != 120 && e.bytes[1] != 123)
+            handleController (e.bytes[1], e.bytes[2]);
     }
 
     auto source = CaptureSource::none;
@@ -760,303 +328,10 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     if (! resampling)
         runCapture (capture, position ? &*position : nullptr);
 
-    // Rendered in chunks of up to 64 samples: modulation updates per chunk and
-    // every parameter is read after it.
     auto output = getBusBuffer (buffer, false, 0);
-    const bool playing = position && position->getIsPlaying();
-    const double blockPpq = position ? position->getPpqPosition().orFallback (0.0) : 0.0;
-    const double bpm = position ? position->getBpm().orFallback (hostBpm.load (std::memory_order_relaxed))
-                                : hostBpm.load (std::memory_order_relaxed);
-    const double ppqPerSample = bpm / 60.0 / currentSampleRate;
-
-    for (int start = 0; start < numSamples; start += modulationInterval)
-    {
-        const int len = juce::jmin (modulationInterval, numSamples - start);
-
-        // Events for this chunk, shifted to its start; they also feed the modulators.
-        const auto first = std::find_if (noteEvents.begin(), noteEvents.end(), [start] (const auto& e) { return e.sampleOffset >= start; });
-        const auto last = std::find_if (first, noteEvents.end(), [start, len] (const auto& e) { return e.sampleOffset >= start + len; });
-        modContext.noteStarted = false;
-        for (auto it = first; it != last; ++it)
-        {
-            it->sampleOffset -= start;
-            // Held keys as a set, so a repeated note-on for a key already down
-            // (arps, clip retriggers) can't leave the count stuck above zero.
-            auto& held = heldKeys[(size_t) juce::jlimit (0, 127, it->note)];
-            if (it->isNoteOn)
-            {
-                lastNote = it->note;
-                modContext.noteStarted = true;
-                spaceNoteStarted = true;
-                modContext.note = it->note;
-                modContext.velocity = it->velocity;
-                if (! held)
-                    ++modContext.heldNotes;
-                held = true;
-            }
-            else if (held)
-            {
-                held = false;
-                modContext.heldNotes = juce::jmax (0, modContext.heldNotes - 1);
-            }
-        }
-        // FOLLOW's chord: the held notes, lowest first. A new note changes it at once, and it's
-        // kept after release so the bands ring out. Fingers never lift quite together, so a
-        // note let go only leaves the chord if others are still down a moment later.
-        const auto followHeldNotes = [this]
-        {
-            followRoot = -1;
-            followChordSize = 0;
-            for (int note = 0; note < 128; ++note)
-                if (heldKeys[(size_t) note])
-                {
-                    if (followRoot < 0)
-                        followRoot = note;
-                    else if (followChordSize < (int) followChord.size())
-                        followChord[(size_t) followChordSize++] = (float) (note - followRoot);
-                }
-        };
-        if (first != last)
-        {
-            if (modContext.heldNotes == 0)
-                followLetGoIn = 0;
-            else if (modContext.noteStarted)
-            {
-                followLetGoIn = 0;
-                followHeldNotes();
-            }
-            else
-                followLetGoIn = (int) (followLetGoSeconds * currentSampleRate);
-        }
-        else if (followLetGoIn > 0)
-        {
-            followLetGoIn -= len;
-            if (followLetGoIn <= 0)
-                followHeldNotes();
-        }
-        float peak = 0.0f;
-        for (int ch = 0; ch < capture.getNumChannels(); ++ch)
-            peak = juce::jmax (peak, capture.getMagnitude (ch, start, len));
-
-        // Silt FX's INPUT: the grains hear the track through it, ramped across the
-        // chunk so moving it doesn't click. The dry signal doesn't go through it.
-        const float* inLeft = capture.getNumChannels() > 0 ? capture.getReadPointer (0, start) : nullptr;
-        const float* inRight = capture.getNumChannels() > 1 ? capture.getReadPointer (1, start) : inLeft;
-        if constexpr (! isInstrument)
-        {
-            const float target = juce::Decibels::decibelsToGain (raw->inputGain->load (std::memory_order_relaxed));
-            if (inLeft != nullptr && ! (juce::exactlyEqual (target, inputGainNow) && juce::exactlyEqual (target, 1.0f)))
-            {
-                const float step = (target - inputGainNow) / (float) len;
-                for (int i = 0; i < len; ++i)
-                {
-                    const float g = inputGainNow + step * (float) i;
-                    inputScaled[0][(size_t) i] = inLeft[i] * g;
-                    inputScaled[1][(size_t) i] = inRight[i] * g;
-                }
-                inLeft = inputScaled[0].data();
-                inRight = inputScaled[1].data();
-            }
-            peak *= juce::jmax (target, inputGainNow);
-            // Past 0 dB the track meets the tape rather than peaking.
-            if (inLeft == inputScaled[0].data())
-                tapeInput.process (inputScaled[0].data(), inputScaled[1].data(), len, juce::Decibels::gainToDecibels (inputGainNow, -100.0f), juce::Decibels::gainToDecibels (target, -100.0f));
-            inputGainNow = target;
-        }
-        modContext.inputPeak = peak;
-        modContext.numSamples = len;
-        modContext.sampleRate = currentSampleRate;
-        modContext.hostPlaying = playing;
-        modContext.bpm = bpm;
-        modContext.ppqEnd = blockPpq + (start + len) * ppqPerSample;
-        applyModulation();
-        voiceModulation.prepareChunk();
-
-        const float gain = juce::Decibels::decibelsToGain (raw->gain->load (std::memory_order_relaxed), -48.0f);
-        const bool monitoring = isInstrument && raw->monitor->load (std::memory_order_relaxed) > 0.5f;
-        auto grainParams = readParams();
-        const auto resonatorParams = readResonatorParams (grainParams);
-        const auto filterParams = readFilterParams();
-        const auto colorParams = readColorParams();
-        const auto spaceParams = readSpaceParams();
-
-        // Synced Rate locks grains to the beat grid while the host plays; stopped,
-        // they free-run at the synced rate.
-        if ((int) raw->rateMode->load (std::memory_order_relaxed) == rateModeSync && playing && bpm > 0.0)
-        {
-            grainParams.gridSync = true;
-            grainParams.ppqPerSample = ppqPerSample;
-            grainParams.gridPpq = blockPpq + start * ppqPerSample;
-        }
-        lastLive = grainParams.live;
-        delayForced.store (grainParams.live && grainParams.liveDelayMs < grainParams.sizeMs * std::max (1.0, std::pow (2.0, grainParams.pitchSemitones / 12.0)), std::memory_order_relaxed);
-
-        const int liveWriteBefore = engine.getLiveWritePosition();
-        engine.process (wet.getWritePointer (0), wet.getWritePointer (1), len, inLeft, inRight,
-                        noteEvents.data() + (first - noteEvents.begin()), (int) (last - first), grainParams);
-        if (grainParams.live && grainParams.selfFeed && ! lastSelfFeed)
-        {
-            // FEED just seeded the whole ring: the screen's picture of it too.
-            refreshAllLivePeaks();
-        }
-        else if (grainParams.live && ! grainParams.freeze)
-            trackLivePeaks (liveWriteBefore, len);
-        lastSelfFeed = grainParams.live && grainParams.selfFeed;
-
-        // Sample gain, ramped across the chunk so moving it doesn't click.
-        {
-            const float target = isInstrument ? juce::Decibels::decibelsToGain (sampleGain->load (std::memory_order_relaxed)) : 1.0f;
-            if (! juce::exactlyEqual (target, sampleGainNow) || ! juce::exactlyEqual (target, 1.0f))
-                for (int ch = 0; ch < 2; ++ch)
-                    wet.applyGainRamp (ch, 0, len, sampleGainNow, target);
-            sampleGainNow = target;
-        }
-
-        // MIX: the dry input joins the grains here, so every module works on both. The
-        // instrument only has a dry side in LIVE and FEED.
-        {
-            const float target = grainParams.live ? raw->mix->load (std::memory_order_relaxed) * 0.01f : 1.0f;
-            if (! juce::exactlyEqual (target, mixNow) || ! juce::exactlyEqual (target, 1.0f))
-            {
-                const int channels = capture.getNumChannels();
-                const float step = (target - mixNow) / (float) len;
-                for (int ch = 0; ch < 2; ++ch)
-                {
-                    const float* in = channels > 0 ? capture.getReadPointer (juce::jmin (ch, channels - 1), start) : nullptr;
-                    float* out = wet.getWritePointer (ch);
-                    for (int i = 0; i < len; ++i)
-                    {
-                        const float g = mixNow + step * (float) (i + 1);
-                        out[i] = out[i] * g + (in != nullptr ? in[i] * (1.0f - g) : 0.0f);
-                    }
-                }
-            }
-            mixNow = target;
-        }
-
-        // The modules, in the CHAIN order. A new order fades the sound down,
-        // switches and fades back up (about 5 ms each way), so it doesn't click.
-        const int wantedChain = juce::jlimit (0, numChainOrders - 1, (int) raw->chainOrder->load (std::memory_order_relaxed));
-        const float fadeStep = (float) len / (float) (0.005 * currentSampleRate);
-        float fadeTo = chainFade;
-        if (wantedChain != chainNow)
-            fadeTo = juce::jmax (0.0f, chainFade - fadeStep);
-        else if (chainFade < 1.0f)
-            fadeTo = juce::jmin (1.0f, chainFade + fadeStep);
-
-        const int tapped = scopeModule.load (std::memory_order_relaxed);
-        for (const int module : chainOrders()[(size_t) chainNow])
-        {
-            float* l = wet.getWritePointer (0);
-            float* r = wet.getWritePointer (1);
-            if (module == tapped)
-                writeScope (scopeIn, l, r, len);
-
-            // Its ON switch: fade towards on or off; fully off, skip it.
-            auto& level = moduleLevel[(size_t) module];
-            const float wantLevel = raw->moduleOn[(size_t) module]->load (std::memory_order_relaxed) > 0.5f ? 1.0f : 0.0f;
-            const float levelFrom = level;
-            level = wantLevel > level ? juce::jmin (wantLevel, level + fadeStep) : juce::jmax (wantLevel, level - fadeStep);
-            const bool off = levelFrom <= 0.0f && level <= 0.0f;
-            const bool fading = ! off && (levelFrom < 1.0f || level < 1.0f);
-            std::array<float, modulationInterval> dryL, dryR;
-            std::copy (l, l + len, dryL.begin());
-            std::copy (r, r + len, dryR.begin());
-            if (! off)
-            switch (module)
-            {
-                case moduleResonator: resonator.process (l, r, len, resonatorParams, engine.getStrikes(), engine.getStrikeCount()); break;
-                case moduleFilter:    filter.process (l, r, len, filterParams); break;
-                case moduleColor:     color.process (l, r, len, colorParams); break;
-                default:
-                {
-                    // Measure what SPACE adds: its output less what went in.
-                    const auto& inL = dryL;
-                    const auto& inR = dryR;
-                    space.process (l, r, len, spaceParams);
-                    if (spaceNoteStarted)
-                    {
-                        spaceTraceCount.store (0, std::memory_order_relaxed);
-                        spaceTraceFill = 0;
-                        spaceTracePeak = 0.0f;
-                        spaceNoteStarted = false;
-                    }
-                    for (int i = 0; i < len; ++i)
-                    {
-                        spaceTracePeak = std::max ({ spaceTracePeak, std::abs (l[i] - inL[(size_t) i]), std::abs (r[i] - inR[(size_t) i]) });
-                        if (++spaceTraceFill == spaceTraceStep)
-                        {
-                            const unsigned at = spaceTraceCount.load (std::memory_order_relaxed);
-                            spaceTrace[at & (spaceTraceSize - 1)].store (spaceTracePeak, std::memory_order_relaxed);
-                            spaceTraceCount.store (at + 1, std::memory_order_release);
-                            spaceTraceFill = 0;
-                            spaceTracePeak = 0.0f;
-                        }
-                    }
-                    break;
-                }
-            }
-            if (fading)
-                for (int i = 0; i < len; ++i)
-                {
-                    const float g = levelFrom + (level - levelFrom) * (float) (i + 1) / (float) len;
-                    l[i] = dryL[(size_t) i] + g * (l[i] - dryL[(size_t) i]);
-                    r[i] = dryR[(size_t) i] + g * (r[i] - dryR[(size_t) i]);
-                }
-            if (levelFrom > 0.0f && level <= 0.0f)
-            {
-                // Just switched off: clear it, so it comes back without the old tail.
-                switch (module)
-                {
-                    case moduleResonator: resonator.reset(); break;
-                    case moduleFilter:    filter.reset(); break;
-                    case moduleColor:     color.reset(); break;
-                    default:              space.reset(); break;
-                }
-            }
-            // For the chain's tile and arrow: how much it changed, and what's leaving it.
-            {
-                float changed = 0.0f, leaving = 0.0f;
-                for (int i = 0; i < len; ++i)
-                {
-                    changed = std::max ({ changed, std::abs (l[i] - dryL[(size_t) i]), std::abs (r[i] - dryR[(size_t) i]) });
-                    leaving = std::max ({ leaving, std::abs (l[i]), std::abs (r[i]) });
-                }
-                auto& change = moduleChangePeak[(size_t) module];
-                auto& out = moduleOutputPeak[(size_t) module];
-                if (changed > change.load (std::memory_order_relaxed))
-                    change.store (changed, std::memory_order_relaxed);
-                if (leaving > out.load (std::memory_order_relaxed))
-                    out.store (leaving, std::memory_order_relaxed);
-            }
-            if (module == tapped)
-            {
-                writeScope (scopeOut, l, r, len);
-                scopeWrite.store (scopeWrite.load (std::memory_order_relaxed) + (unsigned) len, std::memory_order_release);
-            }
-        }
-
-        if (! juce::exactlyEqual (fadeTo, chainFade) || chainFade < 1.0f)
-            for (int ch = 0; ch < 2; ++ch)
-                wet.applyGainRamp (ch, 0, len, chainFade, fadeTo);
-        chainFade = fadeTo;
-        if (wantedChain != chainNow && chainFade <= 0.0f)
-            chainNow = wantedChain;
-
-        // Sample by sample, reading the input before writing the output: the
-        // two can share memory.
-        const int inCh = capture.getNumChannels();
-        for (int i = 0; i < len; ++i)
-        {
-            const float inL = inCh > 0 ? capture.getSample (0, start + i) : 0.0f;
-            const float inR = inCh > 1 ? capture.getSample (1, start + i) : inL;
-            const float monitorL = monitoring ? inL : 0.0f, monitorR = monitoring ? inR : 0.0f;
-
-            output.setSample (0, start + i, safetyClip ((monitorL + wet.getSample (0, i)) * gain));
-            if (output.getNumChannels() > 1)
-                output.setSample (1, start + i, safetyClip ((monitorR + wet.getSample (1, i)) * gain));
-        }
-    }
+    instrument.process (output.getWritePointer (0), output.getNumChannels() > 1 ? output.getWritePointer (1) : nullptr, numSamples,
+                        capture.getNumChannels() > 0 ? capture.getArrayOfReadPointers() : nullptr, capture.getNumChannels(),
+                        midiEvents.data(), (int) midiEvents.size(), transport);
 
     // RESAMPLE: the capture takes what Silt just played, sample for sample with
     // the block's position, so it still starts on the bar.
@@ -1066,213 +341,29 @@ void SiltProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     // The Bench's bars: the same, kept apart from the sample and sent on.
     if (output.getNumChannels() > 0)
     {
+        const bool playing = position && position->getIsPlaying();
+        const double blockPpq = position ? position->getPpqPosition().orFallback (0.0) : 0.0;
+        const double bpm = position ? position->getBpm().orFallback (hostBpm.load (std::memory_order_relaxed))
+                                    : hostBpm.load (std::memory_order_relaxed);
         const float quarters = (float) timeSigNumerator.load (std::memory_order_relaxed) * 4.0f / (float) juce::jmax (1, timeSigDenominator.load (std::memory_order_relaxed));
         outputRecorder.process (output.getReadPointer (0), output.getReadPointer (output.getNumChannels() > 1 ? 1 : 0), numSamples, playing, blockPpq,
                                 position ? position->getPpqPositionOfLastBarStart().orFallback (0.0) : 0.0, quarters, bpm);
     }
-
-    activeGrains.store (engine.getActiveGrainCount(), std::memory_order_relaxed);
-    liveMode.store (lastLive, std::memory_order_relaxed);
-    if (const auto* ring = engine.getLiveBuffer())
-        liveWriteShare.store ((float) engine.getLiveWritePosition() / (float) ring->getNumFrames(), std::memory_order_relaxed);
-
-    samplesSinceGrainViews += numSamples;
-    if (samplesSinceGrainViews >= (int) (currentSampleRate / 60.0))
-    {
-        samplesSinceGrainViews = 0;
-        grainViewSequence.fetch_add (1, std::memory_order_acq_rel);
-        std::atomic_thread_fence (std::memory_order_release);
-        grainViewCount.store (engine.collectGrainViews (grainViews.data(), maxGrainViews), std::memory_order_relaxed);
-        std::atomic_thread_fence (std::memory_order_release);
-        grainViewSequence.fetch_add (1, std::memory_order_release);
-    }
-    for (int v = 0; v < silt::Engine::numVoices; ++v)
-    {
-        const auto& voice = engine.getVoice (v);
-        voicePlayheads[(size_t) v].store (voice.isActive() ? voice.getPlayheadPosition() : -1.0f, std::memory_order_relaxed);
-    }
-    grainsOverLimit.store (engine.getGrainsOverLimit(), std::memory_order_relaxed);
-    // A PER GRAIN modulator shows what the grains are really rolling.
-    for (int m = 0; m < numModulators; ++m)
-        if (grainSource[(size_t) m] && modEnabled[(size_t) m])
-            for (int v = 0; v < silt::Engine::numVoices; ++v)
-                if (engine.getVoice (v).isActive())
-                {
-                    modOutputs[(size_t) m].store (engine.getVoice (v).getLastRoll (m), std::memory_order_relaxed);
-                    break;
-                }
 }
 
-// Audio thread: steps the modulators over this chunk, then writes every
-// target's modulated value: its own value plus each route's amount times its
-// modulator, in the parameter's 0–1 range, clamped.
-void SiltProcessor::applyModulation() noexcept
-{
-    std::array<float, numModulators> value {};
-    for (int m = 0; m < numModulators; ++m)
-    {
-        const auto mp = readModulatorParams (m);
-        value[(size_t) m] = modulators[(size_t) m].advance (mp, modContext);   // runs muted too, so unmuting picks up in step
-        nativeBipolar[(size_t) m] = silt::Modulator::isBipolar (mp);
-        modEnabled[(size_t) m] = isModulatorEnabled (m);
-        if (! modEnabled[(size_t) m])
-            value[(size_t) m] = 0.0f;
-        globalModValues[(size_t) m] = value[(size_t) m];
-        grainSource[(size_t) m] = mp.type == silt::ModType::grain;
-        if (! grainSource[(size_t) m] || ! modEnabled[(size_t) m])   // otherwise it shows the grains' rolls, below
-            modOutputs[(size_t) m].store (value[(size_t) m], std::memory_order_relaxed);
-        modPhases[(size_t) m].store ((float) modulators[(size_t) m].getPhase(), std::memory_order_relaxed);
-        modStages[(size_t) m].store (modulators[(size_t) m].getStage(), std::memory_order_relaxed);
-        modStageMs[(size_t) m].store (modulators[(size_t) m].getStageMs(), std::memory_order_relaxed);
-        modReleaseLevel[(size_t) m].store (modulators[(size_t) m].getReleaseLevel(), std::memory_order_relaxed);
-        modReleasedFrom[(size_t) m].store (modulators[(size_t) m].getReleasedFrom(), std::memory_order_relaxed);
-    }
-
-    for (size_t t = 0; t < targets.size(); ++t)
-    {
-        const float base = targets[t].raw->load (std::memory_order_relaxed);
-        float offset = 0.0f;
-        for (int m = 0; m < numModulators; ++m)
-            if (const float amount = routeAmounts[(size_t) m * maxTargets + t].load (std::memory_order_relaxed); amount != 0.0f && modEnabled[(size_t) m] && ! grainSource[(size_t) m])
-                offset += amount * shapedFor (m, (int) t, value[(size_t) m]);
-        if (offset == 0.0f)
-        {
-            modulated[t].store (base, std::memory_order_relaxed);
-            continue;
-        }
-        auto* p = targets[t].parameter;
-        const float moved = juce::jlimit (0.0f, 1.0f, p->convertTo0to1 (base) + offset);
-        modulated[t].store (p->convertFrom0to1 (moved), std::memory_order_relaxed);
-    }
-    buildGrainScatter();
-}
-
-// Audio thread: this chunk's PER GRAIN routes, each as how far a whole roll moves its setting,
-// in the setting's own units, from where it now sits. It's a route like any other, so the same
-// depth covers the same part of the knob's travel.
-void SiltProcessor::buildGrainScatter() noexcept
-{
-    grainScatter.count = 0;
-    for (int m = 0; m < numModulators; ++m)
-    {
-        if (! grainSource[(size_t) m] || ! modEnabled[(size_t) m])
-            continue;
-        const auto spread = (silt::GrainScatter::Spread) juce::jlimit (0, 2, (int) modulatorRaw[(size_t) m].grainSpread->load (std::memory_order_relaxed));
-        for (const auto& target : scatterTargets)
-        {
-            const float amount = routeAmounts[(size_t) m * maxTargets + (size_t) target.target].load (std::memory_order_relaxed);
-            if (amount == 0.0f || grainScatter.count >= silt::GrainScatter::maxItems)
-                continue;
-            auto* p = targets[(size_t) target.target].parameter;
-            const float now = modulated[(size_t) target.target].load (std::memory_order_relaxed);
-            const float now01 = p->convertTo0to1 (now);
-            const float depth = std::abs (amount);
-            const double above = (double) p->convertFrom0to1 (juce::jmin (1.0f, now01 + depth)) - now;
-            const double below = (double) now - p->convertFrom0to1 (juce::jmax (0.0f, now01 - depth));
-            auto& item = grainScatter.items[(size_t) grainScatter.count++];
-            item.field = target.field;
-            item.up = (amount >= 0.0f ? above : -below) * target.scale;
-            item.down = (amount >= 0.0f ? below : -above) * target.scale;
-            item.low = p->convertFrom0to1 (0.0f) * target.scale;
-            item.high = p->convertFrom0to1 (1.0f) * target.scale;
-            item.spread = spread;
-            item.oneWay = ! routeIsBipolar (m, target.target);
-            item.source = m;
-        }
-    }
-}
-
-bool SiltProcessor::routeCanWork (int modulator, int target) const noexcept
-{
-    return readModulatorParams (modulator).type != silt::ModType::grain
-        || std::any_of (scatterTargets.begin(), scatterTargets.end(), [target] (const ScatterTarget& s) { return s.target == target; });
-}
-
-silt::ModulatorParams SiltProcessor::readModulatorParams (int m) const noexcept
-{
-    const auto& r = modulatorRaw[(size_t) m];
-    const auto v = [] (const std::atomic<float>* a) { return a->load (std::memory_order_relaxed); };
-    silt::ModulatorParams p;
-    p.type = (silt::ModType) juce::jlimit (0, 6, (int) v (r.type));
-    p.rateHz = v (r.rate);
-    p.sync = v (r.sync) > 0.5f;
-    p.reverse = v (r.rev) > 0.5f;
-    p.syncQuarters = quartersFor (r.div);
-    p.shape = v (r.shape);
-    p.phase = v (r.phase) / 360.0f;
-    p.retrigger = v (r.retrig) > 0.5f;
-    p.smooth = v (r.smooth) * 0.01f;
-    p.jitter = v (r.jitter) * 0.01f;
-    p.attackMs = v (r.attack);
-    p.decayMs = v (r.decay);
-    p.sustain = v (r.sustain) * 0.01f;
-    p.releaseMs = v (r.release);
-    p.repeat = v (r.repeat) > 0.5f;
-    p.followAttackMs = v (r.followAttack);
-    p.followReleaseMs = v (r.followRelease);
-    p.gainDb = v (r.gain);
-    p.source = (silt::MidiSource) juce::jlimit (0, 4, (int) v (r.source));
-    p.macro = v (r.macro) * 0.01f;
-    p.symmetry = v (r.sym) * 0.01f;
-    p.curve = v (r.curve) * 0.01f;
-    return p;
-}
+bool SiltProcessor::routeCanWork (int modulator, int target) const noexcept { return instrument.routeCanWork (modulator, target); }
+silt::ModulatorParams SiltProcessor::readModulatorParams (int m) const noexcept { return instrument.readModulatorParams (m); }
 
 int SiltProcessor::modulationTarget (const juce::String& id) const
 {
-    const auto it = targetIndex.find (id);
-    return it == targetIndex.end() ? -1 : it->second;
+    return instrument.targetFor (silt::params::find (id.toStdString()));
 }
 
-float SiltProcessor::routeAmount (int modulator, int target) const noexcept
-{
-    return routeAmounts[(size_t) modulator * maxTargets + (size_t) target].load (std::memory_order_relaxed);
-}
-
-void SiltProcessor::setRouteAmount (int modulator, int target, float amount) noexcept
-{
-    if (modulator >= 0 && modulator < numModulators && target >= 0 && target < (int) targets.size())
-    {
-        routeAmounts[(size_t) modulator * maxTargets + (size_t) target].store (juce::jlimit (-1.0f, 1.0f, amount), std::memory_order_relaxed);
-    }
-}
-
-void SiltProcessor::setRoutePolarity (int modulator, int target, int polarity) noexcept
-{
-    if (modulator >= 0 && modulator < numModulators && target >= 0 && target < (int) targets.size())
-        routePolarity[(size_t) modulator * maxTargets + (size_t) target].store (juce::jlimit (0, 2, polarity), std::memory_order_relaxed);
-}
-
-int SiltProcessor::routePolarityOf (int modulator, int target) const noexcept
-{
-    return routePolarity[(size_t) modulator * maxTargets + (size_t) target].load (std::memory_order_relaxed);
-}
-
-// Bipolar: swings both ways round the knob; unipolar: one way. A route follows
-// its source (WAVE and RANDOM bipolar, ENVELOPE and the rest unipolar) unless
-// it's been set.
-bool SiltProcessor::routeIsBipolar (int modulator, int target) const noexcept
-{
-    switch (routePolarityOf (modulator, target))
-    {
-        case unipolar: return false;
-        case bipolar:  return true;
-        default:       return silt::Modulator::isBipolar (readModulatorParams (modulator));
-    }
-}
-
-// Audio thread: a modulator's value as this route takes it (the source's
-// native range rescaled when the route's polarity differs).
-float SiltProcessor::shapedFor (int m, int t, float v) const noexcept
-{
-    const int polarity = routePolarity[(size_t) m * maxTargets + (size_t) t].load (std::memory_order_relaxed);
-    const bool native = nativeBipolar[(size_t) m];
-    if (polarity == unipolar && native)
-        return 0.5f * (v + 1.0f);
-    if (polarity == bipolar && ! native)
-        return 2.0f * v - 1.0f;
-    return v;
-}
+float SiltProcessor::routeAmount (int modulator, int target) const noexcept { return instrument.routeAmount (modulator, target); }
+void SiltProcessor::setRouteAmount (int modulator, int target, float amount) noexcept { instrument.setRouteAmount (modulator, target, amount); }
+void SiltProcessor::setRoutePolarity (int modulator, int target, int polarity) noexcept { instrument.setRoutePolarity (modulator, target, polarity); }
+int SiltProcessor::routePolarityOf (int modulator, int target) const noexcept { return instrument.routePolarityOf (modulator, target); }
+bool SiltProcessor::routeIsBipolar (int modulator, int target) const noexcept { return instrument.routeIsBipolar (modulator, target); }
 
 // "modulator:parameter:amount[:b|u]" separated by ';' (modulator 0–3; the polarity
 // only when it's been set).
@@ -1282,7 +373,7 @@ juce::String SiltProcessor::routesToString() const
     for (const auto& r : allRoutes())
     {
         const int polarity = routePolarityOf (r.modulator, r.target);
-        routes.add (juce::String (r.modulator) + ":" + targets[(size_t) r.target].parameter->getParameterID() + ":" + juce::String (r.amount, 4)
+        routes.add (juce::String (r.modulator) + ":" + targetParameters[(size_t) r.target]->getParameterID() + ":" + juce::String (r.amount, 4)
                     + (polarity == bipolar ? ":b" : polarity == unipolar ? ":u" : ""));
     }
     return routes.joinIntoString (";");
@@ -1290,10 +381,7 @@ juce::String SiltProcessor::routesToString() const
 
 void SiltProcessor::routesFromString (const juce::String& text)
 {
-    for (auto& amount : routeAmounts)
-        amount.store (0.0f);
-    for (auto& polarity : routePolarity)
-        polarity.store (natural);
+    instrument.clearAllRoutes();
     for (const auto& route : juce::StringArray::fromTokens (text, ";", ""))
     {
         const auto parts = juce::StringArray::fromTokens (route, ":", "");
@@ -1338,13 +426,13 @@ std::vector<SiltProcessor::Route> SiltProcessor::allRoutes() const
 
 bool SiltProcessor::isSteppedTarget (int target) const
 {
-    return dynamic_cast<juce::AudioParameterInt*> (targets[(size_t) target].parameter) != nullptr
-        || dynamic_cast<juce::AudioParameterChoice*> (targets[(size_t) target].parameter) != nullptr;   // the divisions
+    return dynamic_cast<juce::AudioParameterInt*> (targetParameters[(size_t) target]) != nullptr
+        || dynamic_cast<juce::AudioParameterChoice*> (targetParameters[(size_t) target]) != nullptr;   // the divisions
 }
 
 bool SiltProcessor::isModulatorEnabled (int modulator) const noexcept
 {
-    return modulatorRaw[(size_t) modulator].enable->load (std::memory_order_relaxed) > 0.5f;
+    return instrument.isModulatorEnabled (modulator);
 }
 
 // What a route moves its parameter over, in the parameter's own units (both
@@ -1353,7 +441,7 @@ bool SiltProcessor::isModulatorEnabled (int modulator) const noexcept
 juce::String SiltProcessor::depthSpan (int modulator, int target) const
 {
     const float amount = routeAmount (modulator, target);
-    auto& p = *targets[(size_t) target].parameter;
+    auto& p = *targetParameters[(size_t) target];
     const float base = p.getValue();
     const bool bipolar = routeIsBipolar (modulator, target);
     const float lo = juce::jlimit (0.0f, 1.0f, base + (bipolar ? -std::abs (amount) : juce::jmin (0.0f, amount)));
@@ -1659,9 +747,7 @@ bool SiltProcessor::undoing (const std::function<bool()>& step)
 // gesture's start: a depth dragged through 0 keeps its polarity.
 void SiltProcessor::beginRouteGesture()
 {
-    for (size_t i = 0; i < routeAmounts.size(); ++i)
-        if (juce::exactlyEqual (routeAmounts[i].load (std::memory_order_relaxed), 0.0f))
-            routePolarity[i].store (natural, std::memory_order_relaxed);
+    instrument.naturalWhereUnrouted();
     routeUndo.beginNewTransaction ("MODULATION");
 }
 
@@ -1674,158 +760,9 @@ void SiltProcessor::editRoutes (const std::function<void()>& edit)
         routeUndo.perform (new RoutesChange (*this, std::move (before), std::move (after)));
 }
 
-float SiltProcessor::modulatedValue01 (int target) const noexcept
-{
-    return targets[(size_t) target].parameter->convertTo0to1 (modulated[(size_t) target].load (std::memory_order_relaxed));
-}
-
-// --- per-voice modulation -----------------------------------------------------------
-
-SiltProcessor::VoiceModulation::VoiceModulation (SiltProcessor& p) : owner (p) {}
-
-void SiltProcessor::VoiceModulation::reset() noexcept
-{
-    for (int v = 0; v < silt::Engine::numVoices; ++v)
-    {
-        for (int m = 0; m < numModulators; ++m)
-            mods[(size_t) v][(size_t) m].reset (0x7019e + (std::uint64_t) (v * numModulators + m));
-        context[(size_t) v] = {};
-        held[(size_t) v] = false;
-        started[(size_t) v] = false;
-    }
-    active = false;
-}
-
-// Per chunk: which modulators run per voice and whether any reaches a grain
-// parameter; then each sounding voice's modulators step and its parameters
-// are worked out once (the engine copies them per stretch).
-void SiltProcessor::VoiceModulation::prepareChunk() noexcept
-{
-    active = false;
-    for (int m = 0; m < numModulators; ++m)
-    {
-        perVoice[(size_t) m] = owner.isModulatorEnabled (m) && owner.modulatorRaw[(size_t) m].voice->load (std::memory_order_relaxed) > 0.5f && ! owner.grainSource[(size_t) m];
-        if (perVoice[(size_t) m])
-            for (const int t : owner.voiceTargets)
-                active = active || owner.routeAmount (m, t) != 0.0f;
-    }
-    for (auto& shown : owner.voiceShown)
-        shown.store (false, std::memory_order_relaxed);
-    if (! active)
-        return;
-
-    for (const int t : owner.voiceTargets)
-        base01[(size_t) t] = owner.targets[(size_t) t].parameter->convertTo0to1 (owner.targets[(size_t) t].raw->load (std::memory_order_relaxed));
-
-    for (int v = 0; v < silt::Engine::numVoices; ++v)
-    {
-        if (! owner.engine.getVoice (v).isActive() && ! held[(size_t) v])
-            continue;
-        step (v, owner.modContext.numSamples);
-        compute (v);
-    }
-}
-
-// Steps one voice's per-voice modulators: the shared context (clock, CCs,
-// input level) with this voice's own note.
-void SiltProcessor::VoiceModulation::step (int v, int numSamples) noexcept
-{
-    auto& c = context[(size_t) v];
-    const auto& shared = owner.modContext;
-    c.numSamples = numSamples;
-    c.sampleRate = shared.sampleRate;
-    c.hostPlaying = shared.hostPlaying;
-    c.ppqEnd = shared.ppqEnd;
-    c.bpm = shared.bpm;
-    c.modWheel = shared.modWheel;
-    c.aftertouch = shared.aftertouch;
-    c.pitchBend = shared.pitchBend;
-    c.inputPeak = shared.inputPeak;
-    c.heldNotes = held[(size_t) v] ? 1 : 0;
-    c.noteStarted = started[(size_t) v];
-    started[(size_t) v] = false;
-    for (int m = 0; m < numModulators; ++m)
-        if (perVoice[(size_t) m])
-        {
-            auto own = owner.readModulatorParams (m);
-            own.voiceOffset = owner.modulatorRaw[(size_t) m].spread->load (std::memory_order_relaxed) * 0.01f * spreadOffset[(size_t) v];
-            values[(size_t) v][(size_t) m] = mods[(size_t) v][(size_t) m].advance (own, c);
-        }
-}
-
-// One voice's grain parameters: grain targets from this voice's modulators
-// (shared ones for modulators that aren't per voice), the rest as shared.
-void SiltProcessor::VoiceModulation::compute (int v) noexcept
-{
-    for (int t = 0; t < owner.numTargets(); ++t)
-        scratch[(size_t) t] = owner.modulated[(size_t) t].load (std::memory_order_relaxed);
-    for (const int t : owner.voiceTargets)
-    {
-        float offset = 0.0f;
-        for (int m = 0; m < numModulators; ++m)
-            if (const float amount = owner.routeAmount (m, t); amount != 0.0f && owner.modEnabled[(size_t) m] && ! owner.grainSource[(size_t) m])
-                offset += amount * owner.shapedFor (m, t, perVoice[(size_t) m] ? values[(size_t) v][(size_t) m] : owner.globalModValues[(size_t) m]);
-        const float moved = juce::jlimit (0.0f, 1.0f, base01[(size_t) t] + offset);
-        scratch[(size_t) t] = owner.targets[(size_t) t].parameter->convertFrom0to1 (moved);
-        owner.voiceModulated01[(size_t) v][(size_t) t].store (moved, std::memory_order_relaxed);
-    }
-    owner.voiceShown[(size_t) v].store (true, std::memory_order_relaxed);
-    params[(size_t) v] = owner.readParams (scratch.data());
-}
-
-void SiltProcessor::VoiceModulation::noteStarted (int v, int note, float velocity) noexcept
-{
-    // SPREAD: the notes of a phrase (from the first after all were let go)
-    // step round the cycle by the golden ratio, so any number stay apart.
-    if (std::none_of (held.begin(), held.end(), [] (bool h) { return h; }))
-        notesInPhrase = 0;
-    spreadOffset[(size_t) v] = (float) std::fmod (0.6180339887 * notesInPhrase++, 1.0);
-
-    // A new note (or a stolen voice) starts its modulators afresh.
-    for (int m = 0; m < numModulators; ++m)
-        mods[(size_t) v][(size_t) m].reset (0x7019e + (std::uint64_t) (v * numModulators + m) + (std::uint64_t) note * 977u);
-    auto& c = context[(size_t) v];
-    c.note = note;
-    c.velocity = velocity;
-    held[(size_t) v] = true;
-    started[(size_t) v] = true;
-    if (active)
-    {
-        step (v, 0);
-        compute (v);
-    }
-}
-
-void SiltProcessor::VoiceModulation::noteReleased (int v) noexcept
-{
-    held[(size_t) v] = false;
-}
-
-// The engine's stretch settings (grid, pattern, live position) stay; the
-// parameters are this voice's.
-void SiltProcessor::VoiceModulation::apply (int v, silt::GrainParams& out) noexcept
-{
-    auto own = params[(size_t) v];
-    own.gridSync = out.gridSync;
-    own.ppqPerSample = out.ppqPerSample;
-    own.gridPpq = out.gridPpq;
-    own.liveMargin = out.liveMargin;
-    own.liveNow = out.liveNow;
-    own.pattern = out.pattern;
-    own.scatter = out.scatter;
-    own.patternSteps = juce::jlimit (1, 16, own.patternSteps);
-    out = own;
-}
-
-bool SiltProcessor::isVoiceTarget (int target) const noexcept
-{
-    return std::find (voiceTargets.begin(), voiceTargets.end(), target) != voiceTargets.end();
-}
-
-bool SiltProcessor::isModulatorPerVoice (int m) const noexcept
-{
-    return modulatorRaw[(size_t) m].voice->load (std::memory_order_relaxed) > 0.5f && readModulatorParams (m).type != silt::ModType::grain;
-}
+float SiltProcessor::modulatedValue01 (int target) const noexcept { return instrument.modulatedValue01 (target); }
+bool SiltProcessor::isVoiceTarget (int target) const noexcept { return instrument.isVoiceTarget (target); }
+bool SiltProcessor::isModulatorPerVoice (int m) const noexcept { return instrument.isModulatorPerVoice (m); }
 
 // --- presets ---------------------------------------------------------------------------
 
@@ -2193,7 +1130,7 @@ void SiltProcessor::armCapture()
     if (captureState.load() != CaptureState::idle)
         return;
 
-    const int bars = silt::params::captureBarCounts[juce::jlimit (0, 3, (int) raw->captureBars->load())];
+    const int bars = silt::params::captureBarCounts[juce::jlimit (0, 3, (int) instrument.value (silt::params::captureBars))];
     const double barQuarters = timeSigNumerator.load() * 4.0 / juce::jmax (1, timeSigDenominator.load());
     const double bpm = juce::jlimit (20.0, 400.0, hostBpm.load());
     const double seconds = juce::jmin (maxCaptureSeconds, bars * barQuarters * 60.0 / bpm);
@@ -2232,15 +1169,14 @@ std::unique_ptr<juce::AudioBuffer<float>> SiltProcessor::decode (juce::AudioForm
 
 std::array<int, SiltProcessor::numModules> SiltProcessor::chainOrder (int index)
 {
-    return chainOrders()[(size_t) juce::jlimit (0, numChainOrders - 1, index)];
+    return silt::Instrument::chainOrder (index);
 }
 
 int SiltProcessor::chainOrderIndex (const std::array<int, numModules>& order)
 {
-    const auto& all = chainOrders();
-    for (size_t i = 0; i < all.size(); ++i)
-        if (all[i] == order)
-            return (int) i;
+    for (int i = 0; i < numChainOrders; ++i)
+        if (silt::Instrument::chainOrder (i) == order)
+            return i;
     return 0;
 }
 
@@ -2264,25 +1200,9 @@ juce::String SiltProcessor::chainOrderName (int index)
     return letters.joinIntoString (">");
 }
 
-// Audio thread: mono, into the scope's ring at the current write count.
-void SiltProcessor::writeScope (std::array<std::atomic<float>, scopeSize>& ring, const float* l, const float* r, int count) noexcept
-{
-    const unsigned at = scopeWrite.load (std::memory_order_relaxed);
-    for (int i = 0; i < count; ++i)
-        ring[(at + (unsigned) i) & (scopeSize - 1)].store (0.5f * (l[i] + r[i]), std::memory_order_relaxed);
-}
-
 unsigned SiltProcessor::readScope (float* in, float* out, int count) const
 {
-    count = juce::jmin (count, scopeSize / 2);
-    const unsigned end = scopeWrite.load (std::memory_order_acquire);
-    for (int i = 0; i < count; ++i)
-    {
-        const auto at = (end - (unsigned) (count - i)) & (scopeSize - 1);
-        in[i] = scopeIn[at].load (std::memory_order_relaxed);
-        out[i] = scopeOut[at].load (std::memory_order_relaxed);
-    }
-    return end;
+    return instrument.readScope (in, out, count);
 }
 
 void SiltProcessor::editSample (SampleEdit edit)
@@ -2594,76 +1514,14 @@ void SiltProcessor::installBuffer (std::unique_ptr<silt::SampleBuffer> buffer, c
     ++sampleGeneration;
 }
 
-// Audio thread, once when FEED seeds the ring: every column's peak, a column
-// at a time (vector min/max), not sample by sample.
-void SiltProcessor::refreshAllLivePeaks() noexcept
-{
-    const auto* ring = engine.getLiveBuffer();
-    if (ring == nullptr)
-        return;
-    const int frames = ring->getNumFrames();
-    for (int c = 0; c < liveColumns; ++c)
-    {
-        const int from = (int) ((juce::int64) c * frames / liveColumns);
-        const int to = juce::jmax (from + 1, (int) ((juce::int64) (c + 1) * frames / liveColumns));
-        float peak = 0.0f;
-        for (int ch = 0; ch < 2; ++ch)
-        {
-            const auto range = juce::FloatVectorOperations::findMinAndMax (ring->getReadPointer (ch) + from, to - from);
-            peak = juce::jmax (peak, -range.getStart(), range.getEnd());
-        }
-        livePeaks[(size_t) c].store (peak, std::memory_order_relaxed);
-    }
-    liveColumn = -1;
-}
-
-// Audio thread: the peak of each 1/liveColumns of the ring, as it's written,
-// for the screen's scrolling view of the live input.
-void SiltProcessor::trackLivePeaks (int writeStart, int count) noexcept
-{
-    const auto* ring = engine.getLiveBuffer();
-    if (ring == nullptr)
-        return;
-    const int frames = ring->getNumFrames();
-    const float* l = ring->getReadPointer (0);
-    const float* r = ring->getReadPointer (1);
-    for (int i = 0; i < count; ++i)
-    {
-        const int pos = (writeStart + i) % frames;
-        const int column = (int) ((juce::int64) pos * liveColumns / frames);
-        if (column != liveColumn)
-        {
-            if (liveColumn >= 0)
-                livePeaks[(size_t) liveColumn].store (liveColumnPeak, std::memory_order_relaxed);
-            liveColumn = column;
-            liveColumnPeak = 0.0f;
-        }
-        liveColumnPeak = juce::jmax (liveColumnPeak, std::abs (l[pos]), std::abs (r[pos]));
-    }
-}
-
 std::array<float, SiltProcessor::liveColumns> SiltProcessor::getLivePeaks() const
 {
-    std::array<float, liveColumns> out {};
-    for (size_t i = 0; i < out.size(); ++i)
-        out[i] = livePeaks[i].load (std::memory_order_relaxed);
-    return out;
+    return instrument.getLivePeaks();
 }
 
 int SiltProcessor::readGrainViews (std::array<silt::GrainView, maxGrainViews>& out) const
 {
-    for (int attempt = 0; attempt < 4; ++attempt)
-    {
-        const auto before = grainViewSequence.load (std::memory_order_acquire);
-        if ((before & 1u) != 0)
-            continue;
-        const int n = juce::jlimit (0, maxGrainViews, grainViewCount.load (std::memory_order_relaxed));
-        std::copy (grainViews.begin(), grainViews.begin() + n, out.begin());
-        std::atomic_thread_fence (std::memory_order_acquire);
-        if (grainViewSequence.load (std::memory_order_relaxed) == before)
-            return n;
-    }
-    return 0;   // the audio thread kept updating; the next frame will catch it
+    return instrument.readGrainViews (out);
 }
 
 // The region as it will play (snapped), as shares of the sample, for the screen.
@@ -2689,11 +1547,11 @@ std::vector<float> SiltProcessor::sliceMarks() const
 {
     if (playMode() != modeSlice)
         return {};
-    if (juce::roundToInt (raw->sliceMode->load()) == 2 && sliceCountManual.load() > 0)
+    if (juce::roundToInt (instrument.value (silt::params::sliceMode)) == 2 && sliceCountManual.load() > 0)
         return manualSlices();
     const auto [start, length] = shownRegion();
     std::vector<float> marks;
-    if (juce::roundToInt (raw->sliceMode->load()) == 1)
+    if (juce::roundToInt (instrument.value (silt::params::sliceMode)) == 1)
     {
         const juce::ScopedLock sl (sampleLock);
         const int frames = sampleCopy.getNumSamples();
@@ -2709,7 +1567,7 @@ std::vector<float> SiltProcessor::sliceMarks() const
         }
         return marks;
     }
-    const int count = juce::jlimit (1, 128, juce::roundToInt (raw->sliceCount->load()));
+    const int count = juce::jlimit (1, 128, juce::roundToInt (instrument.value (silt::params::sliceCount)));
     for (int i = 0; i < count; ++i)
         marks.push_back (start + length * (float) i / (float) count);
     return marks;
@@ -2797,7 +1655,7 @@ void SiltProcessor::endSliceEdit()
 // From EQUAL or AT HITS: their slices become MANUAL's, then the edit applies.
 void SiltProcessor::makeSlicesManual()
 {
-    if (juce::roundToInt (raw->sliceMode->load()) == 2 && sliceCountManual.load() > 0)
+    if (juce::roundToInt (instrument.value (silt::params::sliceMode)) == 2 && sliceCountManual.load() > 0)
         return;
     setManualSlices (sliceMarks());
     if (auto* mode = params.getParameter ("sliceMode"))

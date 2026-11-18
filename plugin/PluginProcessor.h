@@ -8,6 +8,7 @@
 #include "kit/Bench.h"
 
 #include <silt/Engine.h>
+#include <silt/Instrument.h>
 #include <silt/Color.h>
 #include <silt/Filter.h>
 #include <kit/TapeInput.h>
@@ -33,6 +34,11 @@ class SiltProcessor final : public juce::AudioProcessor,
 public:
     static constexpr bool isInstrument = JucePlugin_IsSynth != 0;
     static constexpr double maxCaptureSeconds = 30.0;
+
+    // The sound itself: everything processBlock used to do, JUCE-free and shared
+    // with the browser version (core/include/silt/Instrument.h). Its displays'
+    // atomics are named below as they always were, for the editor.
+    silt::Instrument instrument;
 
     enum class CaptureSource { none, mainInput, sidechain };
     enum class CaptureState : int { idle, armed, recording, done, cancelRequested, cancelled };
@@ -121,7 +127,7 @@ public:
     // Whether a route from this modulator would do anything: PER GRAIN only reaches what a grain
     // takes up as it starts.
     bool routeCanWork (int modulator, int target) const noexcept;
-    std::atomic<std::uint64_t> grainsOverLimit { 0 };       // ever; rising: grains are being cut short for want of room
+    std::atomic<std::uint64_t>& grainsOverLimit = instrument.grainsOverLimit;   // ever; rising: grains are being cut short for want of room
     // RESET: a page's controls back to their defaults (both halves of RESONATOR;
     // on MOD, the modulator shown), or every page's, as one undo step. Routes,
     // the sample and ROOT stay. Returns how many controls changed.
@@ -130,9 +136,9 @@ public:
     juce::StringArray pageParameters (int page, bool everyModulator = false) const;
     std::vector<const silt::layout::Entry*> randomisable (int page) const;
     std::atomic<float> randomAmount { 0.5f };
-    mutable std::atomic<float> resonatorRootNow { 48.0f };   // the note the bank rings from, for the picture
-    mutable std::array<std::atomic<float>, 8> resonatorChordNow {};   // and the chord over it
-    mutable std::atomic<int> resonatorChordSizeNow { 0 };
+    std::atomic<float>& resonatorRootNow = instrument.resonatorRootNow;   // the note the bank rings from, for the picture
+    std::array<std::atomic<float>, 8>& resonatorChordNow = instrument.resonatorChordNow;   // and the chord over it
+    std::atomic<int>& resonatorChordSizeNow = instrument.resonatorChordSizeNow;
     std::atomic<int> randomCharacter { 0 };   // what RANDOM keeps to: 0 anything, 1 tonal, 2 rhythmic, 3 texture
     bool isRandomExcluded (const juce::String& id) const { return randomExcluded.contains (id); }
     void setRandomExcluded (const juce::String& id, bool excluded);
@@ -141,7 +147,8 @@ public:
     // the 24 orders ("chainOrder"). chainOrder gives the modules by position.
     enum Module { moduleResonator, moduleFilter, moduleColor, moduleSpace, numModules };
     // Per module, the loudest since last taken: how much it changed the sound, and what left it.
-    std::array<std::atomic<float>, numModules> moduleChangePeak {}, moduleOutputPeak {};
+    std::array<std::atomic<float>, numModules>& moduleChangePeak = instrument.moduleChangePeak;
+    std::array<std::atomic<float>, numModules>& moduleOutputPeak = instrument.moduleOutputPeak;
     static constexpr int numChainOrders = 24;
     static std::array<int, numModules> chainOrder (int index);
     static int chainOrderIndex (const std::array<int, numModules>&);
@@ -150,10 +157,7 @@ public:
     // way down) with nothing moving it, or MIX at 0.
     static bool filterIsOpen (float cutoffHz, float resonance, float morph, float drive, float env, float key, float mix)
     {
-        if (mix <= 0.0f)
-            return true;
-        const bool still = resonance <= 0.0f && drive <= 0.0f && std::abs (env) < 0.001f && std::abs (key) < 0.001f;
-        return still && ((morph <= 0.001f && cutoffHz >= 19900.0f) || (morph >= 1.999f && cutoffHz <= 21.0f));
+        return silt::Instrument::filterIsOpen (cutoffHz, resonance, morph, drive, env, key, mix);
     }
     static juce::String moduleOnId (int module);       // its ON switch: "resOn", "filterOn", "colorOn", "spaceOn"
     static juce::String chainOrderName (int index);   // "R>F>C>S"
@@ -162,19 +166,20 @@ public:
     // the sound going through), one peak per 64 samples, counted from the
     // latest note-on. spaceTraceCount keeps counting; the ring holds the last
     // spaceTraceSize values.
-    static constexpr int spaceTraceSize = 8192, spaceTraceStep = 64;
-    std::atomic<unsigned> spaceTraceCount { 0 };
+    static constexpr int spaceTraceSize = silt::Instrument::spaceTraceSize, spaceTraceStep = silt::Instrument::spaceTraceStep;
+    std::atomic<unsigned>& spaceTraceCount = instrument.spaceTraceCount;
 
     // The sample's modes (Hz, low to high) and their strengths, for the resonator's NOTES: SAMPLE.
-    std::array<std::atomic<float>, 128> samplePitchHz {}, samplePitchLevel {};
-    std::atomic<int> samplePitchCount { 0 };
-    float spaceTraceAt (unsigned index) const noexcept { return spaceTrace[index & (spaceTraceSize - 1)].load (std::memory_order_relaxed); }
+    std::array<std::atomic<float>, 128>& samplePitchHz = instrument.samplePitchHz;
+    std::array<std::atomic<float>, 128>& samplePitchLevel = instrument.samplePitchLevel;
+    std::atomic<int>& samplePitchCount = instrument.samplePitchCount;
+    float spaceTraceAt (unsigned index) const noexcept { return instrument.spaceTraceAt (index); }
 
     // The live scope: the sound going into one module and coming out of it,
     // mono, as rendered. The editor picks the module (−1: none) and reads the
     // latest samples; the return value changes whenever new ones arrive.
-    static constexpr int scopeSize = 8192;
-    std::atomic<int> scopeModule { -1 };
+    static constexpr int scopeSize = silt::Instrument::scopeSize;
+    std::atomic<int>& scopeModule = instrument.scopeModule;
     unsigned readScope (float* in, float* out, int count) const;
 
     // Factory samples, built in: LOAD lists them, and a new instance opens
@@ -221,15 +226,15 @@ public:
     // Sounding grains for the screen. The audio thread publishes a snapshot
     // about 60 times a second; readGrainViews copies the latest (lock-free,
     // retrying if it lands mid-update) and returns how many.
-    static constexpr int maxGrainViews = 1024;
+    static constexpr int maxGrainViews = silt::Instrument::maxGrainViews;
     int readGrainViews (std::array<silt::GrainView, maxGrainViews>& out) const;
 
     // Live mode, for the screen: peaks of the ring by position, and where the
     // write head is (a share of the ring).
-    static constexpr int liveColumns = 1024;
+    static constexpr int liveColumns = silt::Instrument::liveColumns;
     std::array<float, liveColumns> getLivePeaks() const;
-    std::atomic<bool> liveMode { false };
-    std::atomic<float> liveWriteShare { 0.0f };
+    std::atomic<bool>& liveMode = instrument.liveMode;
+    std::atomic<float>& liveWriteShare = instrument.liveWriteShare;
     int getSampleGeneration() const noexcept { return sampleGeneration.load(); }
 
     juce::AudioProcessorValueTreeState params;
@@ -244,8 +249,8 @@ public:
     // MACRO knobs aren't: a route there would jump between modes.
     static constexpr int numModulators = 4, maxTargets = 160, modulationInterval = 64;
     int modulationTarget (const juce::String& parameterId) const;   // −1: not a modulation target
-    int numTargets() const noexcept { return (int) targets.size(); }
-    juce::RangedAudioParameter& targetParameter (int target) const { return *targets[(size_t) target].parameter; }
+    int numTargets() const noexcept { return instrument.numTargets(); }
+    juce::RangedAudioParameter& targetParameter (int target) const { return *targetParameters[(size_t) target]; }
     bool isSteppedTarget (int target) const;                         // an integer parameter
     float routeAmount (int modulator, int target) const noexcept;
     void setRouteAmount (int modulator, int target, float amount) noexcept;
@@ -286,14 +291,14 @@ public:
     bool isVoiceTarget (int target) const noexcept;                 // a grain parameter: per-voice modulation reaches it
     // Per voice, for the rings: whether a voice is sounding with per-voice
     // modulation, and where its modulation has each grain target (0–1).
-    std::array<std::atomic<bool>, silt::Engine::numVoices> voiceShown {};
-    std::array<std::array<std::atomic<float>, maxTargets>, silt::Engine::numVoices> voiceModulated01 {};
-    std::array<std::atomic<float>, numModulators> modOutputs {};    // each modulator's latest value (0 if muted)
-    std::array<std::atomic<float>, numModulators> modPhases {};     // a WAVE's place in its cycle, for display
-    std::array<std::atomic<int>, numModulators> modStages {};       // an ENVELOPE's stage, for display
-    std::array<std::atomic<float>, numModulators> modStageMs {};    // its time in that stage
-    std::array<std::atomic<float>, numModulators> modReleaseLevel {};
-    std::array<std::atomic<int>, numModulators> modReleasedFrom {};   // the stage a release began in
+    std::array<std::atomic<bool>, silt::Engine::numVoices>& voiceShown = instrument.voiceShown;
+    std::array<std::array<std::atomic<float>, maxTargets>, silt::Engine::numVoices>& voiceModulated01 = instrument.voiceModulated01;
+    std::array<std::atomic<float>, numModulators>& modOutputs = instrument.modOutputs;       // each modulator's latest value (0 if muted)
+    std::array<std::atomic<float>, numModulators>& modPhases = instrument.modPhases;         // a WAVE's place in its cycle, for display
+    std::array<std::atomic<int>, numModulators>& modStages = instrument.modStages;           // an ENVELOPE's stage, for display
+    std::array<std::atomic<float>, numModulators>& modStageMs = instrument.modStageMs;       // its time in that stage
+    std::array<std::atomic<float>, numModulators>& modReleaseLevel = instrument.modReleaseLevel;
+    std::array<std::atomic<int>, numModulators>& modReleasedFrom = instrument.modReleasedFrom;   // the stage a release began in
     std::atomic<int> modShown { 0 };                                // the modulator the MOD page shows
     std::atomic<int> armedMod { -1 };                               // ≥ 0: controller knobs set this modulator's depth
 
@@ -322,20 +327,21 @@ public:
     // and how much of its width the corner picture takes.
     static constexpr float defaultLayoutWell = 0.36f;
     std::atomic<float> layoutWell { defaultLayoutWell };
-    std::atomic<bool> delayForced { false };   // SIZE (and pitch) reach further back than DELAY asks: DELAY has no say
+    std::atomic<bool>& delayForced = instrument.delayForced;   // SIZE (and pitch) reach further back than DELAY asks: DELAY has no say
 
     // Read by the editor on the message thread.
     silt::LevelMeter captureMeter;
     std::atomic<CaptureSource> captureSource { CaptureSource::none };
     std::atomic<CaptureState> captureState { CaptureState::idle };
     std::atomic<float> captureProgress { 0.0f };
-    std::atomic<double> hostBpm { 120.0 };
+    std::atomic<double>& hostBpm = instrument.hostBpm;
     kit::bench::OutputRecorder outputRecorder;   // the Bench's bars of the exact output
     double preparedSampleRate() const { return currentSampleRate; }
-    std::atomic<bool> hostPlaying { false };
-    std::atomic<int> timeSigNumerator { 4 }, timeSigDenominator { 4 };
-    std::atomic<int> activeGrains { 0 };
-    std::array<std::atomic<float>, silt::Engine::numVoices> voicePlayheads {};   // < 0: voice silent
+    std::atomic<bool>& hostPlaying = instrument.hostPlaying;
+    std::atomic<int>& timeSigNumerator = instrument.timeSigNumerator;
+    std::atomic<int>& timeSigDenominator = instrument.timeSigDenominator;
+    std::atomic<int>& activeGrains = instrument.activeGrains;
+    std::array<std::atomic<float>, silt::Engine::numVoices>& voicePlayheads = instrument.voicePlayheads;   // < 0: voice silent
     juce::String lastLoadError;
     juce::String loadNote;   // something to know about the last load ("FIRST 30 S OF …"); message thread
 
@@ -345,12 +351,6 @@ private:
 
     static BusesProperties makeBuses();
     juce::AudioBuffer<float> findCaptureBus (juce::AudioBuffer<float>& buffer, CaptureSource& source);
-    silt::GrainParams readParams (const float* voiceValues = nullptr) const noexcept;
-    silt::ResonatorParams readResonatorParams (const silt::GrainParams&) const noexcept;
-    silt::FilterParams readFilterParams() const noexcept;
-    silt::ColorParams readColorParams() const noexcept;
-    silt::SpaceParams readSpaceParams() const noexcept;
-    void applyModulation() noexcept;
     void runCapture (const juce::AudioBuffer<float>& capture, const juce::AudioPlayHead::PositionInfo*);
     void timerCallback() override;
 
@@ -382,34 +382,11 @@ private:
     static std::unique_ptr<juce::AudioFormatReader> openFactorySample (int index);
     std::unique_ptr<juce::AudioBuffer<float>> decode (juce::AudioFormatReader&) const;
 
-    silt::Engine engine;
-    silt::Resonator resonator;   // after the grains
-    silt::Filter filter;         // after the resonator
-    silt::Color color;           // after the filter
-    silt::Space space;           // last: delay and reverb sends
-    int lastNote = -1;           // the last note played, for FOLLOW and KEY (audio thread)
-    bool lastLive = false;
+    silt::Engine& engine = instrument.getEngine();
     std::atomic<float>* sampleGain = nullptr;
     std::atomic<float>* captureFeedRaw = nullptr;
-    int chainNow = 0;          // audio thread: the order running, and its fade
-    float chainFade = 1.0f;
-    // Each module's ON switch, as a level that fades over about 5 ms: at 0 the
-    // module is skipped (and cleared, so it comes back without an old tail).
-    std::array<float, numModules> moduleLevel { 1.0f, 1.0f, 1.0f, 1.0f };
-    std::array<std::atomic<float>, scopeSize> scopeIn {}, scopeOut {};
-    std::atomic<unsigned> scopeWrite { 0 };
-    std::array<std::atomic<float>, spaceTraceSize> spaceTrace {};
-    int spaceTraceFill = 0;        // audio thread: samples into the current step
-    float spaceTracePeak = 0.0f;
-    int followRoot = -1;   // audio thread: FOLLOW's lowest held note and the chord above it
-    std::array<float, 8> followChord {};
-    int followChordSize = 0;
-    static constexpr double followLetGoSeconds = 0.25;
-    int followLetGoIn = 0;   // samples until a note let go leaves the chord, if others stay down
-    bool spaceNoteStarted = false;
-    std::array<std::atomic<float>, 128> sliceTable {};   // MANUAL slices, written before sliceCountManual
-    std::atomic<int> sliceCountManual { 0 };
-    mutable std::array<float, 128> sliceScratch {};      // audio thread: this chunk's copy, for GrainParams
+    std::array<std::atomic<float>, 128>& sliceTable = instrument.sliceTable;   // MANUAL slices, written before sliceCountManual
+    std::atomic<int>& sliceCountManual = instrument.sliceCountManual;
     void makeSlicesManual();
     float minimumSliceGap() const;   // the shortest slice, as a share of the sample (256 samples)
     struct SliceState
@@ -423,46 +400,9 @@ private:
     SliceState sliceEditStart;
     class SliceChange;
     class PresetChange;
-    bool lastSelfFeed = false;   // audio thread: FEED was on last chunk   // a note began since SPACE last ran: restart the trace
-    void writeScope (std::array<std::atomic<float>, scopeSize>&, const float* l, const float* r, int count) noexcept;
-    float sampleGainNow = 1.0f;   // audio thread: the gain ramped to
-    float mixNow = 1.0f;          // audio thread: MIX, ramped across a chunk
-    kit::TapeInput tapeInput;    // audio thread: INPUT past 0 dB
-    float inputGainNow = 1.0f;    // audio thread: Silt FX's INPUT, ramped to
-    std::array<std::array<float, modulationInterval>, 2> inputScaled {};   // audio thread: the input through INPUT
-
-    // Modulation state.
-    struct Target
-    {
-        juce::RangedAudioParameter* parameter = nullptr;
-        std::atomic<float>* raw = nullptr;   // the parameter's own value
-    };
-    std::vector<Target> targets;
-    std::map<juce::String, int> targetIndex;
-    std::array<std::atomic<float>, maxTargets> modulated {};                       // what the audio code reads
-    std::array<std::atomic<float>, numModulators * maxTargets> routeAmounts {};
-    std::array<silt::Modulator, numModulators> modulators;
-    silt::ModContext modContext;                                                   // audio thread
-    struct ModulatorRaw
-    {
-        std::atomic<float>* type, *rate, *sync, *div, *shape, *phase, *retrig, *smooth, *jitter;
-        std::atomic<float>* attack, *decay, *sustain, *release, *repeat, *followAttack, *followRelease, *gain, *source, *enable, *voice, *macro, *sym, *curve, *rev, *spread, *grainSpread;
-    };
-    std::array<bool, 128> heldKeys {};   // audio thread: which notes are down, so repeats don't miscount
-    std::array<bool, 128> sustainedKeys {};   // audio thread: let go while the sustain pedal is down
-    bool sustainDown = false;
-    std::array<bool, numModulators> grainSource {};        // audio thread: this chunk's PER GRAIN modulators
-    struct ScatterTarget { int target; double silt::GrainParams::* field; double scale; };
-    std::vector<ScatterTarget> scatterTargets;
-    silt::GrainScatter grainScatter;                       // audio thread: this chunk's rolls to make
-    void buildGrainScatter() noexcept;
-    std::array<float, numModulators> globalModValues {};   // audio thread: this chunk's shared values
-    std::array<bool, numModulators> nativeBipolar {}, modEnabled {};   // audio thread, per chunk
-    std::array<std::atomic<int>, numModulators * maxTargets> routePolarity {};
-    float shapedFor (int modulator, int target, float value) const noexcept;
+    std::vector<juce::RangedAudioParameter*> targetParameters;   // by modulation target
     juce::String routesToString() const;
     void routesFromString (const juce::String&);
-    std::vector<int> voiceTargets;
 
     // Undo (message thread).
     class RoutesChange;
@@ -486,40 +426,6 @@ private:
     int lastControllerRoute = -1;
     juce::uint32 lastControllerRouteTime = 0;
 
-    // Per-voice modulation (docs/per-voice-modulation.md): each voice's own
-    // copies of the per-voice modulators, its own note context, and its grain
-    // parameters for the chunk. The engine asks for them (silt::VoiceParams).
-    class VoiceModulation final : public silt::VoiceParams
-    {
-    public:
-        explicit VoiceModulation (SiltProcessor&);
-        void reset() noexcept;
-        void prepareChunk() noexcept;
-
-        bool isActive() const noexcept override { return active; }
-        void noteStarted (int voice, int note, float velocity) noexcept override;
-        void noteReleased (int voice) noexcept override;
-        void apply (int voice, silt::GrainParams&) noexcept override;
-
-    private:
-        void step (int voice, int numSamples) noexcept;
-        void compute (int voice) noexcept;
-
-        SiltProcessor& owner;
-        static constexpr int voicesN = silt::Engine::numVoices;
-        std::array<std::array<silt::Modulator, numModulators>, voicesN> mods;
-        std::array<silt::ModContext, voicesN> context {};
-        std::array<std::array<float, numModulators>, voicesN> values {};
-        std::array<silt::GrainParams, voicesN> params {};
-        std::array<bool, voicesN> held {}, started {};
-        std::array<float, voicesN> spreadOffset {};   // SPREAD: where this voice's note sits round the cycle
-        int notesInPhrase = 0;
-        std::array<bool, numModulators> perVoice {};
-        std::array<float, maxTargets> base01 {}, scratch {};
-        bool active = false;
-    };
-    VoiceModulation voiceModulation;
-    std::array<ModulatorRaw, numModulators> modulatorRaw {};
     double currentSampleRate = 48000.0;
 
     juce::AudioFormatManager formats;
@@ -542,17 +448,6 @@ private:
     std::atomic<silt::SampleBuffer*> captureTarget { nullptr };  // shared view for the audio thread
     int captureWritePos = 0;                                     // audio thread only
 
-    std::array<silt::GrainView, maxGrainViews> grainViews {};
-    std::atomic<int> grainViewCount { 0 };
-    std::atomic<std::uint32_t> grainViewSequence { 0 };   // odd while being written
-    int samplesSinceGrainViews = 0;
-
-    void trackLivePeaks (int writeStart, int count) noexcept;
-    void refreshAllLivePeaks() noexcept;
-    std::array<std::atomic<float>, liveColumns> livePeaks {};
-    int liveColumn = -1;            // audio thread only
-    float liveColumnPeak = 0.0f;
-
     // Controller: the audio thread queues (slot, value) moves for the message thread.
     void handleController (int number, int value) noexcept;
     juce::AbstractFifo controllerFifo { 512 };
@@ -565,11 +460,7 @@ private:
     std::array<juce::String, slotsPerPage> slotTarget;
     int pickupPage = -1;
 
-    std::vector<silt::NoteEvent> noteEvents;   // preallocated in prepareToPlay
-    juce::AudioBuffer<float> wet;              // engine output, preallocated
-
-    struct RawParams;                          // cached parameter pointers
-    std::unique_ptr<RawParams> raw;
+    std::vector<silt::MidiEvent> midiEvents;   // preallocated in prepareToPlay
 
     JUCE_DECLARE_WEAK_REFERENCEABLE (SiltProcessor)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SiltProcessor)

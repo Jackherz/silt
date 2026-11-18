@@ -36,6 +36,7 @@ add_library(silt_core STATIC
     core/src/Engine.cpp
     core/src/Filter.cpp
     core/src/GrainVoice.cpp
+    core/src/Instrument.cpp
     core/src/LevelMeter.cpp
     core/src/Modulator.cpp
     core/src/Onsets.cpp
