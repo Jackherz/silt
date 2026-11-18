@@ -4,9 +4,11 @@ import { chromium } from 'playwright-core';
 
 const url = process.argv[2] ?? 'http://localhost:5176/';
 const browser = await chromium.launch({
+  args: ['--autoplay-policy=no-user-gesture-required'],
   executablePath: process.env.CHROMIUM_PATH ?? '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
 });
 const page = await browser.newPage({ viewport: { width: 1200, height: 820 } });
+// (Audio: the browser is launched with autoplay allowed; see launch args.)
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 await page.goto(url);
@@ -136,6 +138,39 @@ check('SAVE keeps it under its name', (await page.getByText('MY SOUND', { exact:
 await page.getByText('MY SOUND', { exact: true }).click();
 check('it lists as USER', (await page.locator('.preset-row', { hasText: 'MY SOUND' }).innerText()).includes('USER'));
 await page.keyboard.press('Escape');
+
+// Sound: START AUDIO, the keys, LOAD.
+await page.goto(url);
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8);
+await page.getByText('START AUDIO', { exact: true }).click({ force: true });
+await page.waitForFunction(() => window.siltAudio?.context?.state === 'running', null, { timeout: 5000 }).catch(() => {});
+check('START AUDIO starts it', await page.evaluate(() => window.siltAudio?.context?.state === 'running'));
+const grainsWhile = async (play) => page.evaluate(async (play) => {
+  const seen = []; const port = window.siltAudio.node.port; const prev = port.onmessage;
+  port.onmessage = (e) => { prev(e); if (e.data.type === 'display') seen.push(e.data.grains); };
+  await window[play.start]?.();
+  await new Promise((r) => setTimeout(r, 700));
+  port.onmessage = prev;
+  return Math.max(0, ...seen);
+}, play);
+const c3 = page.locator('.piano').nth(24);   // C3 (MIDI 60): the 25th key up from C1
+const box3 = await c3.boundingBox();
+await page.mouse.move(box3.x + box3.width / 2, box3.y + box3.height - 4);
+await page.mouse.down();
+const keyGrains = await grainsWhile({});
+await page.mouse.up();
+check('an on-screen key plays grains', keyGrains > 0, String(keyGrains));
+await page.getByText('LOAD', { exact: true }).click();
+await page.locator('.popup-item', { hasText: 'Keys Drone' }).click();
+await page.waitForFunction(() => document.body.innerText.includes('KEYS-DRONE'), null, { timeout: 5000 }).catch(() => {});
+check('LOAD → Keys Drone shows it', (await page.getByText('KEYS-DRONE').count()) === 1);
+await page.getByText('PLAY', { exact: true }).click();
+check('its ROOT is G2 (MIDI 55)', (await page.getByText('G2', { exact: true }).count()) === 1);
+await page.getByText('GRAIN', { exact: true }).click();
+await page.keyboard.down('a');
+const typedGrains = await grainsWhile({});
+await page.keyboard.up('a');
+check('the computer\'s A key plays grains', typedGrains > 0, String(typedGrains));
 
 check('no page errors', errors.length === 0, errors.join('; '));
 await browser.close();

@@ -25,6 +25,7 @@ export async function loadSilt(bytes) {
     create: (isInstrument) => x.silt_create(isInstrument ? 1 : 0),
     prepare: (sampleRate, maxBlockSize = maxBlock) => x.silt_prepare(sampleRate, maxBlockSize),
     setParam: (id, value) => x.silt_set_param(id, value),
+    setParamRaw: (id, value) => x.silt_set_param_raw(id, value),
     getParam: (id) => x.silt_get_param(id),
     to01: (id, value) => x.silt_to01(id, value),
     from01: (id, proportion) => x.silt_from01(id, proportion),
@@ -44,6 +45,24 @@ export async function loadSilt(bytes) {
         floats(x.silt_sample_channel(ch), frames).set(channels[Math.min(ch, channels.length - 1)]);
       x.silt_sample_end();
     },
+    // The page analyses; the worklet installs (no stall on the audio thread).
+    analyse(channels, sampleRate) {
+      const frames = channels[0].length;
+      x.silt_sample_begin(frames, sampleRate);
+      for (let ch = 0; ch < 2; ch++)
+        floats(x.silt_sample_channel(ch), frames).set(channels[Math.min(ch, channels.length - 1)]);
+      const n = x.silt_analyse();
+      return floats(x.silt_analysis(), n).slice();
+    },
+    setSampleAnalysed(channels, sampleRate, analysis) {
+      const frames = channels[0].length;
+      x.silt_sample_begin(frames, sampleRate);
+      for (let ch = 0; ch < 2; ch++)
+        floats(x.silt_sample_channel(ch), frames).set(channels[Math.min(ch, channels.length - 1)]);
+      floats(x.silt_analysis_in(analysis.length), analysis.length).set(analysis);
+      x.silt_sample_end_analysed();
+    },
+    display: (count) => floats(x.silt_display(), count + 4).slice(),
     midi: (offset, b0, b1 = 0, b2 = 0) => x.silt_midi(offset, b0, b1, b2),
     transport: (playing, ppq, bpm, numerator = 4, denominator = 4) =>
       x.silt_transport(playing ? 1 : 0, ppq, bpm, numerator, denominator),

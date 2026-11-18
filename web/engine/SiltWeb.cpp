@@ -72,6 +72,14 @@ SILT_EXPORT void silt_set_param (int id, float value)
     web->instrument.setParameter (id, held);
 }
 
+// A value exactly as given: what the audio's instance takes from the page's, which already
+// holds it as a host would.
+SILT_EXPORT void silt_set_param_raw (int id, float value)
+{
+    if (id >= 0 && id < sp::count)
+        web->instrument.setParameter (id, value);
+}
+
 SILT_EXPORT float silt_get_param (int id) { return web->instrument.parameter (id); }
 
 // A knob's travel, as the plug-in's slider has it: 0–1 from a value (unsnapped), and the
@@ -133,6 +141,59 @@ SILT_EXPORT float* silt_sample_begin (int numFrames, double sampleRate)
 }
 
 SILT_EXPORT float* silt_sample_channel (int channel) { return web->loading->getWritePointer (channel); }
+
+// Analysing a sample without playing it (the page does this, so the audio thread doesn't
+// stall): begin and fill as above, then silt_analyse; the results are at silt_analysis()
+// (counts: zero crossings, transients, modes), then the ints, then the modes as hz, level.
+namespace { std::vector<float> analysis; }
+SILT_EXPORT int silt_analyse()
+{
+    auto& b = *web->loading;
+    b.analyse();
+    const auto& z = b.getZeroCrossings();
+    const auto& t = b.getTransients();
+    const auto& m = b.getModes();
+    analysis.assign (3 + z.size() + t.size() + 2 * m.size(), 0.0f);
+    analysis[0] = (float) z.size();
+    analysis[1] = (float) t.size();
+    analysis[2] = (float) m.size();
+    size_t at = 3;
+    for (const int i : z) analysis[at++] = (float) i;   // exact up to 2^24 frames (5.8 minutes at 48 kHz)
+    for (const int i : t) analysis[at++] = (float) i;
+    for (const auto& mode : m) { analysis[at++] = (float) mode.hz; analysis[at++] = mode.level; }
+    web->loading.reset();
+    return (int) analysis.size();
+}
+SILT_EXPORT float* silt_analysis() { return analysis.data(); }
+
+// Hands a filled sample over with an analysis made by silt_analyse (laid out the same):
+// nothing slow happens here, so the audio thread can call it.
+SILT_EXPORT float* silt_analysis_in (int size)
+{
+    analysis.assign ((size_t) std::max (0, size), 0.0f);
+    return analysis.data();
+}
+SILT_EXPORT void silt_sample_end_analysed()
+{
+    const size_t nz = (size_t) analysis[0], nt = (size_t) analysis[1], nm = (size_t) analysis[2];
+    std::vector<int> z (nz), t (nt);
+    std::vector<silt::SampleMode> m (nm);
+    size_t at = 3;
+    for (auto& i : z) i = (int) analysis[at++];
+    for (auto& i : t) i = (int) analysis[at++];
+    for (auto& mode : m) { mode.hz = analysis[at++]; mode.level = analysis[at++]; }
+    web->loading->setAnalysis (std::move (z), std::move (t), std::move (m));
+    auto& in = web->instrument;
+    const auto& modes = web->loading->getModes();
+    const int count = std::min ((int) modes.size(), (int) in.samplePitchHz.size());
+    for (int i = 0; i < count; ++i)
+    {
+        in.samplePitchHz[(size_t) i].store ((float) modes[(size_t) i].hz, std::memory_order_relaxed);
+        in.samplePitchLevel[(size_t) i].store (modes[(size_t) i].level, std::memory_order_relaxed);
+    }
+    in.samplePitchCount.store (count, std::memory_order_release);
+    in.getEngine().setBuffer (std::move (web->loading));
+}
 
 SILT_EXPORT void silt_sample_end()
 {
@@ -226,6 +287,22 @@ SILT_EXPORT int silt_grain_curve (float fade, float slant, float ease)
         add (t, env (hann, t));
     }
     return n;
+}
+
+// For the panel: where modulation has each target now (0–1, -1 for a parameter that isn't
+// one), every target's at once into silt_display(); and the modulators' outputs.
+namespace { std::array<float, sp::count + 4> display {}; }
+SILT_EXPORT float* silt_display()
+{
+    auto& in = web->instrument;
+    for (int id = 0; id < sp::count; ++id)
+    {
+        const int t = in.targetFor (id);
+        display[(size_t) id] = t < 0 ? -1.0f : in.modulatedValue01 (t);
+    }
+    for (int m = 0; m < 4; ++m)
+        display[(size_t) sp::count + (size_t) m] = in.modOutputs[(size_t) m].load (std::memory_order_relaxed);
+    return display.data();
 }
 
 SILT_EXPORT int silt_max_block() { return maxBlock; }

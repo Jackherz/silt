@@ -44,3 +44,4 @@ svg.at { pointer-events: none; }
 .preset-list::-webkit-scrollbar { width: 12px; }
 .preset-list::-webkit-scrollbar-thumb { background: #4c8ec2; border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
 .dialog-shield { position: absolute; inset: 0; z-index: 8; background: rgba(0, 0, 0, 0.35); }
+.piano { cursor: pointer; box-shadow: inset 0 -2px 0 rgba(0,0,0,0.18); }

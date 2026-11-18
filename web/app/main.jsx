@@ -7,6 +7,7 @@ import { panelGeometry, centred, box, SPINE } from './geometry.js';
 import { C, S, MOD, css, rgba, pageColour, font } from './theme.js';
 import { isShown, isDimmed, roundToInt, helpFor } from './rules.js';
 import { loadSilt } from '../engine/silt-wasm.js';
+import { Audio, SAMPLES } from './audio.js';
 
 const PAGE_NAMES = ['GRAIN', 'SHAPE', 'PITCH', 'PLAY', 'RESONATOR', 'FILTER', 'COLOR', 'SPACE', 'MOD', 'CHAIN'];
 
@@ -350,15 +351,15 @@ function TypedValue({ id, text, style }) {
 
 // --- the strip ---------------------------------------------------------------------------
 
-function Source({ g }) {
+function Source({ g, onLoad, monitor, onMonitor }) {
   return (
     <>
       <StripPanel r={g.sourcePanel} name="SOURCE" />
       <Key r={g.arm} text="ARM" led={false} help="!arm" />
       <Menu r={g.bars} text="2 BARS" help="!bars" />
       <Key r={g.resample} text="RESAMPLE" led={false} help="!resample" />
-      <Key r={g.load} text="LOAD" help="!load" />
-      <div data-help="!monitor"><Switch r={g.monitor} text="MONITOR" on={false} /></div>
+      <Key r={g.load} text="LOAD" help="!load" onClick={onLoad} />
+      <div data-help="!monitor" onClick={onMonitor} style={{ cursor: 'pointer' }}><Switch r={g.monitor} text="MONITOR" on={monitor} /></div>
     </>
   );
 }
@@ -538,7 +539,7 @@ function Readout({ r, title, status }) {
 
 // --- the well ----------------------------------------------------------------------------
 
-function Rail({ r, modTitles, shown, armed, routeCounts }) {
+function Rail({ r, modTitles, shown, armed, routeCounts, traces, bipolar }) {
   const ui = useContext(UI);
   const [ghost, setGhost] = useState(null);   // { m, x, y }: a chip in hand
   // Press: a click shows (and arms) it; dragged 5 px, it's in hand, and dropped on a knob
@@ -592,7 +593,16 @@ function Rail({ r, modTitles, shown, armed, routeCounts }) {
           </At>
         )}
         <At r={[trace[0], Math.trunc(trace[1] + trace[3] / 2), trace[2], 1]} style={{ background: rgba(S.ink, 0.15) }} />
-        <At r={[trace[0], trace[1] + trace[3] / 2 - 0.7, trace[2], 1.4]} style={{ background: css(MOD[m].base), borderRadius: 1 }} />
+        {traces?.[m]?.length > 1 ? (
+          // The trace (ModChip): the modulator's recent output, bipolar about the middle, else up from the bottom.
+          <svg className="at" style={{ left: 0, top: 0, width: 1, height: 1, overflow: 'visible' }}>
+            <path d={traces[m].map((v, i) => {
+              const base = bipolar(m) ? trace[1] + trace[3] / 2 : trace[1] + trace[3];
+              const y = bipolar(m) ? base - Math.max(-1, Math.min(1, v)) * trace[3] / 2 : base - Math.max(0, Math.min(1, v)) * trace[3];
+              return `${i ? 'L' : 'M'}${trace[0] + trace[2] * i / 95} ${y}`;
+            }).join(' ')} fill="none" stroke={css(MOD[m].base)} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : <At r={[trace[0], trace[1] + trace[3] / 2 - 0.7, trace[2], 1.4]} style={{ background: css(MOD[m].base), borderRadius: 1 }} />}
       </div>
     );
   });
@@ -737,7 +747,7 @@ function ShapePreview({ g, value, grainCurve }) {
   );
 }
 
-function Well({ g, page, entries, context, value, text, params, grainCurve, modTitles, armed, routeCounts, routesOpen, routeList }) {
+function Well({ traces, g, page, entries, context, value, text, params, grainCurve, modTitles, armed, routeCounts, routesOpen, routeList }) {
   const ui = useContext(UI);
   const pick = (id) => (index) => ui.setParam(id, index);
   const toggle = (id) => () => ui.setParam(id, value(id) > 0.5 ? 0 : 1);
@@ -751,7 +761,7 @@ function Well({ g, page, entries, context, value, text, params, grainCurve, modT
     <>
       <Surface r={g.well} colour={S.panel} />
       <At r={[g.well[0], g.well[1], g.well[2], 3]} style={{ background: css(routesOpen ? S.ink : colour), borderRadius: '6px 6px 0 0' }} />
-      <Rail r={g.rail} modTitles={modTitles} shown={context.modShown} armed={armed} routeCounts={routeCounts} />
+      <Rail r={g.rail} modTitles={modTitles} shown={context.modShown} armed={armed} routeCounts={routeCounts} traces={traces} bipolar={(m) => ['WAVE', 'RANDOM'].includes(TYPE_NAMES[Math.round(value(`m${m + 1}Type`))])} />
       <At r={[g.slots[0].column[0], g.controlRow[1] + 8, 1, g.controlRow[3] - 16]} style={{ background: rgba(S.ink, 0.2) }} />
       {routesOpen && routeList}
       {!routesOpen && page === 1 && <ShapePreview g={g} value={value} grainCurve={grainCurve} />}
@@ -899,6 +909,65 @@ function to01(p, v) {
   if (p.mapping !== 'skewed') return proportion;
   const skew = Math.log(0.5) / Math.log((p.centre - p.low) / (p.high - p.low));
   return Math.pow(proportion, skew);
+}
+
+// The browser's row, where the plug-in has the Bench (there's no other plug-in to pass audio to
+// here): START AUDIO (Brood's key and wording), MIC, TEMPO, and keys to play from C1 to B3, which
+// covers SLICE's slices from C1 up. All of it is the browser's own; IN THE PLUG-IN says so.
+function BrowserRow({ r, state, onStart, mic, onMic, tempo, onTempo, held, noteOn, noteOff }) {
+  const ui = useContext(UI);
+  const y = r[1] + 6, h = r[3] - 12;
+  const keysR = [r[0] + 420, y, r[2] - 428, h];
+  const first = 36, whites = 21;
+  const white = keysR[2] / whites;
+  const isBlack = (n) => [1, 3, 6, 8, 10].includes(n % 12);
+  const notes = Array.from({ length: 36 }, (_, i) => first + i);
+  const whiteIndex = (n) => notes.filter((x) => x < n && !isBlack(x)).length;
+  const pressing = useRef(null);
+  const press = (note) => { if (pressing.current === note) return; if (pressing.current != null) noteOff(pressing.current); pressing.current = note; if (note != null) noteOn(note); };
+  useEffect(() => {
+    const up = () => press(null);
+    window.addEventListener('pointerup', up);
+    return () => window.removeEventListener('pointerup', up);
+  }, []);
+  const key = (n) => {
+    const b = isBlack(n);
+    const x = b ? keysR[0] + whiteIndex(n) * white - white * 0.3 : keysR[0] + whiteIndex(n) * white;
+    const kr = b ? [x, keysR[1], white * 0.6, keysR[3] * 0.6] : [x + 0.5, keysR[1], white - 1, keysR[3]];
+    const down = held.has(n);
+    return (
+      <div key={n} className="at piano" data-help="!keys"
+           style={{ ...box(kr), zIndex: b ? 2 : 1, borderRadius: '0 0 3px 3px',
+                    background: down ? css(S.accent) : b ? css(S.sunk) : css(C.knobFace) }}
+           onPointerDown={(e) => { e.preventDefault(); press(n); }} onPointerEnter={(e) => { if (e.buttons & 1) press(n); }}>
+        {!b && n % 12 === 0 && (
+          <span style={{ position: 'absolute', bottom: 2, left: 0, right: 0, textAlign: 'center', ...font.mono(9), color: down ? css(S.panel) : '#555048' }}>C{n / 12 - 2}</span>
+        )}
+      </div>
+    );
+  };
+  const tempoDrag = (e) => {
+    if (e.button !== 0) return;
+    let running = tempo, lastY = e.clientY;
+    const move = (m) => { running += (lastY - m.clientY) / ui.scale / (m.shiftKey ? 10 : 2); lastY = m.clientY; onTempo(running); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  const running = state === 'running';
+  return (
+    <>
+      <Surface r={r} colour={S.panel} />
+      <Key r={[r[0] + 8, y, 150, h]} text={state === 'starting' ? 'ONE MOMENT' : running ? 'STOP AUDIO' : 'START AUDIO'} led={running} onClick={onStart} help="!start" accent={!running && state !== 'starting'} />
+      <Key r={[r[0] + 166, y, 84, h]} text="MIC" led={mic} onClick={onMic} help="!mic" />
+      <At r={[r[0] + 262, y, 60, h]} style={{ ...font.name(12.5), color: css(S.soft), display: 'flex', alignItems: 'center' }} data-help="!tempo">TEMPO</At>
+      <At r={[r[0] + 322, y + 5, 86, h - 10]} data-help="!tempo" onPointerDown={tempoDrag} onDoubleClick={() => onTempo(120)}
+          style={{ background: css(C.lcdGreen), color: css(C.lcdText), borderRadius: 3, ...font.value(11.5), display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'ns-resize' }}>
+        {tempo.toFixed(1)} BPM
+      </At>
+      {notes.map(key)}
+    </>
+  );
 }
 
 // RANDOM's amount (RandomAmountBox): drag up or down (Shift finer), scroll, double-click for 50%.
@@ -1052,6 +1121,14 @@ function SaveDialog({ categories, start, save, cancel }) {
   );
 }
 
+// Help for the browser's own parts (new wording: for the owner to approve). START AUDIO's is Brood's.
+const WEB_HELP = {
+  '!start': 'AUDIO: starts and stops the sound on this page. Nothing plays until you press it',
+  '!mic': 'MIC: your microphone into Silt, for LIVE and FEED. Use headphones',
+  '!tempo': 'TEMPO: what synced settings follow. A host sets it in the plug-in; here you do',
+  '!keys': 'KEYS: play notes here, or on the computer: A to K, Z and X for octaves',
+};
+
 // What any RANDOM CHARACTER leaves where it is (everything that sets or shifts tuning), and
 // what each keeps to, in the parameter's own units (SiltProcessor's characterLimit).
 const SETS_TUNING = new Set(['pitch', 'randPitch', 'scale', 'key', 'root', 'keyMode', 'patternDepth', 'patternSteps', 'resTune', 'resShift',
@@ -1102,6 +1179,15 @@ function App() {
   const [routesOpen, setRoutesOpen] = useState(false);
   const lastUsedMod = useRef(0);
   const history = useRef({ undo: [], redo: [], pending: null });
+  const [audioState, setAudioState] = useState('off');   // off, starting, running, suspended, error
+  const [display, setDisplay] = useState(null);           // what the audio sends back, 30 times a second
+  const [sample, setSample] = useState(null);             // { name, factory, channels, sampleRate, seconds }
+  const [tempo, setTempo] = useState(120);
+  const [micOn, setMicOn] = useState(false);
+  const [held, setHeld] = useState(() => new Set());     // notes down, from any keyboard
+  const [octave, setOctave] = useState(0);               // the computer keys' octave shift
+  const traces = useRef([[], [], [], []]);                // the rail's modulator traces
+  const fileInput = useRef(null);
   const [randomAmount, setRandomAmount] = useState(0.5);
   const [randomCharacter, setRandomCharacter] = useState(0);
   const [randomExcluded, setRandomExcluded] = useState(() => new Set(['m1Type', 'm2Type', 'm3Type', 'm4Type']));
@@ -1124,11 +1210,91 @@ function App() {
       await Promise.all(faces.map(async ([family, file, descriptors]) => document.fonts.add(await new FontFace(family, `url(fonts/${file})`, descriptors).load())));
       // The page's own instance of the sound's code: the parameters as the host holds them,
       // their text and the previews. The audio's instance gets every change too (step 5).
-      const silt = await loadSilt(await fetch('silt.wasm').then((r) => r.arrayBuffer()));
+      const wasm = await fetch('silt.wasm').then((r) => r.arrayBuffer());
+      const silt = await loadSilt(wasm);
       silt.create(true);
-      setData({ params, layout, help, presets, silt, byId: Object.fromEntries(params.map((p) => [p.id, p])) });
+      const audio = new Audio({ wasm, paramCount: params.length,
+        onDisplay: (d) => {
+          for (let m = 0; m < 4; m++) { const t = traces.current[m]; t.push(d.values[params.length + m]); if (t.length > 96) t.shift(); }
+          setDisplay(d);
+        },
+        onState: (st) => setAudioState(st === 'ready' ? 'running' : st === 'closed' ? 'off' : st) });
+      window.siltAudio = audio;
+      setData({ params, layout, help, presets, silt, audio, byId: Object.fromEntries(params.map((p) => [p.id, p])) });
     })().catch((err) => console.error(err));
   }, []);
+
+  // A new instance opens with the first factory sample, as the plug-in does.
+  useEffect(() => { if (data && !sample) loadSample({ factory: 0 }).catch((err) => console.error(err)); }, [data]);
+  // The computer's keys play notes: A W S E D F T G Y H U J K O L P (C to D# an octave up), Z and X
+  // move the octave. Not while a value is being typed.
+  useEffect(() => {
+    if (!data) return undefined;
+    const keys = 'awsedftgyhujkolp';
+    const down = new Map();
+    const onDown = (e) => {
+      if (e.repeat || e.metaKey || e.ctrlKey || e.altKey || /INPUT|TEXTAREA/.test(document.activeElement?.tagName ?? '')) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' || k === 'x') { setOctave((o) => Math.max(-3, Math.min(4, o + (k === 'z' ? -1 : 1)))); return; }
+      const i = keys.indexOf(k);
+      if (i < 0 || down.has(k)) return;
+      const note = 60 + octaveRef.current * 12 + i;
+      down.set(k, note);
+      noteOn(note);
+    };
+    const onUp = (e) => {
+      const k = e.key.toLowerCase();
+      if (!down.has(k)) return;
+      noteOff(down.get(k));
+      down.delete(k);
+    };
+    window.addEventListener('keydown', onDown);
+    window.addEventListener('keyup', onUp);
+    return () => { window.removeEventListener('keydown', onDown); window.removeEventListener('keyup', onUp); };
+  }, [data]);
+  const octaveRef = useRef(0);
+  octaveRef.current = octave;
+  // A file dropped anywhere on the page becomes the sample (the plug-in takes it on its screen).
+  useEffect(() => {
+    if (!data) return undefined;
+    const over = (e) => { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); };
+    const drop = (e) => {
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      e.preventDefault();
+      loadSample({ file }).catch(() => showFlashRef.current?.("COULDN'T READ THAT FILE"));
+    };
+    window.addEventListener('dragover', over);
+    window.addEventListener('drop', drop);
+    return () => { window.removeEventListener('dragover', over); window.removeEventListener('drop', drop); };
+  }, [data]);
+  const showFlashRef = useRef(null);
+
+  // Notes, from the on-screen keys, the computer's or MIDI: to the audio, and shown held.
+  function noteOn(note, velocity = 100) {
+    window.siltAudio?.noteOn(note, velocity);
+    setHeld((h) => new Set(h).add(note));
+  }
+  function noteOff(note) {
+    window.siltAudio?.noteOff(note);
+    setHeld((h) => { const n = new Set(h); n.delete(note); return n; });
+  }
+  // A sample: a factory one (ROOT to its note) or your file (ROOT back to C3), decoded, cut to
+  // 30 s, analysed here on the page, then handed to the audio.
+  async function loadSample({ factory, file }) {
+    const { audio, silt, byId } = data;
+    const bytes = factory != null ? await fetch(`samples/${SAMPLES[factory].file}`).then((r) => r.arrayBuffer()) : await file.arrayBuffer();
+    const decoded = await audio.decode(bytes);
+    const analysis = silt.analyse(decoded.channels, decoded.sampleRate);
+    audio.sendSample(decoded, analysis);
+    const root = factory != null ? SAMPLES[factory].root : 60;
+    silt.setParam(byId.root.index, root);
+    audio.setParam(byId.root.index, silt.getParam(byId.root.index));
+    const name = factory != null ? SAMPLES[factory].name : file.name.replace(/\.[^.]+$/, '');
+    setSample({ name, factory: factory ?? -1, ...decoded });
+    if (decoded.cut) showFlashRef.current?.(`FIRST ${30} S OF ${name.toUpperCase()}`);
+    setVersion((n) => n + 1);
+  }
 
   if (!data) return <div className="frame" style={{ width: 1200 * scale, height: 820 * scale }} />;
 
@@ -1283,11 +1449,36 @@ function App() {
     writeStored('silt-favourites-v1', [...next]);
   };
 
+  const startStop = async () => {
+    if (audioState === 'running') { await data.audio.stop(); return; }
+    setAudioState('starting');
+    try {
+      await data.audio.start({
+        params: data.params.map((p) => [p.index, silt.getParam(p.index)]),
+        routes: targets.flatMap((t) => [0, 1, 2, 3].map((m) => [m, t, silt.routeAmount(m, t), silt.routePolarity(m, t)])).filter((r) => r[2] !== 0),
+      });
+      data.audio.transport(false, tempo);
+    } catch (err) {
+      setAudioState('off');
+      showFlash(String(err.message ?? err).toUpperCase());
+    }
+  };
+  const toggleMic = async () => {
+    if (micOn) { data.audio.micOff(); setMicOn(false); return; }
+    try { await data.audio.micOn(); setMicOn(true); } catch (err) { showFlash(String(err.message ?? err).toUpperCase()); }
+  };
+  const changeTempo = (bpm) => { const b = Math.max(20, Math.min(400, Math.round(bpm * 10) / 10)); setTempo(b); data.audio.transport(false, b); };
+  const loadMenu = () => setMenu({ r: g.load, items: [
+    { text: 'Load file...', pick: () => fileInput.current?.click() },
+    { header: true, text: 'FACTORY SAMPLES' },
+    ...SAMPLES.map((smp, i) => ({ text: smp.name, ticked: sample?.factory === i, pick: () => loadSample({ factory: i }) })),
+  ] });
   const showFlash = (message) => {
     setFlash(message);
     clearTimeout(showFlash.timer);
     showFlash.timer = setTimeout(() => setFlash(''), 2000);
   };
+  showFlashRef.current = showFlash;
   const routeAmount = (m, id) => (byId[id] ? silt.routeAmount(m, byId[id].index) : 0);
   const setRoute = (m, id, amount, polarity = silt.routePolarity(m, byId[id].index)) => {
     silt.setRoute(m, byId[id].index, amount, polarity);
@@ -1342,7 +1533,8 @@ function App() {
     isStepped: (id) => byId[id]?.kind === 'integer' || byId[id]?.kind === 'choice',
     to01Of: (id, v) => silt.to01(byId[id].index, v),
     from01Of: (id, p) => silt.from01(byId[id].index, p),
-    modulated01: (id) => silt.to01(byId[id].index, value(id)),   // the audio's modulated value arrives in step 5
+    // Where modulation has it now, from the audio; before it runs, the knob's own place.
+    modulated01: (id) => (display && display.values[byId[id].index] >= 0 ? display.values[byId[id].index] : silt.to01(byId[id].index, value(id))),
     routeAmount,
     routeBipolar: (m, id) => silt.routeBipolar(m, byId[id].index),
     modulatorOn: (m) => value(`m${m + 1}Enable`) > 0.5,
@@ -1399,8 +1591,8 @@ function App() {
   });
 
   // The readout: hover help first, then an armed modulator, then the standing figure (statusText).
-  const helpLine = hover ? helpFor(data.help, hover) : '';
-  const status = depthReadout || flash || helpLine || (armed >= 0 ? `MOD ${armed + 1} ARMED: DRAG A KNOB'S OUTER RING` : statusFigure(null, -100, 120));
+  const helpLine = hover ? helpFor({ ...data.help, ...WEB_HELP }, hover) : '';
+  const status = depthReadout || flash || helpLine || (armed >= 0 ? `MOD ${armed + 1} ARMED: DRAG A KNOB'S OUTER RING` : statusFigure(micOn ? 'MIC' : null, display && micOn ? 20 * Math.log10(Math.max(1e-6, display.inputPeak)) : -100, tempo));
 
   const over = (e) => {
     const el = e.target.closest?.('[data-help]');
@@ -1426,14 +1618,14 @@ function App() {
           <Key r={g.tour} text="?" help="!tour" />
 
           {/* Strip */}
-          <Source g={g} />
+          <Source g={g} onLoad={loadMenu} monitor={value('monitor') > 0.5} onMonitor={() => ui.setParam('monitor', value('monitor') > 0.5 ? 0 : 1)} />
           <Chain g={g} value={value} openModule={page >= 4 && page <= 7 ? page - 4 : -1} half={half} chainOpen={page === 9} />
           <Readout r={g.lcd} title="SILT" status={status} />
 
           {/* Screen (step 6 draws what's on it) */}
           <div data-help="!screen">
             <Surface r={g.screen} colour={C.screenBlue} />
-            <At r={[g.screen[0] + 26, g.screen[1] + 18, 400, 20]} style={{ ...font.screen(17), color: css(C.screenPale) }}>RAIN-BELLS</At>
+            <At r={[g.screen[0] + 26, g.screen[1] + 18, 400, 20]} style={{ ...font.screen(17), color: css(C.screenPale) }}>{(sample?.name ?? '').toUpperCase().replace(/ /g, '-')}</At>
           </div>
 
           {/* The grip between the screen and the keys (screenDivider): three short dashes. */}
@@ -1462,13 +1654,16 @@ function App() {
           <Key r={g.redo} text="REDO" help="!redo" onClick={redo} disabled={h.redo.length === 0} />
 
           {/* Well */}
-          <Well g={g} page={page} entries={data.layout.instrument} context={context} value={value} text={text} params={byId}
+          <Well traces={traces.current} g={g} page={page} entries={data.layout.instrument} context={context} value={value} text={text} params={byId}
                 grainCurve={silt.grainCurve} modTitles={modTitles} armed={armed} routeCounts={routeCounts} routesOpen={routesOpen}
                 routeList={<RouteList r={[g.controlRow[0], g.controlRow[1] + 2, g.controlRow[2], g.controlRow[3] - 4]} routes={routes}
                                       pageName={pageOfParam} currentPage={PAGE_NAMES[page]} close={() => setRoutesOpen(false)} />} />
 
-          {/* The browser's row, where the plug-in has the Bench */}
-          <Surface r={g.bench} colour={S.panel} />
+          {/* The browser's row, where the plug-in has the Bench: audio, the microphone, tempo, keys. */}
+          <BrowserRow r={g.bench} state={audioState} onStart={startStop} mic={micOn} onMic={toggleMic} tempo={tempo} onTempo={changeTempo}
+                      held={held} noteOn={noteOn} noteOff={noteOff} />
+          <input ref={fileInput} type="file" accept="audio/*" style={{ display: 'none' }}
+                 onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) loadSample({ file: f }).catch(() => showFlash("COULDN'T READ THAT FILE")); }} />
 
           {browserOpen && (
             <PresetBrowser r={[g.screen[0], g.screen[1], g.screen[2] + 3, g.well[1] + g.well[3] - g.screen[1] + 3]} list={presetList()} current={presetName}

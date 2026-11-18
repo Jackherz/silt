@@ -29,6 +29,13 @@ public:
     const std::vector<int>& getZeroCrossings() const noexcept { return zeroCrossings; }
     const std::vector<int>& getTransients() const noexcept { return transients; }
     const std::vector<SampleMode>& getModes() const noexcept { return modes; }   // low to high (silt::findModes)
+    // An analysis made elsewhere (the browser analyses on its page, not its audio thread).
+    void setAnalysis (std::vector<int> zeroCrossingsIn, std::vector<int> transientsIn, std::vector<SampleMode> modesIn)
+    {
+        zeroCrossings = std::move (zeroCrossingsIn);
+        transients = std::move (transientsIn);
+        modes = std::move (modesIn);
+    }
 
 private:
     int numFrames;
