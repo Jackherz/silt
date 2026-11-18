@@ -51,8 +51,16 @@ struct Scene
     std::function<void (SiltProcessor&, juce::MidiBuffer&, int sampleAt, int blockSize)> during;
 };
 
+// Each scene is also written as a log of what it did (web/engine/replay.*
+// plays it through the browser's build to check it sounds the same).
+std::FILE* sceneLog = nullptr;
+std::string goldenFolder;
+int logSample = 0;
+
 void set (SiltProcessor& silt, const char* id, float value)   // in the parameter's own units
 {
+    if (sceneLog != nullptr && silt.params.getParameter (id) != nullptr)
+        std::fprintf (sceneLog, "set %d %s %.9g\n", logSample, id, (double) value);
     auto* p = dynamic_cast<juce::RangedAudioParameter*> (silt.params.getParameter (id));
     if (p == nullptr)
         return;   // not in this build
@@ -61,6 +69,8 @@ void set (SiltProcessor& silt, const char* id, float value)   // in the paramete
 
 void route (SiltProcessor& silt, int modulator, const char* id, float amount, int polarity = 0)
 {
+    if (sceneLog != nullptr && silt.modulationTarget (id) >= 0)
+        std::fprintf (sceneLog, "route %d %d %s %.9g %d\n", logSample, modulator, id, (double) amount, polarity);
     const int t = silt.modulationTarget (id);
     if (t < 0)
         return;
@@ -308,7 +318,7 @@ float testInput (std::int64_t i, int channel)
     return (float) (chirp + pulse) * (channel == 0 ? 1.0f : 0.8f);
 }
 
-std::vector<float> run (const Scene& scene)
+std::vector<float> run (const Scene& scene, std::FILE* log)
 {
     SiltProcessor silt;
     silt.enableAllBuses();
@@ -327,6 +337,11 @@ std::vector<float> run (const Scene& scene)
             std::exit (2);
         }
     }
+    sceneLog = log;
+    logSample = 0;
+    std::fprintf (log, "scene %s %d %d %d %d %d\n", scene.name, (int) (scene.seconds * rate), scene.blockSize,
+                  scene.input || ! SiltProcessor::isInstrument ? 1 : 0, scene.hostPlaying ? 1 : 0, silt.getTotalNumInputChannels() > 0 ? 1 : 0);
+    std::fprintf (log, "set 0 root %.9g\n", (double) silt.params.getRawParameterValue ("root")->load());
     scene.setUp (silt);
 
     const int total = (int) (scene.seconds * rate);
@@ -343,13 +358,33 @@ std::vector<float> run (const Scene& scene)
                 for (int i = 0; i < n; ++i)
                     buffer.setSample (ch, i, testInput (start + i, ch % 2));
         juce::MidiBuffer midi;
+        logSample = start;
         scene.during (silt, midi, start, n);
+        for (const auto event : midi)
+            std::fprintf (log, "midi %d %d %d %d\n", start + event.samplePosition, event.data[0],
+                          event.numBytes > 1 ? event.data[1] : 0, event.numBytes > 2 ? event.data[2] : 0);
         clock.samples = start;
         silt.processBlock (buffer, midi);
         for (int i = 0; i < n; ++i)
         {
             out[(size_t) (start + i) * 2] = buffer.getSample (0, i);
             out[(size_t) (start + i) * 2 + 1] = buffer.getSample (1, i);
+        }
+    }
+    if constexpr (SiltProcessor::isInstrument)
+    {
+        // The sample as the plug-in decoded it (planar), for the replay.
+        static bool written = false;
+        if (const auto* b = silt.instrument.getEngine().getCurrentBuffer(); b != nullptr && ! written )
+        {
+            written = true;
+            if (auto* f = std::fopen ((goldenFolder + "/sample.f32").c_str(), "wb"))
+            {
+                std::fwrite (b->getReadPointer (0), sizeof (float), (size_t) b->getNumFrames(), f);
+                std::fwrite (b->getReadPointer (1), sizeof (float), (size_t) b->getNumFrames(), f);
+                std::fclose (f);
+                std::printf ("sample: %d frames\n", b->getNumFrames());
+            }
         }
     }
     silt.setPlayHead (nullptr);
@@ -407,6 +442,13 @@ bool checkParameters()
         if (! same (p->getDefaultValue(), sp::to01 (id, sp::defaultFor (id, SiltProcessor::isInstrument))))
             report (name + ": default " + juce::String (p->convertFrom0to1 (p->getDefaultValue())));
 
+        {
+            // What the host holds before anything's moved, against the browser's own store.
+            silt::Instrument fresh (SiltProcessor::isInstrument);
+            const float held = silt.params.getRawParameterValue (name)->load();
+            if (! same (held, fresh.parameter (id)))
+                report (name + ": holds " + juce::String (held, 9) + " at first, the instrument " + juce::String (fresh.parameter (id), 9));
+        }
         for (int k = 0; k <= 4000; ++k)
         {
             const float x = (float) k / 4000.0f;
@@ -449,12 +491,16 @@ int main (int argc, char* argv[])
     juce::ScopedJuceInitialiser_GUI juceInit;
     const juce::File outDir = juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]);
     outDir.createDirectory();
+    goldenFolder = outDir.getFullPathName().toStdString();
     const juce::File refDir = argc > 2 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]) : juce::File();
 
     bool allSame = checkParameters();
     for (const auto& scene : scenes())
     {
-        const auto out = run (scene);
+        auto* log = std::fopen (outDir.getChildFile (juce::String (scene.name) + ".log").getFullPathName().toRawUTF8(), "w");
+        const auto out = run (scene, log);
+        std::fclose (log);
+        sceneLog = nullptr;
         const auto file = outDir.getChildFile (juce::String (scene.name) + ".f32");
         file.replaceWithData (out.data(), out.size() * sizeof (float));
 

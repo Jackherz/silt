@@ -67,6 +67,10 @@ if(SILT_BUILD_TESTS)
     catch_discover_tests(silt_tests)
 endif()
 
+# What the browser version reads (params.json, ...), from the same sources.
+add_executable(silt_export_web tools/export-web/Main.cpp)
+target_link_libraries(silt_export_web PRIVATE silt_core)
+
 if(SILT_CORE_ONLY)
     return()
 endif()

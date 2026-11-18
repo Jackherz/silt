@@ -263,7 +263,8 @@ Instrument::Instrument (bool isInstrument)
     targetOf.fill (-1);
     for (int id = 0; id < sp::count; ++id)
     {
-        own[(size_t) id].store (sp::defaultFor (id, instrument));
+        // As a host holds it (Pitch's 0 is −5.4e-7 st in the plug-in too).
+        own[(size_t) id].store (sp::hostDefault (id, instrument));
         source[(size_t) id] = &own[(size_t) id];
     }
 

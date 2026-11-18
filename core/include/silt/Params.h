@@ -287,6 +287,15 @@ float defaultFor (int id, bool instrument) noexcept;
 float to01 (int id, float value) noexcept;
 float from01 (int id, float normalised) noexcept;
 float snapValue (int id, float value) noexcept;
+float rangeFrom01 (int id, float normalised) noexcept;   // from01 before snapping
+
+// A value as a JUCE host holds it. Before anything moves: the default through
+// 0–1 and back, not snapped (JUCE's "legacy" start). Set: through 0–1 twice
+// (the parameter, then the value tree), and a change approximately equal to the
+// value held is dropped, except the first.
+float hostDefault (int id, bool instrument) noexcept;
+float hostSet (int id, float value) noexcept;
+bool approximatelyEqual (float a, float b) noexcept;   // JUCE's
 
 // How a value reads, exactly as in the plug-in.
 std::string text (int id, float value);

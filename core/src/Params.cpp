@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 
 namespace silt::params
 {
@@ -152,6 +153,11 @@ float to01 (int id, float v) noexcept
 
 float from01 (int id, float proportion) noexcept
 {
+    return snapValue (id, rangeFrom01 (id, proportion));
+}
+
+float rangeFrom01 (int id, float proportion) noexcept
+{
     const auto& p = info (id);
     proportion = limit (0.0f, 1.0f, limit (0.0f, 1.0f, proportion));
     float v = 0.0f;
@@ -174,7 +180,35 @@ float from01 (int id, float proportion) noexcept
             }
             break;
     }
-    return snapValue (id, v);
+    return v;
+}
+
+float hostDefault (int id, bool instrument) noexcept
+{
+    // JUCE's value tree starts from the range's value for the 0–1 default, not
+    // snapped; then, connecting its state, sets the snapped default through the
+    // parameter if that's not approximately the same.
+    const float default01 = info (id).kind == Kind::boolean ? (defaultFor (id, instrument) > 0.5f ? 1.0f : 0.0f)
+                                                             : to01 (id, defaultFor (id, instrument));
+    const float start = rangeFrom01 (id, default01);
+    const float snapped = from01 (id, default01);
+    if (approximatelyEqual (snapped, start))
+        return start;
+    return from01 (id, to01 (id, from01 (id, to01 (id, snapped))));
+}
+
+float hostSet (int id, float value) noexcept
+{
+    return from01 (id, to01 (id, from01 (id, to01 (id, value))));
+}
+
+bool approximatelyEqual (float a, float b) noexcept
+{
+    if (! (std::isfinite (a) && std::isfinite (b)))
+        return a == b;
+    const float diff = std::abs (a - b);
+    return diff <= std::numeric_limits<float>::min()
+        || diff <= std::numeric_limits<float>::epsilon() * std::max (std::abs (a), std::abs (b));
 }
 
 double quartersFor (int index) noexcept
