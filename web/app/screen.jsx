@@ -2,6 +2,7 @@
 // SLICE's lines and the voices' playheads; under it the grain field, where every grain leaves
 // a short trail (Graphite's look: dots); LIVE's scrolling ring; and the lines of text. It reads
 // the audio's latest report itself, 60 times a second, without redrawing the rest of the panel.
+import { followPointer } from './pointer.js';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { C, font } from './theme.js';
 import { INSET_PAGES, deepBack, drawInset, liveScope } from './insets.js';
@@ -366,8 +367,7 @@ export function Screen({ r, scale, audio, overview, region, slices, gain, live, 
       if (drag.current && !drag.current.bar) sliceEdits.end();
       drag.current = null;
     };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    followPointer(e, move, up);
   };
   // SLICE: double-click a line to remove it, or anywhere else on the waveform to add one.
   const doubleClick = (e) => {
@@ -424,8 +424,7 @@ export function Screen({ r, scale, audio, overview, region, slices, gain, live, 
       setView(centre - 0.5 * span, centre + 0.5 * span);
     };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); drag.current = null; setOver((o) => o); };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    followPointer(e, move, up);
   };
   const zoomed = zoom > 1.01;
 

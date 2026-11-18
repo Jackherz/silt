@@ -1,6 +1,7 @@
 // Silt in the browser: the plug-in's panel at its own 1200 × 820, scaled to the
 // window, drawn from the plug-in's exported data (params, layout, help, presets)
 // and its own value text (the WebAssembly build).
+import { followPointer } from './pointer.js';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { panelGeometry, phoneGeometry, PW, centred, box, SPINE } from './geometry.js';
@@ -223,8 +224,7 @@ function Knob({ r, pos, bipolarOrigin, text, id, help }) {
       ui.depthDragged(m, id, true);
     };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); ui.depthDragged(m, id, false); ui.endStep(); };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    followPointer(e, move, up);
   };
   // Up or right raises it: 250 px end to end, ten times finer with Shift (held now).
   const down = (e) => {
@@ -246,8 +246,7 @@ function Knob({ r, pos, bipolarOrigin, text, id, help }) {
       ui.setFrom01(id, running);
     };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); ui.endGesture(id); };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    followPointer(e, move, up);
     ui.beginGesture(id);
   };
   return (
@@ -449,8 +448,7 @@ function Chain({ g, value, openModule, half, chainOpen }) {
       next.splice(to, 0, order[p]);
       ui.setParam('chainOrder', CHAIN_ORDERS.findIndex((o) => o.every((v, i) => v === next[i])));
     };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    followPointer(e, move, up);
   };
 
   const block = (r, m, lifted, p) => {
@@ -574,8 +572,7 @@ function Rail({ r, modTitles, shown, armed, routeCounts, traces, bipolar }) {
       if (!dragging) ui.selectModulator(m, !shift);
       else if (over) ui.dropChip(m, over);
     };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    followPointer(e, move, up);
   };
   // Down the side (the plug-in's rail), or across, side by side, on a phone.
   const across = r[2] > r[3] * 3;
@@ -662,8 +659,7 @@ function RouteList({ r, routes, pageName, currentPage, close }) {
       ui.setAmount(rt.m, rt.id, snapped(running));
     };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); ui.endStep(); };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    followPointer(e, move, up);
   };
   return (
     <>
@@ -945,12 +941,21 @@ function BrowserRow({ r, parts, state, onStart, remind, onPlugin, mic, onMic, te
   const isBlack = (n) => [1, 3, 6, 8, 10].includes(n % 12);
   const notes = Array.from({ length: count }, (_, i) => first + i);
   const whiteIndex = (n) => notes.filter((x) => x < n && !isBlack(x)).length;
-  const pressing = useRef(null);
-  const press = (note) => { if (pressing.current === note) return; if (pressing.current != null) noteOff(pressing.current); pressing.current = note; if (note != null) noteOn(note); };
+  // Each finger (or the mouse) plays its own note: chords on a touch screen, and lifting one
+  // finger, or turning a knob with another, leaves the rest sounding. Sliding along the keys
+  // moves that finger's note.
+  const pressing = useRef(new Map());   // pointer id → note
+  const press = (id, note) => {
+    const was = pressing.current.get(id);
+    if (was === note) return;
+    if (was != null) noteOff(was);
+    if (note == null) pressing.current.delete(id); else { pressing.current.set(id, note); noteOn(note); }
+  };
   useEffect(() => {
-    const up = () => press(null);
+    const up = (e) => press(e.pointerId, null);
     window.addEventListener('pointerup', up);
-    return () => window.removeEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    return () => { window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
   }, []);
   const key = (n) => {
     const b = isBlack(n);
@@ -961,7 +966,8 @@ function BrowserRow({ r, parts, state, onStart, remind, onPlugin, mic, onMic, te
       <div key={n} className="at piano" data-help="!keys"
            style={{ ...box(kr), zIndex: b ? 2 : 1, borderRadius: '0 0 3px 3px',
                     background: down ? css(S.accent) : b ? css(S.sunk) : css(C.knobFace) }}
-           onPointerDown={(e) => { e.preventDefault(); press(n); }} onPointerEnter={(e) => { if (e.buttons & 1) press(n); }}>
+           onPointerDown={(e) => { e.preventDefault(); e.currentTarget.releasePointerCapture?.(e.pointerId); press(e.pointerId, n); }}
+           onPointerEnter={(e) => { if (pressing.current.has(e.pointerId)) press(e.pointerId, n); }}>
         {!b && n % 12 === 0 && (
           <span style={{ position: 'absolute', bottom: 2, left: 0, right: 0, textAlign: 'center', ...font.mono(9), color: down ? css(S.panel) : '#555048' }}>C{n / 12 - 2}</span>
         )}
@@ -973,8 +979,7 @@ function BrowserRow({ r, parts, state, onStart, remind, onPlugin, mic, onMic, te
     let running = tempo, lastY = e.clientY;
     const move = (m) => { running += (lastY - m.clientY) / ui.scale / (m.shiftKey ? 10 : 2); lastY = m.clientY; onTempo(running); };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    followPointer(e, move, up);
   };
   const running = state === 'running';
   return (
@@ -1011,8 +1016,7 @@ function AmountBox({ r, amount, set }) {
     let running = amount, lastY = e.clientY;
     const move = (m) => { running = Math.max(0.01, Math.min(1, running + (lastY - m.clientY) / ui.scale / (m.shiftKey ? 1000 : 200))); lastY = m.clientY; clampSet(running); };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    followPointer(e, move, up);
   };
   return (
     <At r={[r[0] + 0.5, r[1] + 2.5, r[2] - 1, r[3] - 5]} data-help="!randomAmount" className="amount" onPointerDown={down}
@@ -1198,8 +1202,7 @@ function GainBox({ r, text, db, set, step, beginStep, endStep, normalise, openMe
     beginStep('SAMPLE GAIN');
     const move = (m) => { running = Math.max(-24, Math.min(24, running + (lastY - m.clientY) / ui.scale * (m.shiftKey ? 0.02 : 0.15))); lastY = m.clientY; set(running); };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); endStep(); };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    followPointer(e, move, up);
   };
   return (
     <At r={r} className="gain-box" data-help="!gain" onPointerDown={down}
@@ -1243,6 +1246,17 @@ function writeStored(key, value) {
 // and the page is just as tall as the panel; on its own, the panel fits the window.
 const EMBEDDED = (() => { try { return window.self !== window.top; } catch { return true; } })();
 if (EMBEDDED) document.documentElement.classList.add('embedded');
+// A touch screen (a phone, an iPad): two fingers at once, one on a key and one on a knob, are
+// playing, not pinching, so the page never zooms; Safari's own pinch gestures are cancelled
+// too. One finger still scrolls the page.
+const TOUCH = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
+if (TOUCH) {
+  document.documentElement.classList.add('touch');
+  const stop = (e) => e.preventDefault();
+  for (const type of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(type, stop, { passive: false });
+  document.addEventListener('touchmove', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+}
+
 // A phone (700 wide or less): the phone layout, 390 wide, scaled to the width; the page scrolls.
 function useScale() {
   const fit = () => {

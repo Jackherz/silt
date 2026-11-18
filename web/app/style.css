@@ -64,6 +64,6 @@ svg.at { pointer-events: none; }
 html.embedded #root { min-height: 0; }
 /* A phone: the page scrolls round the phone layout; controls that drag don't scroll it. */
 html.phone, html.phone body { overflow-x: hidden; overflow-y: auto; }
-html.phone .knob-hit, html.phone .chip, html.phone .piano, html.phone .gain-box, html.phone .zoom-box { touch-action: none; }
-html.phone canvas.at { touch-action: pan-y; }
-html.phone .key { touch-action: manipulation; }
+html.touch .knob-hit, html.touch .chip, html.touch .piano, html.touch .gain-box, html.touch .zoom-box, html.touch .knob-ring { touch-action: none; }
+html.touch canvas.at { touch-action: pan-y; }
+html.touch .key, html.touch .popup-item { touch-action: manipulation; }
