@@ -15,9 +15,15 @@ for (const [label, viewport, mobile] of [['desktop', { width: 1440, height: 900 
   await frame.locator('canvas[data-sample="AHHH-PROGRESSION"]').waitFor({ timeout: 15000 });
   await page.waitForTimeout(400);
   const fit = await page.evaluate(() => { const f = document.getElementById('silt-frame'); return { h: f.getBoundingClientRect().height, w: f.getBoundingClientRect().width, body: f.contentDocument.body.scrollHeight }; });
-  check(`${label}: the frame is as tall as the panel`, Math.abs(fit.h - fit.w * 820 / 1200) < 2 && Math.abs(fit.h - fit.body) < 2, `${fit.w.toFixed(0)} x ${fit.h.toFixed(0)}`);
+  // The panel's own shape: 1200 x 820 on a desktop, the phone layout's 390 wide on a phone.
+  const stage = await frame.locator('.stage').evaluate((e) => [parseFloat(e.style.width), parseFloat(e.style.height)]);
+  check(`${label}: the frame is as tall as the panel`, Math.abs(fit.h - fit.w * stage[1] / stage[0]) < 2 && Math.abs(fit.h - fit.body) < 2, `${fit.w.toFixed(0)} x ${fit.h.toFixed(0)}, panel ${stage.join(' x ')}`);
   check(`${label}: the tour opens on a first visit`, (await frame.locator('.tour').count()) === 1);
-  await page.screenshot({ path: `../build-web/site-${label}.png`, fullPage: false });
+  // The header's player steps aside on a phone (as on Brood's page) and stays on a desktop.
+  await page.waitForTimeout(400);
+  const dock = await page.evaluate(() => getComputedStyle(document.querySelector('.audio-dock')).visibility);
+  check(`${label}: the header's player ${mobile ? 'is hidden' : 'stays'}`, mobile ? dock === 'hidden' : dock === 'visible', dock);
+  await page.screenshot({ path: `../build-web/site-${label}.png`, fullPage: label === 'phone' });
   await frame.getByText('SKIP TOUR', { exact: true }).click();
   // A song in the header, then START AUDIO in Silt: the song pauses.
   await page.evaluate(() => { const a = document.getElementById('site-audio'); a.muted = true; return a.play?.().catch(() => {}); });
