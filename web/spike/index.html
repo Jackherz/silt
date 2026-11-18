@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Silt WASM spike</title>
+<style>
+  :root { --bg: #16171a; --panel: #202226; --ink: #d9d6cc; --dim: #8a877e; --hot: #e0a243; --line: #34363b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 ui-monospace, Menlo, monospace; }
+  main { max-width: 640px; padding: 20px 16px 40px; }
+  h1 { font-size: 15px; letter-spacing: .12em; margin: 0 0 4px; }
+  p { color: var(--dim); margin: 0 0 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+  button { font: inherit; letter-spacing: .08em; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+           padding: 9px 12px; border-radius: 3px; cursor: pointer; }
+  button[aria-pressed="true"] { border-color: var(--hot); color: var(--hot); }
+  button:disabled { opacity: .4; cursor: default; }
+  pre { background: var(--panel); border: 1px solid var(--line); padding: 12px; margin: 0 0 12px; white-space: pre-wrap; min-height: 3em; }
+  .big { font-size: 22px; color: var(--hot); }
+</style>
+</head>
+<body>
+<main>
+  <h1>SILT · WASM SPIKE</h1>
+  <p>Silt's own C++ core compiled to WebAssembly, in an AudioWorklet, playing rain-bells.</p>
+
+  <div class="row">
+    <button id="start">START AUDIO</button>
+    <button id="typical" aria-pressed="true" disabled>TYPICAL · 4 NOTES</button>
+    <button id="worst" aria-pressed="false" disabled>WORST · 16 NOTES</button>
+    <button id="stop" disabled>NOTES OFF</button>
+  </div>
+  <pre id="live">Press START AUDIO.</pre>
+
+  <div class="row">
+    <button id="bench">BENCHMARK (MAIN THREAD, ~8 S)</button>
+  </div>
+  <pre id="results">Renders four seconds of each scene as fast as it can and times it. The page freezes while it runs.</pre>
+</main>
+<script type="module">
+import { loadSpike, benchmark, sceneNotes } from './spike-wasm.js';
+
+const $ = (id) => document.getElementById(id);
+const wasmBytes = fetch('silt-spike.wasm').then((r) => r.arrayBuffer());
+const sampleBytes = fetch('rain-bells.flac').then((r) => r.arrayBuffer());
+let ctx, node, scene = 0, info = '', load = '';
+
+const show = () => { $('live').innerHTML = info + load; };
+const setScene = (s) => {
+  scene = s;
+  $('typical').setAttribute('aria-pressed', s === 0);
+  $('worst').setAttribute('aria-pressed', s === 1);
+  node.port.postMessage({ type: 'scene', scene: s });
+  for (const n of sceneNotes(s)) node.port.postMessage({ type: 'note', note: n, velocity: 100 / 127, on: true });
+};
+
+if (!window.isSecureContext) {
+  $('start').disabled = true;
+  $('live').textContent = 'Live audio needs https (or localhost), so it is off here. The benchmark below still works.';
+}
+
+$('start').onclick = async () => {
+  $('start').disabled = true;
+  try {
+    ctx = new AudioContext({ latencyHint: 'interactive' });
+    await ctx.audioWorklet.addModule('spike-worklet.js');
+    node = new AudioWorkletNode(ctx, 'silt-spike', { numberOfOutputs: 1, outputChannelCount: [2] });
+    node.connect(ctx.destination);
+    const ready = new Promise((res) => {
+      node.port.onmessage = (e) => {
+        const m = e.data;
+        if (m.type === 'ready') res(m);
+        else if (m.type === 'sampleLoaded') { info += `sample analysed in ${m.ms.toFixed(0)} ms (in the worklet)\n`; show(); }
+        else if (m.type === 'load') { load = `\n<span class="big">${m.percent.toFixed(1)}%</span> of each block · ${m.grains} grains`; show(); }
+      };
+    });
+    node.port.postMessage({ type: 'wasm', bytes: await wasmBytes });
+    const r = await ready;
+    info = `rate ${r.sampleRate} Hz · base latency ${(ctx.baseLatency * 1000).toFixed(1)} ms · timer ${r.timer}\n`;
+    const audio = await ctx.decodeAudioData((await sampleBytes).slice(0));
+    const channels = [audio.getChannelData(0), audio.getChannelData(audio.numberOfChannels > 1 ? 1 : 0)];
+    node.port.postMessage({ type: 'sample', channels, sampleRate: audio.sampleRate });
+    await ctx.resume();
+    for (const id of ['typical', 'worst', 'stop']) $(id).disabled = false;
+    setScene(0);
+    show();
+  } catch (err) {
+    $('live').textContent = `Couldn't start: ${err.message}`;
+    $('start').disabled = false;
+  }
+};
+$('typical').onclick = () => setScene(0);
+$('worst').onclick = () => setScene(1);
+$('stop').onclick = () => node.port.postMessage({ type: 'allNotesOff' });
+
+$('bench').onclick = async () => {
+  $('bench').disabled = true;
+  $('results').textContent = 'Running…';
+  await new Promise((r) => setTimeout(r, 50));
+  try {
+    const spike = await loadSpike(await wasmBytes);
+    spike.init(48000);
+    const off = new OfflineAudioContext(2, 1, 48000);
+    const audio = await off.decodeAudioData((await sampleBytes).slice(0));
+    const t0 = performance.now();
+    spike.setSample([audio.getChannelData(0), audio.getChannelData(audio.numberOfChannels > 1 ? 1 : 0)], audio.sampleRate);
+    let text = `analyse: ${(performance.now() - t0).toFixed(0)} ms\n`;
+    for (const r of benchmark(spike, 48000, () => performance.now()))
+      text += `${r.scene}: ${r.percent.toFixed(1)}% of real time · peak ${r.peak.toFixed(2)} · up to ${r.grains} grains\n`;
+    $('results').textContent = text + `\n${navigator.userAgent}`;
+  } catch (err) {
+    $('results').textContent = `Failed: ${err.message}`;
+  }
+  $('bench').disabled = false;
+};
+</script>
+</body>
+</html>
