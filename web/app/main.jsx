@@ -163,10 +163,53 @@ function Knob({ r, pos, bipolarOrigin, text, id, help }) {
   const angle = at(pos) * 180 / Math.PI;
   const valueBox = [r[0] + Math.trunc((r[2] - boxW) / 2), r[1] + r[3] - boxH, boxW, boxH];
   const editing = ui.editing === id;
+  // The rings (SiltEditor::drawModulation): one per live route, 3 px apart outside the arc.
+  const ringBase = side / 2 - 4 * u + 2;
+  const target = ui.isTarget(id);
+  const live = target ? [0, 1, 2, 3].filter((m) => ui.routeAmount(m, id) !== 0 && ui.modulatorOn(m)) : [];
+  const hint = target && ui.armed >= 0 && ui.routeAmount(ui.armed, id) === 0 ? ui.armed : -1;
+  const dropHover = target && ui.dropHover?.id === id && ui.routeAmount(ui.dropHover.m, id) === 0 ? ui.dropHover.m : -1;
+  const ringAt = (dx, dy) => {
+    const rings = live.length + (hint >= 0 ? 1 : 0);
+    if (!target || rings === 0) return -1;
+    const d = Math.hypot(dx, dy);
+    if (d < ringBase - 4 || d > ringBase + 3 * (rings - 1) + 5) return -1;
+    const ring = Math.max(0, Math.min(rings - 1, roundToInt((d - ringBase) / 3)));
+    return ring < live.length ? live[ring] : hint;
+  };
+  const localPoint = (e) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    return [(e.clientX - box.left) / ui.scale - rot[2] / 2, (e.clientY - box.top) / ui.scale - rot[3] / 2];
+  };
+  // A depth drag: 150 px from no depth to full, ten times finer with Shift (held now).
+  const depthDrag = (e, m) => {
+    ui.beginRouteGesture();
+    let running = ui.routeAmount(m, id), last = 0;
+    const startY = e.clientY;
+    ui.depthDragged(m, id, true);
+    const move = (mv) => {
+      const pixelsUp = (startY - mv.clientY) / ui.scale;
+      running = Math.max(-1, Math.min(1, running + (pixelsUp - last) / (mv.shiftKey ? 1000 : 150)));
+      last = pixelsUp;
+      ui.setAmount(m, id, Math.abs(running) < 0.02 ? 0 : running);
+      ui.depthDragged(m, id, true);
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); ui.depthDragged(m, id, false); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
   // Up or right raises it: 250 px end to end, ten times finer with Shift (held now).
   const down = (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
+    const [dx, dy] = localPoint(e);
+    const onRing = ringAt(dx, dy);
+    if (onRing >= 0) {
+      if (e.shiftKey && e.altKey) ui.togglePolarity(onRing, id);
+      else depthDrag(e, onRing);
+      return;
+    }
+    if (e.altKey && target) { depthDrag(e, ui.depthModulator(id)); return; }
     let last = [e.clientX, e.clientY], running = ui.to01(id);
     const move = (m) => {
       const pixels = ((last[1] - m.clientY) + (m.clientX - last[0])) / ui.scale;
@@ -181,7 +224,15 @@ function Knob({ r, pos, bipolarOrigin, text, id, help }) {
   };
   return (
     <div data-help={help}>
-      <At r={rot} className="hit knob-hit" onPointerDown={down} onDoubleClick={() => ui.resetToDefault(id)} />
+      <At r={rot} className="hit knob-hit" data-knob={id} tabIndex={0} onPointerDown={down}
+          onKeyDown={(e) => { if (target && (e.key === 'Delete' || e.key === 'Backspace')) ui.clearTarget(id); }}
+          onDoubleClick={(e) => {
+            const [dx, dy] = localPoint(e);
+            const m = ringAt(dx, dy);
+            if (m >= 0 && m !== hint) { ui.beginRouteGesture(); ui.setAmount(m, id, 0); return; }   // off this knob
+            if (e.altKey && target) { ui.beginRouteGesture(); ui.setAmount(ui.depthModulator(id), id, 0); return; }
+            ui.resetToDefault(id);
+          }} />
       <svg className="at" style={{ left: 0, top: 0, width: 1, height: 1, overflow: 'visible' }}>
         <path d={arc(0, 1)} fill="none" stroke={rgba(S.ink, 0.16)} strokeWidth={2.6 * u} strokeLinecap="round" />
         <path d={arc(lo, Math.max(hi, lo + 0.0005))} fill="none" stroke={rgba(S.ink, 0.82)} strokeWidth={2.6 * u} strokeLinecap="round" />
@@ -189,6 +240,7 @@ function Knob({ r, pos, bipolarOrigin, text, id, help }) {
         <circle cx={cx} cy={cy} r={rad} fill="#efe8d6" />
         <rect x={-1.5 * u} y={-rad * 0.86} width={3 * u} height={rad * 0.5} rx={1.5 * u} fill="#181815"
               transform={`translate(${cx} ${cy}) rotate(${angle})`} />
+        {target && <Rings cx={cx} cy={cy} base={ringBase} pos={pos} id={id} live={live} hint={dropHover >= 0 ? -1 : hint} dropHover={dropHover} />}
       </svg>
       <At r={valueBox} onClick={() => ui.setEditing(id)}
           style={{ background: css(C.lcdGreen), borderRadius: 3, color: css(C.lcdText), ...font.value(Math.min(12, boxH * 0.7)),
@@ -198,6 +250,65 @@ function Knob({ r, pos, bipolarOrigin, text, id, help }) {
       </At>
     </div>
   );
+}
+
+// A knob's modulation (SiltEditor::drawModulation): per live route a ring, solid the way the
+// value moves first with an arrow and the modulator's number at its end, faint the other way
+// for a bipolar route, a stop at a clamped end; an armed modulator's hint ring; a held chip's
+// preview; and the dot where modulation has the value now.
+function Rings({ cx, cy, base, pos, id, live, hint, dropHover }) {
+  const ui = useContext(UI);
+  const angle = (v) => (-135 + v * 270) * Math.PI / 180;
+  const pt = (r, a) => [cx + r * Math.sin(a), cy - r * Math.cos(a)];
+  const stepped = ui.isStepped(id);
+  const quantise = (v) => (stepped ? ui.to01Of(id, Math.round(ui.from01Of(id, v))) : v);
+  const clamp = (v) => Math.max(0, Math.min(1, v));
+  const arcPath = (r, lo, hi) => {
+    if (hi - lo < 1e-4) hi = lo + 1e-4;
+    const [x0, y0] = pt(r, angle(lo)), [x1, y1] = pt(r, angle(hi));
+    return `M${x0} ${y0} A${r} ${r} 0 ${(hi - lo) * 270 > 180 ? 1 : 0} 1 ${x1} ${y1}`;
+  };
+  const dash = (m) => ({ 1: '7 3', 2: '3 2.5', 3: '1.2 2.2' }[m]);
+  const out = [];
+  live.forEach((m, ring) => {
+    const r = base + 3 * ring, colour = MOD[m].base;
+    const amount = ui.routeAmount(m, id), bipolar = ui.routeBipolar(m, id);
+    const rawFirst = pos + amount, rawOther = bipolar ? pos - amount : pos;
+    const rawLo = Math.min(rawFirst, rawOther), rawHi = Math.max(rawFirst, rawOther);
+    const lo = quantise(clamp(rawLo)), hi = quantise(clamp(rawHi));
+    const first = quantise(clamp(rawFirst)), other = quantise(clamp(rawOther));
+    const alpha = ui.armed === m ? 1 : 0.85;
+    if (bipolar) out.push(<path key={`o${m}`} d={arcPath(r, Math.min(pos, other), Math.max(pos, other))} fill="none" stroke={rgba(colour, alpha * 0.35)} strokeWidth="2.2" strokeDasharray={dash(m)} />);
+    out.push(<path key={`f${m}`} d={arcPath(r, Math.min(pos, first), Math.max(pos, first))} fill="none" stroke={rgba(colour, alpha)} strokeWidth="2.2" strokeDasharray={dash(m)} />);
+    const at = angle(first), onward = (amount >= 0 ? -1 : 1) * 0.13;
+    const tri = [pt(r - 3.2, at), pt(r + 3.2, at), pt(r, at + onward)];
+    out.push(<path key={`a${m}`} d={`M${tri[0]} L${tri[1]} L${tri[2]} Z`} fill={rgba(colour, alpha)} />);
+    for (const [raw, end] of [[rawLo, lo], [rawHi, hi]])
+      if (raw < 0 || raw > 1) {
+        const [a0, a1] = [pt(r - 3, angle(end)), pt(r + 3, angle(end))];
+        out.push(<line key={`s${m}${raw}`} x1={a0[0]} y1={a0[1]} x2={a1[0]} y2={a1[1]} stroke={css(colour)} strokeWidth="1.6" />);
+      }
+    const [nx, ny] = pt(r + 6, angle(first));
+    out.push(<text key={`n${m}`} x={nx} y={ny} fill={css(darker(colour, 0.3))} textAnchor="middle" dominantBaseline="central"
+                   style={{ ...font.mono(8), fontFamily: 'B612 Mono' }}>{m + 1}</text>);
+  });
+  const next = base + 3 * live.length;
+  if (dropHover >= 0)
+    out.push(<path key="drop" d={arcPath(next, pos, clamp(pos + 0.25))} fill="none" stroke={rgba(MOD[dropHover].base, 0.6)} strokeWidth="2.2" strokeDasharray={dash(dropHover)} />);
+  else if (hint >= 0)
+    out.push(<path key="hint" d={arcPath(next, 0, 1)} fill="none" stroke={rgba(MOD[hint].base, 0.8)} strokeWidth="1.8" strokeDasharray="3 2.5" />);
+  if (live.length > 0) {
+    const [dx, dy] = pt(base, angle(ui.modulated01(id)));
+    out.push(<circle key="dot" cx={dx} cy={dy} r="2.5" fill={css(C.bone)} stroke={css(S.ink)} strokeWidth="1" />);
+  }
+  return out;
+}
+
+// JUCE's Colour::darker for the ring numbers.
+function darker(rgb, amount) {
+  const k = 1 / (1 + amount);
+  const ch = (shift) => Math.trunc(((rgb >> shift) & 255) * k);
+  return (ch(16) << 16) | (ch(8) << 8) | ch(0);
 }
 
 // Typing a value into a knob's box: the same window, the same type (PanelLook::ValueBox).
@@ -403,10 +514,37 @@ function Readout({ r, title, status }) {
 
 // --- the well ----------------------------------------------------------------------------
 
-function Rail({ r, modTitles, shown, armed }) {
+function Rail({ r, modTitles, shown, armed, routeCounts }) {
   const ui = useContext(UI);
+  const [ghost, setGhost] = useState(null);   // { m, x, y }: a chip in hand
+  // Press: a click shows (and arms) it; dragged 5 px, it's in hand, and dropped on a knob
+  // it makes a route there (ModChip).
+  const down = (e, m) => {
+    if (e.button !== 0) return;
+    const start = [e.clientX, e.clientY], shift = e.shiftKey;
+    let dragging = false, over = null;
+    const knobUnder = (x, y) => document.elementsFromPoint(x, y).find((el) => el.dataset?.knob)?.dataset.knob ?? null;
+    const move = (mv) => {
+      if (!dragging && Math.hypot(mv.clientX - start[0], mv.clientY - start[1]) < 5) return;
+      if (!dragging && armed >= 0 && armed !== m) ui.selectModulator(m, true);   // this one takes over
+      dragging = true;
+      const left = ui.stageLeft(), top = ui.stageTop();
+      setGhost({ m, x: (mv.clientX - left) / ui.scale, y: (mv.clientY - top) / ui.scale });
+      over = knobUnder(mv.clientX, mv.clientY);
+      ui.setDropHover(over ? { m, id: over } : null);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      setGhost(null);
+      ui.setDropHover(null);
+      if (!dragging) ui.selectModulator(m, !shift);
+      else if (over) ui.dropChip(m, over);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
   const gap = 4, h = Math.trunc((r[3] - gap * 3) / 4);
-  return [0, 1, 2, 3].map((m) => {
+  const chips = [0, 1, 2, 3].map((m) => {
     const chip = [r[0], r[1] + m * (h + gap), r[2], h];
     const plate = [chip[0] + 1.5, chip[1] + 1.5, chip[2] - 3, chip[3] - 3];
     const area = [chip[0] + 5, chip[1] + 3, chip[2] - 10, chip[3] - 6];
@@ -414,20 +552,131 @@ function Rail({ r, modTitles, shown, armed }) {
     const swatch = [area[0] + 2, area[1] + topH / 2 - 7, 14, 14];
     const trace = [area[0] + 2 + 21, area[1] + topH + 1, area[2] - 4 - 21, area[3] - topH - 2];
     return (
-      <div key={m} data-help="!chip" className="chip" onClick={(e) => ui.selectModulator(m, !e.shiftKey)}>
+      <div key={m} data-help="!chip" className="chip" onPointerDown={(e) => down(e, m)}>
         <At r={plate} className="plate" style={{ borderRadius: 4, background: armed === m ? rgba(MOD[m].base, 0.3) : rgba(S.ink, shown === m ? 0.16 : 0.05) }} />
         <At r={swatch} style={{ borderRadius: '50%', background: css(MOD[m].base), color: css(MOD[m].ink), ...font.mono(9.5),
                                 display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {m + 1}
         </At>
-        <At r={[area[0] + 23, area[1], area[2] - 23, topH]} style={{ ...font.name(10, 0.24), color: css(S.ink), display: 'flex', alignItems: 'center' }}>
-          {modTitles[m]}
+        <At r={[area[0] + 23, area[1], area[2] - 23 - (routeCounts[m] > 0 ? 18 : 0), topH]} style={{ ...font.name(10, 0.24), color: css(S.ink), display: 'flex', alignItems: 'center', whiteSpace: 'pre' }}>
+          <Fitted text={modTitles[m]} style={font.name(10, 0.24)} width={area[2] - 23 - (routeCounts[m] > 0 ? 18 : 0)} origin="0 50%" />
         </At>
+        {routeCounts[m] > 0 && (
+          <At r={[area[0] + area[2] - 16, area[1] + topH / 2 - 6, 16, 12]} style={{ background: css(MOD[m].base), color: css(MOD[m].ink), ...font.mono(9.5),
+                                                                        display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {routeCounts[m]}
+          </At>
+        )}
         <At r={[trace[0], Math.trunc(trace[1] + trace[3] / 2), trace[2], 1]} style={{ background: rgba(S.ink, 0.15) }} />
         <At r={[trace[0], trace[1] + trace[3] / 2 - 0.7, trace[2], 1.4]} style={{ background: css(MOD[m].base), borderRadius: 1 }} />
       </div>
     );
   });
+  return (
+    <>
+      {chips}
+      {ghost && (
+        <div className="at chip-ghost" style={{ left: ghost.x - 30, top: ghost.y - 12, width: 60, height: 24, background: rgba(MOD[ghost.m].base, 0.85),
+                                                 borderRadius: 4, color: css(MOD[ghost.m].ink), ...font.mono(11), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          MOD {ghost.m + 1}
+        </div>
+      )}
+    </>
+  );
+}
+
+// MOD ROUTES: every route, filtered by modulator and page (silt::ui::RouteList), over the
+// knobs. A row: the modulator, the page, the parameter, the depth (drag it, or double-click to
+// type), its polarity, what it spans in the parameter's units, and × to remove it.
+function RouteList({ r, routes, pageName, currentPage, close }) {
+  const ui = useContext(UI);
+  const [filter, setFilter] = useState(-1);
+  const [thisPage, setThisPage] = useState(false);
+  const [pendingClear, setPendingClear] = useState(false);
+  const [typing, setTyping] = useState(null);
+  const inner = [r[0] + 6, r[1] + 4, r[2] - 12, r[3] - 8];
+  const head = [inner[0], inner[1], inner[2], 22];
+  const footer = [inner[0], inner[1] + inner[3] - 24, inner[2], 24];
+  const view = [inner[0], inner[1] + 24, inner[2], inner[3] - 24 - 24];
+  const right = (from, w) => [from - w, head[1], w, 22];
+  const closeKey = right(head[0] + head[2], 64), pageKey = right(closeKey[0] - 6, 84);
+  const clearKey = [footer[0] + footer[2] - 110, footer[1] + 2, 110, 20];
+  const redoKey = [clearKey[0] - 8 - 64, footer[1] + 2, 64, 20], undoKey = [redoKey[0] - 4 - 64, footer[1] + 2, 64, 20];
+  const shown = routes.filter((rt) => (filter < 0 || rt.m === filter) && (!thisPage || pageName(rt.id) === currentPage));
+  const muted = [0, 1, 2, 3].filter((m) => !ui.modulatorOn(m)).length;
+  const percent = (a) => { const p = roundToInt(a * 100); return `${p > 0 ? '+' : ''}${p}%`; };
+  const snapped = (a) => (Math.abs(a) < 0.02 ? 0 : Math.max(-1, Math.min(1, a)));
+  const dragDepth = (e, rt) => {
+    if (e.button !== 0) return;
+    let running = ui.routeAmount(rt.m, rt.id), lastY = e.clientY;
+    ui.beginRouteGesture();
+    const move = (mv) => {
+      running = Math.max(-1, Math.min(1, running + (lastY - mv.clientY) / ui.scale / (mv.shiftKey ? 1000 : 150)));
+      lastY = mv.clientY;
+      ui.setAmount(rt.m, rt.id, snapped(running));
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  return (
+    <>
+      <At r={r} style={{ background: css(C.bone) }} />
+      <At r={[r[0] + 10, r[1] + 4, 110, 22]} style={{ ...font.name(12), color: css(S.ink), display: 'flex', alignItems: 'center' }}>MOD ROUTES</At>
+      {['ALL', 'M1', 'M2', 'M3', 'M4'].map((t, i) => (
+        <Key key={t} r={[head[0] + 112 + i * 40 + 2, head[1], 36, 22]} text={t} on={filter === i - 1} size={10} onClick={() => setFilter(i - 1)} />
+      ))}
+      <Key r={pageKey} text="THIS PAGE" on={thisPage} size={10} onClick={() => setThisPage(!thisPage)} />
+      <Key r={closeKey} text="CLOSE" size={10} onClick={close} />
+      {shown.length === 0 && (
+        <At r={view} style={{ ...font.mono(12), color: css(S.soft), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          NO ROUTES. ALT-DRAG A KNOB, OR DRAG A MOD CHIP ONTO ONE.
+        </At>
+      )}
+      <div className="at route-rows" style={{ ...box(view), overflowY: 'auto' }}>
+        {shown.map((rt, i) => {
+          const y = i * 24, on = ui.modulatorOn(rt.m), bipolar = ui.routeBipolar(rt.m, rt.id);
+          return (
+            <div key={`${rt.m}${rt.id}`} className="route-row" style={{ position: 'absolute', left: 0, top: y, width: view[2], height: 24 }}>
+              <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 1, background: rgba(S.ink, 0.12) }} />
+              <div style={{ position: 'absolute', left: 4, top: 4, width: 26, height: 16, background: css(on ? MOD[rt.m].base : MOD[rt.m].dim), color: css(MOD[rt.m].ink),
+                            ...font.mono(10), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>M{rt.m + 1}</div>
+              <div style={{ position: 'absolute', left: 40, top: 0, width: 84, height: 24, ...font.mono(10), color: css(S.soft), display: 'flex', alignItems: 'center' }}>{pageName(rt.id)}</div>
+              <div style={{ position: 'absolute', left: 124, top: 0, width: 170, height: 24, ...font.name(12), color: css(S.ink), display: 'flex', alignItems: 'center', whiteSpace: 'pre' }}>
+                <Fitted text={ui.paramName(rt.id).toUpperCase()} style={font.name(12)} width={168} origin="0 50%" />
+              </div>
+              <div className="depth-box" style={{ position: 'absolute', left: 294, top: 2, width: 72, height: 20, background: css(C.lcdGreen), color: css(C.lcdText), borderRadius: 3,
+                                                   ...font.mono(12), display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'ns-resize' }}
+                   onPointerDown={(e) => dragDepth(e, rt)} onDoubleClick={() => setTyping(`${rt.m}${rt.id}`)}>
+                {typing === `${rt.m}${rt.id}`
+                  ? <input autoFocus className="typed" defaultValue={percent(rt.amount)} style={{ ...font.mono(12), color: css(C.lcdText) }}
+                           onBlur={(e) => { ui.beginRouteGesture(); ui.setAmount(rt.m, rt.id, snapped((parseFloat(e.target.value.replace(/[^-0-9.]/g, '')) || 0) / 100)); setTyping(null); }}
+                           onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setTyping(null); }} />
+                  : percent(rt.amount)}
+              </div>
+              <Key r={[370, 2, 26, 20]} text={bipolar ? '\u00b1' : '+'} size={11} onClick={() => ui.togglePolarity(rt.m, rt.id)} style={{ position: 'absolute' }} />
+              <div style={{ position: 'absolute', left: 402, top: 0, right: 34, height: 24, ...font.mono(11), color: css(S.soft), display: 'flex', alignItems: 'center', whiteSpace: 'pre' }}>
+                {ui.depthSpan(rt.m, rt.id)}
+              </div>
+              <Key r={[view[2] - 26, 2, 26, 20]} text={'\u00d7'} size={12} onClick={() => { ui.beginRouteGesture(); ui.setAmount(rt.m, rt.id, 0); }} />
+            </div>
+          );
+        })}
+      </div>
+      <At r={[footer[0] + 10, footer[1], 300, 24]} style={{ ...font.mono(11), color: css(S.soft), display: 'flex', alignItems: 'center', whiteSpace: 'pre' }}>
+        {`${routes.length} ${routes.length === 1 ? 'ROUTE' : 'ROUTES'}   ${muted} MUTED`}
+      </At>
+      <Key r={undoKey} text="UNDO" size={10} onClick={ui.undo} disabled={!ui.canUndo} />
+      <Key r={redoKey} text="REDO" size={10} onClick={ui.redo} disabled={!ui.canRedo} />
+      <Key r={clearKey} text={pendingClear ? 'CLICK AGAIN' : 'CLEAR ALL'} size={10}
+           onClick={() => {
+             if (!pendingClear) { setPendingClear(true); setTimeout(() => setPendingClear(false), 2500); return; }
+             ui.beginRouteGesture();
+             for (const rt of routes) ui.setAmount(rt.m, rt.id, 0);
+             setPendingClear(false);
+           }} />
+    </>
+  );
 }
 
 // SHAPE's slot 7: one grain's envelope above, one note's ADSR below (SiltEditor::paintPreview).
@@ -463,7 +712,7 @@ function ShapePreview({ g, value, grainCurve }) {
   );
 }
 
-function Well({ g, page, entries, context, value, text, params, grainCurve, modTitles, armed }) {
+function Well({ g, page, entries, context, value, text, params, grainCurve, modTitles, armed, routeCounts, routesOpen, routeList }) {
   const ui = useContext(UI);
   const pick = (id) => (index) => ui.setParam(id, index);
   const toggle = (id) => () => ui.setParam(id, value(id) > 0.5 ? 0 : 1);
@@ -476,11 +725,12 @@ function Well({ g, page, entries, context, value, text, params, grainCurve, modT
   return (
     <>
       <Surface r={g.well} colour={S.panel} />
-      <At r={[g.well[0], g.well[1], g.well[2], 3]} style={{ background: css(colour), borderRadius: '6px 6px 0 0' }} />
-      <Rail r={g.rail} modTitles={modTitles} shown={context.modShown} armed={armed} />
+      <At r={[g.well[0], g.well[1], g.well[2], 3]} style={{ background: css(routesOpen ? S.ink : colour), borderRadius: '6px 6px 0 0' }} />
+      <Rail r={g.rail} modTitles={modTitles} shown={context.modShown} armed={armed} routeCounts={routeCounts} />
       <At r={[g.slots[0].column[0], g.controlRow[1] + 8, 1, g.controlRow[3] - 16]} style={{ background: rgba(S.ink, 0.2) }} />
-      {page === 1 && <ShapePreview g={g} value={value} grainCurve={grainCurve} />}
-      {items.map((e, i) => {
+      {routesOpen && routeList}
+      {!routesOpen && page === 1 && <ShapePreview g={g} value={value} grainCurve={grainCurve} />}
+      {!routesOpen && items.map((e, i) => {
         const slot = g.slots[e.slot];
         const dim = isDimmed(e, context) ? 0.35 : 1;
         if (e.kind === 'underButton' || e.kind === 'underMenu') {
@@ -511,7 +761,7 @@ function Well({ g, page, entries, context, value, text, params, grainCurve, modT
           control = <Key r={centred(cell, cell[2] - 12, 34)} text={e.text} on={e.kind === 'button' && value(e.id) > 0.5}
                          onClick={e.kind === 'button' ? toggle(e.id) : action(e.id)} help={e.id} />;
         } else if (e.kind === 'banner') {
-          control = <Banner r={centred(cell, cell[2], 56)} onClick={() => ui.selectModulator((context.modShown + 1) % 4, false)} m={context.modShown} type={Math.round(value(`m${context.modShown + 1}Type`))} routes={0}
+          control = <Banner r={centred(cell, cell[2], 56)} onClick={() => ui.selectModulator((context.modShown + 1) % 4, false)} m={context.modShown} type={Math.round(value(`m${context.modShown + 1}Type`))} routes={routeCounts[context.modShown]}
                             muted={value(`m${context.modShown + 1}Enable`) <= 0.5} />;
         }
         return <div key={i} style={{ opacity: dim }}>{label}{control}</div>;
@@ -651,6 +901,11 @@ function App() {
   const [editing, setEditing] = useState(null);
   const [menu, setMenu] = useState(null);
   const [hover, setHover] = useState(null);
+  const [depthReadout, setDepthReadout] = useState('');
+  const [flash, setFlash] = useState('');
+  const [dropHover, setDropHover] = useState(null);   // { m, id }: a chip held over a knob
+  const [routesOpen, setRoutesOpen] = useState(false);
+  const lastUsedMod = useRef(0);
   const stage = useRef(null);
   const g = useMemo(() => panelGeometry(true), []);
 
@@ -681,6 +936,30 @@ function App() {
     window.siltAudio?.setParam(byId[id].index, v);
     setVersion((n) => n + 1);
   };
+  const showFlash = (message) => {
+    setFlash(message);
+    clearTimeout(showFlash.timer);
+    showFlash.timer = setTimeout(() => setFlash(''), 2000);
+  };
+  const routeAmount = (m, id) => (byId[id] ? silt.routeAmount(m, byId[id].index) : 0);
+  const setRoute = (m, id, amount, polarity = silt.routePolarity(m, byId[id].index)) => {
+    silt.setRoute(m, byId[id].index, amount, polarity);
+    window.siltAudio?.setRoute(m, byId[id].index, amount, polarity);
+    setVersion((n) => n + 1);
+  };
+  // What a route moves its parameter over, in its own units (SiltProcessor::depthSpan, depthText).
+  const depthSpan = (m, id) => {
+    const amount = routeAmount(m, id), base = silt.to01(byId[id].index, value(id));
+    const bipolar = silt.routeBipolar(m, byId[id].index);
+    const lo = Math.max(0, Math.min(1, base + (bipolar ? -Math.abs(amount) : Math.min(0, amount))));
+    const hi = Math.max(0, Math.min(1, base + (bipolar ? Math.abs(amount) : Math.max(0, amount))));
+    const at = (p) => text(id, silt.from01(byId[id].index, p));
+    return `${at(lo)} to ${at(hi)}`;
+  };
+  const depthText = (m, id) => {
+    const percent = roundToInt(routeAmount(m, id) * 100);
+    return `${depthSpan(m, id)}  (${percent > 0 ? '+' : ''}${percent}%)`;
+  };
   const selectModulator = (m, arm) => {
     setModShown(m);
     if (arm) setArmed((a) => (a === m ? -1 : m));
@@ -688,6 +967,7 @@ function App() {
   const ui = {
     scale, editing,
     stageLeft: () => stage.current.getBoundingClientRect().left,
+    stageTop: () => stage.current.getBoundingClientRect().top,
     to01: (id) => silt.to01(byId[id].index, value(id)),
     setFrom01: (id, p) => setParam(id, silt.from01(byId[id].index, p)),
     setParam,
@@ -706,6 +986,40 @@ function App() {
     },
     setEditing, beginGesture: () => {}, endGesture: () => {},
     openMenu: setMenu,
+    armed, dropHover,
+    depthSpan, paramName: (id) => byId[id].name,
+    undo: () => {}, redo: () => {}, canUndo: false, canRedo: false,   // slice 3
+    isTarget: (id) => !!byId[id] && silt.isTarget(byId[id].index),
+    isStepped: (id) => byId[id]?.kind === 'integer' || byId[id]?.kind === 'choice',
+    to01Of: (id, v) => silt.to01(byId[id].index, v),
+    from01Of: (id, p) => silt.from01(byId[id].index, p),
+    modulated01: (id) => silt.to01(byId[id].index, value(id)),   // the audio's modulated value arrives in step 5
+    routeAmount,
+    routeBipolar: (m, id) => silt.routeBipolar(m, byId[id].index),
+    modulatorOn: (m) => value(`m${m + 1}Enable`) > 0.5,
+    // A new route gesture (SiltProcessor::beginRouteGesture): a route removed earlier starts natural.
+    beginRouteGesture: () => silt.naturalWhereUnrouted(),
+    setAmount: (m, id, amount) => {
+      if (amount !== 0 && !silt.routeCanWork(m, byId[id].index)) { showFlash('PER GRAIN ONLY REACHES GRAIN SETTINGS'); return; }
+      lastUsedMod.current = m;
+      setRoute(m, id, amount);
+    },
+    togglePolarity: (m, id) => { silt.naturalWhereUnrouted(); setRoute(m, id, routeAmount(m, id), silt.routeBipolar(m, byId[id].index) ? 1 : 2); },
+    clearTarget: (id) => { silt.naturalWhereUnrouted(); for (let m = 0; m < 4; m++) setRoute(m, id, 0); },
+    // Which modulator an Alt-drag sets (SiltEditor::depthModulatorFor): the armed one; else the
+    // only one routed here; else the one last used.
+    depthModulator: (id) => {
+      if (armed >= 0) return armed;
+      const routed = [0, 1, 2, 3].filter((m) => routeAmount(m, id) !== 0);
+      return routed.length === 1 ? routed[0] : lastUsedMod.current;
+    },
+    depthDragged: (m, id, dragging) => setDepthReadout(dragging ? `MOD ${m + 1} > ${byId[id].name.slice(0, 16).toUpperCase()}  ${depthText(m, id)}` : ''),
+    setDropHover,
+    dropChip: (m, id) => {
+      if (!ui.isTarget(id) || routeAmount(m, id) !== 0) return;
+      silt.naturalWhereUnrouted();
+      ui.setAmount(m, id, 0.25);   // a musical starting depth
+    },
     selectModulator,
     setPage: (p) => setPage(p),
     openModule: (m) => {
@@ -717,14 +1031,27 @@ function App() {
   const context = { value, modShown, resonatorHalf: half, delayForced: false };
   const wordWidth = Math.ceil(measure('SILT', `${font.wordmark(48).fontSize}px "Glyph Grotesque"`)) + 4;
   const shapes = ['SINE', 'TRIANGLE', 'SAW', 'SQUARE'];
+  // Every route, in target order then modulator (SiltProcessor::allRoutes).
+  const routes = [];
+  for (const p of data.params)
+    if (silt.isTarget(p.index))
+      for (let m = 0; m < 4; m++) {
+        const amount = silt.routeAmount(m, p.index);
+        if (amount !== 0) routes.push({ m, id: p.id, amount });
+      }
+  const routeCounts = [0, 1, 2, 3].map((m) => routes.filter((r) => r.m === m).length);
+  const labelOf = (id) => data.layout.instrument.find((e) => e.id === id && e.label)?.label;
+  const pageOfParam = (id) => { const e = data.layout.instrument.find((x) => x.id === id); return e ? PAGE_NAMES[e.page] : ''; };
   const modTitles = [0, 1, 2, 3].map((m) => {
+    const first = routes.find((r) => r.m === m);
+    if (first) return `TO ${labelOf(first.id) ?? byId[first.id].name.slice(0, 12).toUpperCase()}`;   // ModChip's chipTitle
     const type = Math.round(value(`m${m + 1}Type`));
     return type !== 0 ? TYPE_NAMES[type] : shapes[Math.max(0, Math.min(3, Math.round(value(`m${m + 1}Shape`))))];
   });
 
   // The readout: hover help first, then an armed modulator, then the standing figure (statusText).
   const helpLine = hover ? helpFor(data.help, hover) : '';
-  const status = helpLine || (armed >= 0 ? `MOD ${armed + 1} ARMED: DRAG A KNOB'S OUTER RING` : statusFigure(null, -100, 120));
+  const status = depthReadout || flash || helpLine || (armed >= 0 ? `MOD ${armed + 1} ARMED: DRAG A KNOB'S OUTER RING` : statusFigure(null, -100, 120));
 
   const over = (e) => {
     const el = e.target.closest?.('[data-help]');
@@ -768,9 +1095,9 @@ function App() {
           {/* Key row */}
           {[0, 1, 2, 3, 8].map((p) => (
             <React.Fragment key={p}>
-              <Key r={g.pageKeys[p]} text={PAGE_NAMES[p]} on={p === page} tint={p === page ? mix(pageColour(p), S.panel, 0.25) : pageColour(p)} flat
-                   onClick={() => setPage(p)} help="!tab" />
-              {p === page && (
+              <Key r={g.pageKeys[p]} text={PAGE_NAMES[p]} on={p === page && !routesOpen} tint={p === page ? mix(pageColour(p), S.panel, 0.25) : pageColour(p)} flat
+                   onClick={() => { setPage(p); setRoutesOpen(false); }} help="!tab" />
+              {p === page && !routesOpen && (
                 <At r={[g.pageKeys[p][0] + 1, g.pageKeys[p][1] + g.pageKeys[p][3] - 4, g.pageKeys[p][2] - 2, g.well[1] - (g.pageKeys[p][1] + g.pageKeys[p][3]) + 5]}
                     style={{ background: css(pageColour(p)) }} />
               )}
@@ -779,13 +1106,15 @@ function App() {
           <Key r={g.learn} text="LEARN" led={false} help="!learn" />
           <Key r={g.random} text="RANDOM" help="!random" />
           <At r={g.amount} data-help="!randomAmount" style={{ background: css(C.lcdGreen), borderRadius: 3, color: css(C.lcdText), ...font.value(11.5), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>50%</At>
-          <Key r={g.routes} text="MOD ROUTES" help="!routes" />
+          <Key r={g.routes} text="MOD ROUTES" help="!routes" on={routesOpen} onClick={() => setRoutesOpen(!routesOpen)} />
           <Key r={g.undo} text="UNDO" help="!undo" />
           <Key r={g.redo} text="REDO" disabled help="!redo" />
 
           {/* Well */}
           <Well g={g} page={page} entries={data.layout.instrument} context={context} value={value} text={text} params={byId}
-                grainCurve={silt.grainCurve} modTitles={modTitles} armed={armed} />
+                grainCurve={silt.grainCurve} modTitles={modTitles} armed={armed} routeCounts={routeCounts} routesOpen={routesOpen}
+                routeList={<RouteList r={[g.controlRow[0], g.controlRow[1] + 2, g.controlRow[2], g.controlRow[3] - 4]} routes={routes}
+                                      pageName={pageOfParam} currentPage={PAGE_NAMES[page]} close={() => setRoutesOpen(false)} />} />
 
           {/* The browser's row, where the plug-in has the Bench */}
           <Surface r={g.bench} colour={S.panel} />

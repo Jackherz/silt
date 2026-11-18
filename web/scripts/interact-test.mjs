@@ -62,6 +62,40 @@ await page.getByText('MOD ROUTES').hover();
 const help = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ').includes('MOD ROUTES: every modulation connection'));
 check('hover help reads the plug-in\'s line', help);
 
+// Modulation, on a fresh page.
+await page.goto(url);
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8);
+const routeCount = () => page.evaluate(() => document.querySelectorAll('.route-row').length);
+// Alt-drag on SIZE: a route from MOD 1 (the last used, at first).
+b = await knob(1);
+await page.keyboard.down('Alt');
+await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+await page.mouse.down();
+await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2 - 30, { steps: 5 });
+const readoutDuring = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
+await page.mouse.up();
+await page.keyboard.up('Alt');
+check('Alt-drag shows the depth on the readout', /MOD 1 > SIZE .* to .*\(\+20%\)/.test(readoutDuring), readoutDuring.match(/MOD 1 > [^)]*\)/)?.[0] ?? 'none');
+check('the chip says where it goes', (await page.getByText('TO SIZE').count()) === 1);
+// Drag chip 2 onto RATE: a +25% route.
+const chip = await page.locator('.chip .plate').nth(1).boundingBox();
+b = await knob(2);
+await page.mouse.move(chip.x + 40, chip.y + 10);
+await page.mouse.down();
+await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 8 });
+await page.mouse.up();
+check('a chip dropped on RATE routes it', (await page.getByText('TO RATE').count()) === 1);
+// The list.
+await page.getByText('MOD ROUTES', { exact: true }).first().click();
+check('MOD ROUTES lists both', (await routeCount()) === 2, String(await routeCount()));
+check('the dropped route starts at +25%', (await page.getByText('+25%').count()) === 1);
+await page.getByText('M2', { exact: true }).first().click();
+check('the M2 filter shows one', (await routeCount()) === 1);
+await page.getByText('ALL', { exact: true }).click();
+await page.getByText('CLEAR ALL').click();
+await page.getByText('CLICK AGAIN').click();
+check('CLEAR ALL, twice, clears them', (await routeCount()) === 0);
+
 check('no page errors', errors.length === 0, errors.join('; '));
 await browser.close();
 process.exitCode = failed ? 1 : 0;

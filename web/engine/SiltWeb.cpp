@@ -99,6 +99,32 @@ SILT_EXPORT int silt_set_route (int modulator, int parameterId, float amount, in
 
 SILT_EXPORT void silt_clear_routes() { web->instrument.clearAllRoutes(); }
 
+// Routes by parameter id, for the panel (rings, the route list): its depth, its polarity
+// as set (0 natural), whether it swings both ways, whether a route could work at all.
+SILT_EXPORT int silt_is_target (int parameterId) { return web->instrument.targetFor (parameterId) >= 0 ? 1 : 0; }
+SILT_EXPORT float silt_route_amount (int modulator, int parameterId)
+{
+    const int t = web->instrument.targetFor (parameterId);
+    return t < 0 ? 0.0f : web->instrument.routeAmount (modulator, t);
+}
+SILT_EXPORT int silt_route_polarity (int modulator, int parameterId)
+{
+    const int t = web->instrument.targetFor (parameterId);
+    return t < 0 ? 0 : web->instrument.routePolarityOf (modulator, t);
+}
+SILT_EXPORT int silt_route_bipolar (int modulator, int parameterId)
+{
+    const int t = web->instrument.targetFor (parameterId);
+    return t >= 0 && web->instrument.routeIsBipolar (modulator, t) ? 1 : 0;
+}
+SILT_EXPORT int silt_route_can_work (int modulator, int parameterId)
+{
+    const int t = web->instrument.targetFor (parameterId);
+    return t >= 0 && web->instrument.routeCanWork (modulator, t) ? 1 : 0;
+}
+SILT_EXPORT void silt_natural_where_unrouted() { web->instrument.naturalWhereUnrouted(); }
+SILT_EXPORT int silt_modulator_per_voice (int modulator) { return web->instrument.isModulatorPerVoice (modulator) ? 1 : 0; }
+
 // A sample: begin, fill both channels, end (which analyses it and hands it over).
 SILT_EXPORT float* silt_sample_begin (int numFrames, double sampleRate)
 {

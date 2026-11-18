@@ -29,6 +29,14 @@ export async function loadSilt(bytes) {
     to01: (id, value) => x.silt_to01(id, value),
     from01: (id, proportion) => x.silt_from01(id, proportion),
     setRoute: (modulator, id, amount, polarity = 0) => x.silt_set_route(modulator, id, amount, polarity),
+    isTarget: (id) => x.silt_is_target(id) === 1,
+    routeAmount: (modulator, id) => x.silt_route_amount(modulator, id),
+    routePolarity: (modulator, id) => x.silt_route_polarity(modulator, id),
+    routeBipolar: (modulator, id) => x.silt_route_bipolar(modulator, id) === 1,
+    routeCanWork: (modulator, id) => x.silt_route_can_work(modulator, id) === 1,
+    naturalWhereUnrouted: () => x.silt_natural_where_unrouted(),
+    modulatorPerVoice: (modulator) => x.silt_modulator_per_voice(modulator) === 1,
+    clearRoutes: () => x.silt_clear_routes(),
     setSample(channels, sampleRate) {
       const frames = channels[0].length;
       x.silt_sample_begin(frames, sampleRate);
