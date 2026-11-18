@@ -31,9 +31,33 @@ function Key({ r, text, on = false, tint = S.ink, led, accent, disabled, size, f
       )}
       <At r={[r[0], r[1], r[2] - 2, r[3] - 2]} style={{ ...font.name(fontSize), color: filled ? css(S.panel) : rgba(S.ink, disabled ? 0.35 : 1),
                                                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                        paddingLeft: led !== undefined ? 14 : 0, paddingTop: 2, ...style }}>
-        {text}
+                                                        paddingLeft: led !== undefined ? 14 : 0, paddingTop: 2, whiteSpace: 'pre', ...style }}>
+        <Fitted text={text} style={font.name(fontSize)} width={r[2] - 2 - 6 - (led !== undefined ? 14 : 0)} />
       </At>
+    </>
+  );
+}
+
+// The preset bar (kit::PresetBar): previous, the name (click: the browser), next, SAVE.
+function PresetBar({ r, name }) {
+  const save = [r[0] + r[2] - 58, r[1], 58, r[3]];
+  const rest = [r[0], r[1], r[2] - 66, r[3]];
+  const previous = [rest[0], r[1], 32, r[3]], next = [rest[0] + rest[2] - 32, r[1], 32, r[3]];
+  const field = [previous[0] + 32, r[1], rest[2] - 64, r[3]];
+  const arrow = (k, dir) => {
+    const cx = k[0] + (k[2] - 2) / 2, cy = k[1] + (k[3] - 2) / 2;
+    return (
+      <svg className="at" style={{ left: 0, top: 0, width: 1, height: 1, overflow: 'visible' }}>
+        <path d={`M${cx + 3.5 * dir} ${cy} L${cx - 3 * dir} ${cy - 5} L${cx - 3 * dir} ${cy + 5} Z`} fill={css(S.ink)} />
+      </svg>
+    );
+  };
+  return (
+    <>
+      <Key r={previous} text="" />{arrow(previous, -1)}
+      <Key r={field} text={name} />
+      <Key r={next} text="" />{arrow(next, 1)}
+      <Key r={save} text="SAVE" />
     </>
   );
 }
@@ -61,8 +85,8 @@ function Menu({ r, text }) {
     <>
       <At r={plate} style={{ borderRadius: 4, background: rgba(S.ink, 0.08) }} />
       <At r={[plate[0] + 8, plate[1], plate[2] - plate[3] - 8, plate[3]]}
-          style={{ ...font.name(fontSize), color: css(S.ink), display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', overflow: 'hidden', paddingTop: 2 }}>
-        {text}
+          style={{ ...font.name(fontSize), color: css(S.ink), display: 'flex', alignItems: 'center', whiteSpace: 'pre', paddingTop: 2 }}>
+        <Fitted text={text} style={font.name(fontSize)} width={plate[2] - plate[3] - 8} />
       </At>
       <svg className="at" style={{ left: 0, top: 0, width: 1, height: 1, overflow: 'visible' }}>
         <path d={`M${cx - 3.5} ${cy - 1.5} L${cx} ${cy + 2} L${cx + 3.5} ${cy - 1.5}`} fill="none" stroke={rgba(S.ink, 0.8)}
@@ -121,8 +145,8 @@ function Knob({ r, pos, bipolarOrigin, text }) {
               transform={`translate(${cx} ${cy}) rotate(${angle})`} />
       </svg>
       <At r={valueBox} style={{ background: css(C.lcdGreen), borderRadius: 3, color: css(C.lcdText), ...font.value(Math.min(12, boxH * 0.7)),
-                                display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'nowrap', overflow: 'hidden' }}>
-        {text}
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'pre' }}>
+        <Fitted text={text} style={font.value(Math.min(12, boxH * 0.7))} width={boxW - 4} />
       </At>
     </>
   );
@@ -146,12 +170,21 @@ function Source({ g }) {
 const MODULE_PAGES = [4, 5, 6, 7];
 const SHORT = ['RES', 'FILTER', 'COLOR', 'SPACE'];
 
-function Chain({ g, idle, openModule }) {
+function Chain({ g, idle, openModule, half, chainOpen }) {
   const [x, y, w, h] = g.chainView;
   const gap = 12, bw = (w - gap * 3) / 4;
   return (
     <>
       <StripPanel r={g.chainPanel} name="CHAIN" />
+      {chainOpen && (
+        // CHAIN has no key: open, the strip's own name shows as the held key.
+        <>
+          <At r={[g.chainPanel[0] + 1, g.chainPanel[1] + 1, SPINE - 2, g.chainPanel[3] - 2]} style={{ background: css(S.ink), borderRadius: 3 }} />
+          <div className="at spine" style={{ left: g.chainPanel[0] + 1, top: g.chainPanel[1] + 1, width: g.chainPanel[3] - 2, height: SPINE - 2,
+                                              transform: `translateY(${g.chainPanel[3] - 2}px) rotate(-90deg)`, transformOrigin: '0 0',
+                                              ...font.screen(15), color: css(S.panel) }}>CHAIN</div>
+        </>
+      )}
       {[0, 1, 2, 3].map((m) => {
         const r = [x + m * (bw + gap), y, bw, h];
         const face = [r[0], r[1], r[2] - 2, r[3] - 2];
@@ -166,7 +199,7 @@ function Chain({ g, idle, openModule }) {
             <At r={light} style={{ borderRadius: '50%', background: css(onTop) }} />
             <At r={[nameLeft, inner[1], inner[0] + inner[2] - nameLeft, inner[3] / 2]}
                 style={{ ...font.screen(15), color: css(onTop), display: 'flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
-              {SHORT[m]}
+              {SHORT[m]}{open && m === 0 ? ` ${half + 1}/4` : ''}
             </At>
             <At r={[inner[0], inner[1] + inner[3] / 2, inner[2], inner[3] / 2]}
                 style={{ ...font.screen(11), color: open ? rgba(onTop, 0.8) : css(S.soft), display: 'flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
@@ -201,7 +234,7 @@ function Readout({ r, title, figure }) {
       </At>
       <At r={[inner[0], inner[1] + 16, inner[2], inner[3] - 16]}
           style={{ ...font.screen(28), color: css(S.onSunk), display: 'flex', alignItems: 'center', whiteSpace: 'pre' }}>
-        <Fitted width={inner[2]} cssFont={`${font.screen(28).fontSize}px "B612 Mono"`} text={figure} minScale={0.6} />
+        <Fitted width={inner[2]} cssFont={`${font.screen(28).fontSize}px "B612 Mono"`} text={figure} minScale={0.6} origin="0 50%" />
       </At>
     </>
   );
@@ -235,7 +268,40 @@ function Rail({ r, modTitles }) {
   });
 }
 
-function Well({ g, page, entries, context, value, text, params }) {
+// SHAPE's slot 7: one grain's envelope above, one note's ADSR below (SiltEditor::paintPreview).
+function ShapePreview({ g, value, grainCurve }) {
+  const col = g.slots[7].column;
+  const cell = [col[0] + 10, col[1] + 8, col[2] - 20, col[3] - 16];
+  const grainBox = [cell[0], cell[1], cell[2], cell[3] * 0.5 - 3];
+  const noteBox = [cell[0], grainBox[1] + grainBox[3] + 6, cell[2], cell[3] - grainBox[3] - 6];
+  const plot = (b) => [b[0] + 5, b[1] + 6 + 8, b[2] - 10, b[3] - 12 - 8];
+  const path = (b, pts) => {
+    const a = plot(b);
+    return pts.map(([t, l], i) => `${i ? 'L' : 'M'}${a[0] + t * a[2]} ${a[1] + a[3] - l * a[3]}`).join(' ');
+  };
+  const a = value('attack'), d = value('decay'), sus = value('sustain') * 0.01, rel = value('release');
+  const hold = 0.25 * (a + d + rel) + 1, total = a + d + hold + rel;
+  const note = [[0, 0], [a / total, 1], [(a + d) / total, sus], [(a + d + hold) / total, sus], [1, 0]];
+  const box = (b, pts, caption) => (
+    <>
+      <At r={b} style={{ background: css(darkerOf(C.lcdGreen, 0.8)) }} />
+      <At r={[b[0] + 1, b[1] + 1, b[2] - 2, b[3] - 2]} style={{ background: `linear-gradient(rgba(0,0,0,0.35), rgba(0,0,0,0) 4px), linear-gradient(${css(darkerOf(C.lcdGreen, 0.12))}, ${css(C.lcdGreen)})` }} />
+      <svg className="at" style={{ left: 0, top: 0, width: 1, height: 1, overflow: 'visible' }}>
+        <path d={path(b, pts)} fill="none" stroke={css(C.lcdText)} strokeWidth="1.5" />
+      </svg>
+      <At r={[b[0] + 4, b[1] + 2, b[2] - 8, 12]} style={{ ...font.mono(9), color: css(C.lcdText) }}>{caption}</At>
+    </>
+  );
+  return (
+    <>
+      <At r={[g.slots[3].column[0], g.controlRow[1] + 8, 1, g.controlRow[3] - 16]} style={{ background: rgba(S.ink, 0.2) }} />
+      {box(grainBox, grainCurve(value('fade'), value('slant'), value('ease')), 'GRAIN')}
+      {box(noteBox, note, 'NOTE')}
+    </>
+  );
+}
+
+function Well({ g, page, entries, context, value, text, params, grainCurve }) {
   const colour = pageColour(page);
   const items = entries.filter((e) => (e.alwaysShown || e.page === page) && isShown(e, context));
   return (
@@ -244,6 +310,7 @@ function Well({ g, page, entries, context, value, text, params }) {
       <At r={[g.well[0], g.well[1], g.well[2], 3]} style={{ background: css(colour), borderRadius: '6px 6px 0 0' }} />
       <Rail r={g.rail} modTitles={['SINE', 'SINE', 'SINE', 'SINE']} />
       <At r={[g.slots[0].column[0], g.controlRow[1] + 8, 1, g.controlRow[3] - 16]} style={{ background: rgba(S.ink, 0.2) }} />
+      {page === 1 && <ShapePreview g={g} value={value} grainCurve={grainCurve} />}
       {items.map((e, i) => {
         const slot = g.slots[e.slot];
         const dim = isDimmed(e, context) ? 0.35 : 1;
@@ -291,9 +358,12 @@ function statusFigure(source, levelDb, bpm) {
 }
 
 // One line that never gets cut: squeezed sideways to fit, down to minScale (drawFittedText).
-function Fitted({ text, width, cssFont, minScale }) {
-  const k = Math.max(minScale, Math.min(1, width / Math.max(1, measure(text, cssFont))));
-  return <span style={{ display: 'inline-block', transform: `scaleX(${k})`, transformOrigin: '0 50%' }}>{text}</span>;
+// Either a canvas font string, or a style from theme.font (its tracking counted too).
+function Fitted({ text, width, cssFont, style, minScale = 0.7, origin = '50% 50%' }) {
+  const f = cssFont ?? `${style.fontWeight ?? 400} ${style.fontSize}px "${style.fontFamily}"`;
+  const wide = measure(String(text), f) + (style?.letterSpacing ?? 0) * String(text).length;
+  const k = Math.max(minScale, Math.min(1, width / Math.max(1, wide)));
+  return <span style={{ display: 'inline-block', transform: `scaleX(${k})`, transformOrigin: origin, marginLeft: origin === '0 50%' ? 0 : -(1 - k) * 0, }} data-fit={k < 1 ? k.toFixed(3) : undefined}>{text}</span>;
 }
 
 // Text width, as the plug-in measures it for placing the next thing.
@@ -301,6 +371,13 @@ const measureCanvas = document.createElement('canvas').getContext('2d');
 function measure(text, cssFont) {
   measureCanvas.font = cssFont;
   return measureCanvas.measureText(text).width;
+}
+
+// JUCE's Colour::darker (each channel × 1/(1 + amount), truncated).
+function darkerOf(rgb, amount) {
+  const k = 1 / (1 + amount);
+  const ch = (shift) => Math.trunc(((rgb >> shift) & 255) * k);
+  return (ch(16) << 16) | (ch(8) << 8) | ch(0);
 }
 
 // JUCE's interpolatedWith: a share of the way from one colour to another.
@@ -368,6 +445,7 @@ function App() {
   const [data, setData] = useState(null);
   // ?page=N opens a page (for checking against the plug-in's snapshots until the keys work).
   const [page] = useState(() => Math.max(0, Math.min(9, Number(new URLSearchParams(location.search).get('page')) || 0)));
+  const [half] = useState(() => Math.max(0, Math.min(3, Number(new URLSearchParams(location.search).get('half')) || 0)));
   const g = useMemo(() => panelGeometry(true), []);
 
   useEffect(() => {
@@ -390,7 +468,7 @@ function App() {
   const values = Object.fromEntries(data.params.map((p) => [p.id, data.silt.getParam(p.index)]));
   const value = (id) => values[id] ?? 0;
   const text = (id, v) => data.silt.text(byId[id].index, v);
-  const context = { value, modShown: 0, resonatorHalf: 0, delayForced: false };
+  const context = { value, modShown: 0, resonatorHalf: half, delayForced: false };
   const idle = ['MIX 0', 'OPEN', 'NEUTRAL', 'LEVELS 0'];
   const wordWidth = Math.ceil(measure('SILT', `${font.wordmark(48).fontSize}px "Glyph Grotesque"`)) + 4;
 
@@ -405,23 +483,22 @@ function App() {
         <At r={[g.header[0] + wordWidth + 14, g.header[1] + 14, 400, 34]} style={{ ...font.name(15.5, 0.06), color: css(S.soft), lineHeight: '17px' }}>
           GLYPH AUDIO<br />GRANULAR SAMPLER
         </At>
-        <Key r={[g.presets[0], g.presets[1], 34, 36]} text="◀" size={9} />
-        <At r={[g.presets[0] + 33, g.presets[1] + 1, 266, 32]} style={{ borderRadius: 4, background: rgba(S.ink, 0.08), ...font.name(12.5), color: css(S.ink),
-                                                                     display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          INIT
-        </At>
-        <Key r={[g.presets[0] + 302, g.presets[1], 32, 36]} text="▶" size={9} />
-        <Key r={[g.presets[0] + 342, g.presets[1], 58, 36]} text="SAVE" />
+        <PresetBar r={g.presets} name="INIT" />
         <Key r={g.tour} text="?" />
 
         {/* Strip */}
         <Source g={g} />
-        <Chain g={g} idle={idle} openModule={-1} />
+        <Chain g={g} idle={idle} openModule={page >= 4 && page <= 7 ? page - 4 : -1} half={half} chainOpen={page === 9} />
         <Readout r={g.lcd} title="SILT" figure={statusFigure(null, -100, 120)} />
 
         {/* Screen (step 6 draws what's on it) */}
         <Surface r={g.screen} colour={C.screenBlue} />
         <At r={[g.screen[0] + 26, g.screen[1] + 18, 400, 20]} style={{ ...font.screen(17), color: css(C.screenPale) }}>RAIN-BELLS</At>
+
+        {/* The grip between the screen and the keys (screenDivider): three short dashes. */}
+        {[-1, 0, 1].map((i) => (
+          <At key={i} r={[g.well[0] + g.well[2] / 2 + i * 10 - 3, g.screen[1] + g.screen[3] + 3 + 3 - 1 + 0.5, 6, 2]} style={{ background: css(C.inkSoft) }} />
+        ))}
 
         {/* Key row */}
         {[0, 1, 2, 3, 8].map((p) => (
@@ -441,7 +518,7 @@ function App() {
         <Key r={g.redo} text="REDO" disabled />
 
         {/* Well */}
-        <Well g={g} page={page} entries={data.layout.instrument} context={context} value={value} text={text} params={byId} />
+        <Well g={g} page={page} entries={data.layout.instrument} context={context} value={value} text={text} params={byId} grainCurve={data.silt.grainCurve} />
 
         {/* The browser's row, where the plug-in has the Bench */}
         <Surface r={g.bench} colour={S.panel} />

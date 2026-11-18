@@ -6,6 +6,7 @@
 // for the next block. Built by web/engine/build.sh; also builds natively, so
 // tests can drive the same functions.
 
+#include <silt/Dsp.h>
 #include <silt/Instrument.h>
 
 #include <algorithm>
@@ -158,6 +159,36 @@ SILT_EXPORT const char* silt_param_text (int id, float value)
     static std::string text;
     text = sp::text (id, value);
     return text.c_str();
+}
+
+// One grain's envelope for SHAPE's preview, as the plug-in draws it (SiltEditor::paintPreview):
+// points (t, level), both 0–1, sampled along the rise and the fall. Returns how many; the
+// points are at silt_curve_points(), x then y.
+namespace { std::array<float, 2 * 120> curve {}; }
+SILT_EXPORT float* silt_curve_points() { return curve.data(); }
+SILT_EXPORT int silt_grain_curve (float fade, float slant, float ease)
+{
+    static const silt::HannWindow hann;
+    silt::GrainEnvelope env;
+    env.set (fade * 0.01, slant * 0.01, ease * 0.01, 1000, 0.0);
+    int n = 0;
+    const auto add = [&] (double t, float level) { curve[(size_t) n * 2] = (float) t; curve[(size_t) n * 2 + 1] = level; ++n; };
+    const double rise = env.getAttackEnd(), fall = env.getReleaseStart();
+    constexpr int steps = 48;
+    add (0.0, env (hann, 0.0));
+    for (int i = 1; i <= steps; ++i)
+    {
+        const double t = rise * i / steps * (1.0 - 1.0e-9);
+        add (t, env (hann, t));
+    }
+    add (rise, 1.0f);
+    add (fall, 1.0f);
+    for (int i = 1; i <= steps; ++i)
+    {
+        const double t = fall + (1.0 - fall) * i / steps;
+        add (t, env (hann, t));
+    }
+    return n;
 }
 
 SILT_EXPORT int silt_max_block() { return maxBlock; }

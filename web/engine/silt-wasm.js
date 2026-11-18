@@ -44,6 +44,12 @@ export async function loadSilt(bytes) {
       return [floats(ptr, frames), floats(ptr + maxBlock * 4, frames)];
     },
     activeGrains: () => x.silt_active_grains(),
+    // SHAPE's grain preview: [[t, level], …], as the plug-in draws it.
+    grainCurve(fade, slant, ease) {
+      const n = x.silt_grain_curve(fade, slant, ease);
+      const p = floats(x.silt_curve_points(), n * 2);
+      return Array.from({ length: n }, (_, i) => [p[2 * i], p[2 * i + 1]]);
+    },
     // How a value reads, exactly as in the plug-in.
     text(id, value) {
       const ptr = x.silt_param_text(id, value);
