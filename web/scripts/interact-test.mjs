@@ -294,14 +294,30 @@ for (const [n, name] of [[2, 'PITCH'], [4, 'RESONATOR'], [5, 'FILTER'], [6, 'COL
   check(`${name}'s corner picture draws`, ground[0] < 20 && ground[1] < 25 && ground[2] < 25 && errors.length === errorsBefore, ground.join());
 }
 
-// A key while the audio's off starts it, and the note plays.
+// A key while the audio's off doesn't start it: START AUDIO glows instead, and the note isn't kept.
 await page.goto(url);
 await page.waitForFunction(() => document.querySelector('canvas[data-sample]')?.dataset.sample === 'AHHH-PROGRESSION', null, { timeout: 8000 });
 await page.keyboard.down('a');
-await page.waitForFunction(() => window.siltAudio?.context?.state === 'running' && window.siltAudio.lastDisplay?.grains > 0, null, { timeout: 5000 }).catch(() => {});
-check('a key with the audio off starts it and plays', await page.evaluate(() => window.siltAudio?.context?.state === 'running' && window.siltAudio.lastDisplay?.grains > 0));
+await page.waitForTimeout(300);
+check('a key with the audio off doesn\'t start it', await page.evaluate(() => !window.siltAudio?.running));
+check('START AUDIO glows', (await page.locator('.remind').count()) === 1);
+check('the note isn\'t kept for later', await page.evaluate(() => !window.siltAudio.pending.some(([m]) => m.type === 'midi')));
 await page.keyboard.up('a');
-check('the button then reads STOP AUDIO', (await page.getByText('STOP AUDIO', { exact: true }).count()) === 1);
+await page.getByText('START AUDIO', { exact: true }).click({ force: true });
+await page.waitForFunction(() => window.siltAudio?.context?.state === 'running', null, { timeout: 5000 }).catch(() => {});
+check('started, the glow goes', (await page.locator('.remind').count()) === 0);
+await page.waitForTimeout(300);
+check('nothing plays from before', await page.evaluate(() => (window.siltAudio.lastDisplay?.grains ?? 0) === 0));
+await page.keyboard.down('a');
+await page.waitForFunction(() => window.siltAudio.lastDisplay?.grains > 0, null, { timeout: 3000 }).catch(() => {});
+check('now a key plays', await page.evaluate(() => window.siltAudio.lastDisplay?.grains > 0));
+await page.getByText('STOP AUDIO', { exact: true }).click({ force: true });
+await page.keyboard.up('a');
+await page.keyboard.down('s');
+await page.waitForTimeout(300);
+check('after STOP AUDIO a key keeps it stopped', await page.evaluate(() => window.siltAudio.context.state === 'suspended'));
+check('and START AUDIO glows again', (await page.locator('.remind').count()) === 1);
+await page.keyboard.up('s');
 
 check('no page errors', errors.length === 0, errors.join('; '));
 await browser.close();

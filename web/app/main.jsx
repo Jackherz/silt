@@ -921,7 +921,7 @@ function to01(p, v) {
 // The browser's row, where the plug-in has the Bench (there's no other plug-in to pass audio to
 // here): START AUDIO (Brood's key and wording), MIC, TEMPO, and keys to play from C1 to B3, which
 // covers SLICE's slices from C1 up. All of it is the browser's own; IN THE PLUG-IN says so.
-function BrowserRow({ r, state, onStart, mic, onMic, tempo, onTempo, held, noteOn, noteOff }) {
+function BrowserRow({ r, state, onStart, remind, mic, onMic, tempo, onTempo, held, noteOn, noteOff }) {
   const ui = useContext(UI);
   const y = r[1] + 6, h = r[3] - 12;
   const keysR = [r[0] + 420, y, r[2] - 428, h];
@@ -965,6 +965,10 @@ function BrowserRow({ r, state, onStart, mic, onMic, tempo, onTempo, held, noteO
   return (
     <>
       <Surface r={r} colour={S.panel} />
+      {/* A note while it's off: START AUDIO glows, fading in and out (again with each note). */}
+      {remind > 0 && !running && state !== 'starting' && (
+        <div key={`remind${remind}`} className="at remind" style={{ left: r[0] + 9, top: y + 1, width: 146, height: h - 4 }} />
+      )}
       <Key r={[r[0] + 8, y, 150, h]} text={state === 'starting' ? 'ONE MOMENT' : running ? 'STOP AUDIO' : 'START AUDIO'} led={running} onClick={onStart} help="!start" accent={!running && state !== 'starting'} />
       <Key r={[r[0] + 166, y, 84, h]} text="MIC" led={mic} onClick={onMic} help="!mic" />
       <At r={[r[0] + 262, y, 60, h]} style={{ ...font.name(12.5), color: css(S.soft), display: 'flex', alignItems: 'center' }} data-help="!tempo">TEMPO</At>
@@ -1217,11 +1221,11 @@ function App() {
   const [routesOpen, setRoutesOpen] = useState(false);
   const lastUsedMod = useRef(0);
   const history = useRef({ undo: [], redo: [], pending: null });
-  const [audioState, setAudioState] = useState('off');   // off, starting, running, suspended, error
+  const [audioState, setAudioState] = useState('off');
+  const [remind, setRemind] = useState(0);                // notes played while it's off: START AUDIO glows   // off, starting, running, suspended, error
   const [display, setDisplay] = useState(null);           // what the audio sends back, 30 times a second
   const [sample, setSample] = useState(null);             // { name, factory, channels, sampleRate, seconds, analysis }
   const sampleRef = useRef(null);                          // the same, now (undo reads it mid-step)
-  const startAudioRef = useRef(null), startingRef = useRef(false);
   const manualRef = useRef([]);                            // SLICE BY MANUAL's starts (shares)
   const sliceMarksRef = useRef([]);                        // the slices as shown, for edits
   const transientMemo = useRef({});
@@ -1331,13 +1335,15 @@ function App() {
   const showFlashRef = useRef(null);
 
   // Notes, from the on-screen keys, the computer's or MIDI: to the audio, and shown held.
+  // While the audio's off (never started, or STOP AUDIO), a note isn't kept for later: START AUDIO
+  // glows instead, a reminder that it needs turning on to be heard.
   function noteOn(note, velocity = 100) {
-    startAudioRef.current?.();
-    window.siltAudio?.noteOn(note, velocity);
+    if (window.siltAudio?.running) window.siltAudio.noteOn(note, velocity);
+    else setRemind((n) => n + 1);
     setHeld((h) => new Set(h).add(note));
   }
   function noteOff(note) {
-    window.siltAudio?.noteOff(note);
+    if (window.siltAudio?.running) window.siltAudio.noteOff(note);
     setHeld((h) => { const n = new Set(h); n.delete(note); return n; });
   }
   // A sample: a factory one (ROOT to its note) or your file (ROOT back to C3), decoded, cut to
@@ -1581,14 +1587,11 @@ function App() {
   };
 
   const startStop = async () => {
-    if (audioState === 'running') { await data.audio.stop(); return; }
+    // STOP AUDIO lets every note go, so nothing is left sounding when it's turned back on.
+    if (audioState === 'running') { data.audio.allNotesOff(); setHeld(new Set()); await data.audio.stop(); return; }
     await startAudio();
   };
-  // A note while the audio's off starts it (the key is the click the browser needs), so a note
-  // is never lost to a missed START AUDIO.
-  startAudioRef.current = () => { if (!data.audio.running && !startingRef.current) startAudio(); };
   async function startAudio() {
-    startingRef.current = true;
     setAudioState('starting');
     try {
       await data.audio.start({
@@ -1600,8 +1603,6 @@ function App() {
     } catch (err) {
       setAudioState('off');
       showFlash(String(err.message ?? err).toUpperCase());
-    } finally {
-      startingRef.current = false;
     }
   }
   // ARM: the bars at TEMPO (4/4, as a stopped host), up to 30 s; again to cancel (SiltProcessor::armCapture).
@@ -1954,7 +1955,7 @@ function App() {
                                       pageName={pageOfParam} currentPage={PAGE_NAMES[page]} close={() => setRoutesOpen(false)} />} />
 
           {/* The browser's row, where the plug-in has the Bench: audio, the microphone, tempo, keys. */}
-          <BrowserRow r={g.bench} state={audioState} onStart={startStop} mic={micOn} onMic={toggleMic} tempo={tempo} onTempo={changeTempo}
+          <BrowserRow r={g.bench} state={audioState} onStart={startStop} remind={remind} mic={micOn} onMic={toggleMic} tempo={tempo} onTempo={changeTempo}
                       held={held} noteOn={noteOn} noteOff={noteOff} />
           <input ref={fileInput} type="file" accept="audio/*" style={{ display: 'none' }}
                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) loadSample({ file: f }).catch(() => showFlash("COULDN'T READ THAT FILE")); }} />
