@@ -21,12 +21,13 @@ function At({ r, style, children, className, ...rest }) {
 
 // A key: a filled rounded plate with no frame (PanelLook::drawButtonBackground).
 // Its face is the bounds less 2 on the right and bottom, inset 1.
-function Key({ r, text, on = false, tint = S.ink, led, accent, disabled, size, flat, style, onClick, help, onPointerDown }) {
+function Key({ r, text, on = false, tint = S.ink, led, accent, disabled, size, flat, style, onClick, help, onPointerDown, onMenu }) {
   const filled = on || accent;
   const plate = flat ? [r[0] + 1, r[1] + 1, r[2] - 2, r[3] - 2] : [r[0] + 1, r[1] + 1, r[2] - 4, r[3] - 4];
   const fontSize = size ?? Math.max(10, Math.min(12.5, r[3] * 0.42));
   return (
-    <div className={`key${filled ? ' filled' : ''}${disabled ? ' disabled' : ''}`} data-help={help} onClick={disabled ? undefined : onClick} onPointerDown={onPointerDown}>
+    <div className={`key${filled ? ' filled' : ''}${disabled ? ' disabled' : ''}`} data-help={help} onClick={disabled ? undefined : onClick} onPointerDown={onPointerDown}
+         onContextMenu={onMenu ? (e) => { e.preventDefault(); onMenu(); } : undefined}>
       <At r={plate} className="plate" style={{ borderRadius: 4, background: filled ? css(accent ? S.accent : tint) : rgba(S.ink, disabled ? 0.04 : 0.08) }} />
       {led !== undefined && (
         <div className="at" style={{ left: plate[0] + 10 - 3.5, top: plate[1] + plate[3] / 2 - 3.5, width: 7, height: 7, borderRadius: 4,
@@ -42,7 +43,7 @@ function Key({ r, text, on = false, tint = S.ink, led, accent, disabled, size, f
 }
 
 // The preset bar (kit::PresetBar): previous, the name (click: the browser), next, SAVE.
-function PresetBar({ r, name }) {
+function PresetBar({ r, name, onStep, onBrowse, onSave }) {
   const save = [r[0] + r[2] - 58, r[1], 58, r[3]];
   const rest = [r[0], r[1], r[2] - 66, r[3]];
   const previous = [rest[0], r[1], 32, r[3]], next = [rest[0] + rest[2] - 32, r[1], 32, r[3]];
@@ -57,10 +58,10 @@ function PresetBar({ r, name }) {
   };
   return (
     <>
-      <Key r={previous} text="" />{arrow(previous, -1)}
-      <Key r={field} text={name} />
-      <Key r={next} text="" />{arrow(next, 1)}
-      <Key r={save} text="SAVE" />
+      <Key r={previous} text="" onClick={() => onStep(-1)} />{arrow(previous, -1)}
+      <Key r={field} text={name} onClick={onBrowse} />
+      <Key r={next} text="" onClick={() => onStep(1)} />{arrow(next, 1)}
+      <Key r={save} text="SAVE" onClick={onSave} />
     </>
   );
 }
@@ -102,24 +103,46 @@ function Menu({ r, text, items, selected, onPick, help }) {
 }
 
 // The pop-up a menu opens (JUCE's PopupMenu in the kit's colours): the panel, the
-// items in the name face, the one under the mouse in ink, the current one ticked.
+// items in the name face, the one under the mouse in ink, a tick on what's chosen.
+// Items are names (a menu's choices: `selected` ticked, `onPick` with the index), or
+// { text, ticked, header, separator, disabled, pick, items } for a fuller menu.
 function Popup({ menu, close }) {
-  const itemH = 24, width = Math.max(menu.r[2], 140);
-  const top = menu.r[1] + menu.r[3];
-  const left = Math.min(menu.r[0], 1200 - width - 4);
-  const below = top + menu.items.length * itemH + 8 <= 820;
-  const y = below ? top : Math.max(4, menu.r[1] - menu.items.length * itemH - 8);
   return (
-    <div className="popup-shield" onPointerDown={close}>
+    <div className="popup-shield" onPointerDown={close} onContextMenu={(e) => e.preventDefault()}>
+      <PopupList menu={menu} close={close} />
+    </div>
+  );
+}
+
+function PopupList({ menu, close }) {
+  const itemH = 24, sepH = 9;
+  const items = menu.items.map((it, i) => (typeof it === 'string' ? { text: it, ticked: i === menu.selected, pick: () => menu.onPick(i) } : it));
+  const width = Math.max(menu.r[2], 140, ...items.map((it) => (it.text ? measure(it.text, `500 ${font.name(13).fontSize}px "Overpass"`) + 44 : 0)));
+  const height = items.reduce((h, it) => h + (it.separator ? sepH : itemH), 8);
+  const top = menu.r[1] + menu.r[3];
+  const left = Math.max(4, Math.min(menu.r[0], 1200 - width - 4));
+  const y = top + height <= 816 ? top : Math.max(4, Math.min(menu.r[1], 816) - height);
+  const [sub, setSub] = useState(null);   // { index, y }
+  let at = y + 4;
+  return (
+    <>
       <div className="popup" style={{ left, top: y, width, background: css(S.panel), color: css(S.ink), ...font.name(13) }}
            onPointerDown={(e) => e.stopPropagation()}>
-        {menu.items.map((item, i) => (
-          <div key={i} className="popup-item" style={{ height: itemH }} onClick={() => { menu.onPick(i); close(); }}>
-            <span className="tick">{i === menu.selected ? '\u2713' : ''}</span>{item}
-          </div>
-        ))}
+        {items.map((it, i) => {
+          const rowY = at; at += it.separator ? sepH : itemH;
+          if (it.separator) return <div key={i} className="popup-sep" />;
+          if (it.header) return <div key={i} className="popup-header" style={{ height: itemH, color: css(S.soft) }}>{it.text}</div>;
+          return (
+            <div key={i} className={`popup-item${it.disabled ? ' disabled' : ''}`} style={{ height: itemH }}
+                 onPointerEnter={() => setSub(it.items && !it.disabled ? { index: i, y: rowY } : null)}
+                 onClick={() => { if (it.disabled || it.items) return; it.pick?.(); close(); }}>
+              <span className="tick">{it.ticked ? '✓' : ''}</span>{it.text}{it.items && <span className="arrow">{'▸'}</span>}
+            </div>
+          );
+        })}
       </div>
-    </div>
+      {sub && <PopupList key={sub.index} menu={{ r: [left + width - 2, sub.y - 4, 0, 0], items: items[sub.index].items }} close={close} />}
+    </>
   );
 }
 
@@ -184,6 +207,7 @@ function Knob({ r, pos, bipolarOrigin, text, id, help }) {
   // A depth drag: 150 px from no depth to full, ten times finer with Shift (held now).
   const depthDrag = (e, m) => {
     ui.beginRouteGesture();
+    ui.beginStep('MODULATION');
     let running = ui.routeAmount(m, id), last = 0;
     const startY = e.clientY;
     ui.depthDragged(m, id, true);
@@ -194,7 +218,7 @@ function Knob({ r, pos, bipolarOrigin, text, id, help }) {
       ui.setAmount(m, id, Math.abs(running) < 0.02 ? 0 : running);
       ui.depthDragged(m, id, true);
     };
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); ui.depthDragged(m, id, false); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); ui.depthDragged(m, id, false); ui.endStep(); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   };
@@ -428,7 +452,7 @@ function Chain({ g, value, openModule, half, chainOpen }) {
     const light = [inner[0] + 5.5 - 5.5, inner[1] + inner[3] * 0.25 - 5.5, 11, 11];
     const nameLeft = light[0] + 11 + 6;
     return (
-      <div key={`b${m}`} data-help="!chain" className="chain-block">
+      <div key={`b${m}`} data-help="!chain" className="chain-block" onContextMenu={(e) => { e.preventDefault(); ui.resetMenu(MODULE_PAGES[m], r); }}>
         <At r={face} className="hit" onPointerDown={p === undefined ? undefined : (e) => down(e, p)}
             style={{ borderRadius: 5, cursor: 'grab', background: open ? css(pageColour(MODULE_PAGES[m])) : rgba(S.ink, lifted ? 0.2 : st.active ? 0.12 : 0.07) }} />
         <At r={light} style={st.on ? { borderRadius: '50%', background: css(onTop) } : { borderRadius: '50%', border: `1.2px solid ${rgba(onTop, open ? 0.7 : 0.45)}` }} />
@@ -610,12 +634,13 @@ function RouteList({ r, routes, pageName, currentPage, close }) {
     if (e.button !== 0) return;
     let running = ui.routeAmount(rt.m, rt.id), lastY = e.clientY;
     ui.beginRouteGesture();
+    ui.beginStep('MODULATION');
     const move = (mv) => {
       running = Math.max(-1, Math.min(1, running + (lastY - mv.clientY) / ui.scale / (mv.shiftKey ? 1000 : 150)));
       lastY = mv.clientY;
       ui.setAmount(rt.m, rt.id, snapped(running));
     };
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); ui.endStep(); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   };
@@ -672,7 +697,7 @@ function RouteList({ r, routes, pageName, currentPage, close }) {
            onClick={() => {
              if (!pendingClear) { setPendingClear(true); setTimeout(() => setPendingClear(false), 2500); return; }
              ui.beginRouteGesture();
-             for (const rt of routes) ui.setAmount(rt.m, rt.id, 0);
+             ui.step('MODULATION', () => { for (const rt of routes) ui.setAmount(rt.m, rt.id, 0); });
              setPendingClear(false);
            }} />
     </>
@@ -876,6 +901,176 @@ function to01(p, v) {
   return Math.pow(proportion, skew);
 }
 
+// RANDOM's amount (RandomAmountBox): drag up or down (Shift finer), scroll, double-click for 50%.
+function AmountBox({ r, amount, set }) {
+  const ui = useContext(UI);
+  const clampSet = (a) => set(Math.max(0.01, Math.min(1, Math.round(a * 100) / 100)));
+  const down = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    let running = amount, lastY = e.clientY;
+    const move = (m) => { running = Math.max(0.01, Math.min(1, running + (lastY - m.clientY) / ui.scale / (m.shiftKey ? 1000 : 200))); lastY = m.clientY; clampSet(running); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  return (
+    <At r={[r[0] + 0.5, r[1] + 2.5, r[2] - 1, r[3] - 5]} data-help="!randomAmount" className="amount" onPointerDown={down}
+        onDoubleClick={() => clampSet(0.5)} onWheel={(e) => clampSet(amount + (e.deltaY < 0 ? 0.05 : -0.05))}
+        style={{ background: css(C.lcdGreen), color: css(C.lcdText), ...font.mono(12), display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'ns-resize' }}>
+      {Math.round(amount * 100)}%
+    </At>
+  );
+}
+
+// The kit's numbered sheet: a hard offset, the panel, a frame, and a head with the number in
+// a block, the name, a dotted leader and a figure (kit::drawPanel on a framed stock).
+function Sheet({ r, index, name, tail, children }) {
+  const head = [r[0] + 1, r[1] + 1, r[2] - 2, 26 - 2];
+  return (
+    <>
+      <At r={[r[0] + 3, r[1] + 3, r[2], r[3]]} style={{ background: css(S.shadow) }} />
+      <At r={r} style={{ background: css(S.panel), border: `1px solid ${css(S.ink)}` }} />
+      <At r={head} style={{ background: css(S.head), borderBottom: `1px solid ${css(S.ink)}` }} />
+      <At r={[head[0] + 8, head[1] + 4, 22, 16]} style={{ background: css(S.ink), color: css(S.panel), borderRadius: 0, ...font.screen(16), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{index}</At>
+      <At r={[head[0] + 36, head[1], head[2] - 44, head[3]]} style={{ ...font.screen(16), color: css(S.ink), display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span>{name}</span>
+        <span className="leader" style={{ flex: 1, alignSelf: 'center', height: 1, backgroundImage: `linear-gradient(90deg, ${rgba(S.ink, 0.28)} 1px, transparent 1px)`, backgroundSize: '4px 1px' }} />
+        <span style={{ fontFamily: 'Chivo Mono', fontSize: (16 - 2) / 1.19, color: css(S.soft) }}>{tail}</span>
+      </At>
+      {children}
+    </>
+  );
+}
+
+// The preset browser (kit::PresetBrowser), over the screen and the well: SEARCH, the views
+// (ALL, FAV, the categories), the list (star, name, category, FACTORY or USER); a click plays
+// the preset at once, KEEP (Return, double-click) keeps it as one undo step, CANCEL (Esc) puts
+// back the sound there was. FOLDER is the plug-in's alone: the browser keeps your presets itself.
+function PresetBrowser({ r, list, current, categories, favourites, setFavourite, begin, audition, keep, cancel, saveAs }) {
+  const before = useRef(null);
+  if (before.current === null) before.current = begin();
+  const [view, setView] = useState('ALL');
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState(current);
+  const searchRef = useRef(null);
+  useEffect(() => { searchRef.current?.focus(); }, []);
+  const q = search.trim().toLowerCase();
+  const shown = list.filter((e) => (view === 'ALL' || (view === 'FAVOURITES' ? favourites.has(e.name) : e.category === view))
+                                   && (!q || e.name.toLowerCase().includes(q) || e.category.toLowerCase().includes(q)));
+  const views = ['ALL', 'FAVOURITES', ...categories];
+  const body = [r[0] + 10, r[1] + 26 + 8, r[2] - 3 - 20, r[3] - 3 - 26 - 16];
+  const top = [body[0], body[1], body[2], 30];
+  const searchW = Math.min(200, Math.trunc(top[2] / 3));
+  const keyW = Math.trunc((top[2] - searchW - 8) / views.length);
+  const bottom = [body[0], body[1] + body[3] - 32, body[2], 32];
+  const listR = [body[0], body[1] + 38, body[2], body[3] - 38 - 40];
+  const choose = (e) => { setSelected(e.name); audition(e); };
+  const keyDown = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); cancel(before.current); }
+    else if (ev.key === 'Enter') { ev.preventDefault(); keep(before.current); }
+    else if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      const at = shown.findIndex((e) => e.name === selected);
+      const next = shown[Math.max(0, Math.min(shown.length - 1, at + (ev.key === 'ArrowDown' ? 1 : -1)))];
+      if (next) choose(next);
+    }
+  };
+  // Return, Escape and the arrows wherever the focus is while it's open.
+  const keyRef = useRef(keyDown);
+  keyRef.current = keyDown;
+  useEffect(() => {
+    const on = (ev) => keyRef.current(ev);
+    window.addEventListener('keydown', on);
+    return () => window.removeEventListener('keydown', on);
+  }, []);
+  return (
+    <div className="browser">
+      <Sheet r={[r[0], r[1], r[2] - 3, r[3] - 3]} index="P" name="PRESETS" tail={`${shown.length} ${shown.length === 1 ? 'SOUND' : 'SOUNDS'}`}>
+        <input ref={searchRef} className="search" placeholder="SEARCH" value={search} onChange={(e) => setSearch(e.target.value)}
+               style={{ ...box([top[0], top[1], searchW, 30]), background: css(S.sunk), color: css(S.onSunk), ...font.screen(18), border: `1px solid ${css(S.ink)}` }} />
+        {views.map((v, i) => (
+          <Key key={v} r={[top[0] + searchW + 8 + i * keyW + 1, top[1], keyW - 2, 30]} text={v === 'FAVOURITES' ? 'FAV' : v} on={view === v} onClick={() => setView(v)} />
+        ))}
+        <div className="at preset-list" style={{ ...box(listR), overflowY: 'auto' }}>
+          {shown.map((e) => {
+            const sel = e.name === selected, fav = favourites.has(e.name);
+            const text = sel ? css(S.panel) : css(S.ink), quiet = sel ? css(S.panel) : css(S.soft);
+            return (
+              <div key={`${e.factory}${e.name}`} className="preset-row" style={{ height: 26, background: sel ? css(S.ink) : 'transparent', borderBottom: sel ? 'none' : `1px solid ${rgba(S.ink, 0.28)}` }}
+                   onClick={() => choose(e)} onDoubleClick={() => { choose(e); keep(before.current); }}>
+                <svg width="30" height="26" viewBox="-15 -13 30 26" onClick={(ev) => { ev.stopPropagation(); setFavourite(e.name, !fav); }} style={{ flex: 'none', cursor: 'pointer' }}>
+                  <path d={starPath(7.5, 3.4)} fill={fav ? (sel ? text : css(S.accent)) : 'none'} stroke={fav ? 'none' : quiet} strokeWidth="1.2" />
+                </svg>
+                <span style={{ flex: 1, ...font.screen(19), color: text, whiteSpace: 'pre' }}>{`${e.name === current ? '> ' : ''}${e.name.toUpperCase()}`}</span>
+                <span style={{ width: 120, flex: 'none', ...font.screen(17), color: quiet }}>{e.category}</span>
+                <span style={{ width: 80, flex: 'none', ...font.screen(17), color: quiet }}>{e.factory ? 'FACTORY' : 'USER'}</span>
+              </div>
+            );
+          })}
+        </div>
+        <Key r={[bottom[0] + 3, bottom[1], 94, 32]} text="SAVE AS" onClick={saveAs} />
+        <At r={[bottom[0] + 100, bottom[1], bottom[2] - 280, 32]} style={{ ...font.screen(15), color: css(S.soft), display: 'flex', alignItems: 'center', justifyContent: 'center', whiteSpace: 'pre' }}>
+          CLICK TO HEAR   RETURN KEEPS   ESC GOES BACK
+        </At>
+        <Key r={[bottom[0] + bottom[2] - 180 + 3, bottom[1], 84, 32]} text="CANCEL" onClick={() => cancel(before.current)} />
+        <Key r={[bottom[0] + bottom[2] - 90 + 3, bottom[1], 84, 32]} text="KEEP" accent onClick={() => keep(before.current)} />
+      </Sheet>
+    </div>
+  );
+}
+
+// A five-pointed star, a point at the top (juce::Path::addStar).
+function starPath(outer, inner) {
+  const pts = [];
+  for (let i = 0; i < 10; i++) {
+    const a = (i * Math.PI) / 5, rr = i % 2 ? inner : outer;
+    pts.push(`${(rr * Math.sin(a)).toFixed(2)},${(-rr * Math.cos(a)).toFixed(2)}`);
+  }
+  return `M${pts.join(' L')} Z`;
+}
+
+// Saving a preset (kit::askToSave): a name and a category.
+function SaveDialog({ categories, start, save, cancel }) {
+  const [name, setName] = useState(start);
+  const [category, setCategory] = useState(categories[categories.length - 1]);
+  const ui = useContext(UI);
+  const r = [400, 300, 400, 170];
+  const go = () => { if (name.trim()) save(name.trim(), category); };
+  return (
+    <div className="dialog-shield" onKeyDown={(e) => { if (e.key === 'Escape') cancel(); if (e.key === 'Enter') go(); }}>
+      <Sheet r={r} index="S" name="SAVE PRESET" tail="">
+        <At r={[r[0] + 12, r[1] + 36, r[2] - 24, 18]} style={{ ...font.name(12.5), color: css(S.ink), display: 'flex', alignItems: 'center' }}>A name for this sound:</At>
+        <input autoFocus className="search" value={name} onChange={(e) => setName(e.target.value)}
+               style={{ ...box([r[0] + 12, r[1] + 58, r[2] - 24, 30]), background: css(S.sunk), color: css(S.onSunk), ...font.screen(18), border: `1px solid ${css(S.ink)}` }} />
+        <Menu r={[r[0] + 12, r[1] + 96, 180, 30]} text={category} items={categories} selected={categories.indexOf(category)} onPick={(i) => setCategory(categories[i])} />
+        <Key r={[r[0] + r[2] - 196, r[1] + r[3] - 42, 90, 32]} text="CANCEL" onClick={cancel} />
+        <Key r={[r[0] + r[2] - 102, r[1] + r[3] - 42, 90, 32]} text="SAVE" accent onClick={go} disabled={!name.trim()} />
+      </Sheet>
+      {void ui}
+    </div>
+  );
+}
+
+// What any RANDOM CHARACTER leaves where it is (everything that sets or shifts tuning), and
+// what each keeps to, in the parameter's own units (SiltProcessor's characterLimit).
+const SETS_TUNING = new Set(['pitch', 'randPitch', 'scale', 'key', 'root', 'keyMode', 'patternDepth', 'patternSteps', 'resTune', 'resShift',
+                             'resNotes', 'resFollow', 'resSpread', 'resDrift', 'colorWow', 'resStretch', 'resCurve', 'resSnap', 'resOffset']);
+const CHARACTER_LIMITS = [
+  {},
+  { reverse: [0, 10], spray: [0, 25], size: [80, 800], rate: [10, 50], jitter: [20, 100], fade: [50, 100], colorBits: [12, 16] },
+  { size: [20, 180], rate: [4, 30], jitter: [0, 10], spray: [0, 8], fade: [20, 70], reverse: [0, 30] },
+  { size: [30, 500], rate: [15, 80], spray: [30, 100], jitter: [50, 100], randPan: [40, 100], randAmp: [20, 80], fade: [60, 100] },
+];
+
+// The browser's own keeping (presets you save, your favourites): this browser only.
+function readStored(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+}
+function writeStored(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private window: kept for this visit only */ }
+}
+
 // --- the panel ---------------------------------------------------------------------------
 
 function useScale() {
@@ -906,6 +1101,16 @@ function App() {
   const [dropHover, setDropHover] = useState(null);   // { m, id }: a chip held over a knob
   const [routesOpen, setRoutesOpen] = useState(false);
   const lastUsedMod = useRef(0);
+  const history = useRef({ undo: [], redo: [], pending: null });
+  const [randomAmount, setRandomAmount] = useState(0.5);
+  const [randomCharacter, setRandomCharacter] = useState(0);
+  const [randomExcluded, setRandomExcluded] = useState(() => new Set(['m1Type', 'm2Type', 'm3Type', 'm4Type']));
+  const [presetName, setPresetName] = useState('Init');
+  const presetAsLoaded = useRef(null);
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [userPresets, setUserPresets] = useState(() => readStored('silt-presets-v1', []));
+  const [favourites, setFavourites] = useState(() => new Set(readStored('silt-favourites-v1', [])));
   const stage = useRef(null);
   const g = useMemo(() => panelGeometry(true), []);
 
@@ -936,6 +1141,148 @@ function App() {
     window.siltAudio?.setParam(byId[id].index, v);
     setVersion((n) => n + 1);
   };
+  // --- undo (SiltProcessor's one history): a step is the sound before and after, every
+  // parameter and route; a drag is one step, as is a pick, RANDOM, a reset or a preset.
+  const targets = data.params.filter((p) => silt.isTarget(p.index)).map((p) => p.index);
+  const snapshot = () => ({
+    p: data.params.map((p) => silt.getParam(p.index)),
+    r: targets.flatMap((t) => [0, 1, 2, 3].map((m) => [silt.routeAmount(m, t), silt.routePolarity(m, t)])),
+  });
+  const sameSound = (a, b) => a.p.every((v, i) => v === b.p[i]) && a.r.every((v, i) => v[0] === b.r[i][0] && v[1] === b.r[i][1]);
+  const restore = (snap) => {
+    data.params.forEach((p, i) => { if (silt.getParam(p.index) !== snap.p[i]) { silt.setParam(p.index, snap.p[i]); window.siltAudio?.setParam(p.index, snap.p[i]); } });
+    targets.forEach((t, k) => [0, 1, 2, 3].forEach((m) => {
+      const [amount, polarity] = snap.r[k * 4 + m];
+      if (silt.routeAmount(m, t) !== amount || silt.routePolarity(m, t) !== polarity) { silt.setRoute(m, t, amount, polarity); window.siltAudio?.setRoute(m, t, amount, polarity); }
+    }));
+    setVersion((n) => n + 1);
+  };
+  const h = history.current;
+  const beginStep = (name) => { if (!h.pending) h.pending = { name, before: snapshot() }; };
+  const endStep = () => {
+    if (!h.pending) return;
+    const after = snapshot();
+    if (!sameSound(h.pending.before, after)) {
+      h.undo.push({ name: h.pending.name, before: h.pending.before, after });
+      if (h.undo.length > 2000) h.undo.shift();
+      h.redo = [];
+    }
+    h.pending = null;
+    setVersion((n) => n + 1);
+  };
+  const step = (name, fn) => { if (h.pending) { fn(); return; } beginStep(name); fn(); endStep(); };
+  const undo = () => { endStep(); const st = h.undo.pop(); if (st) { restore(st.before); h.redo.push(st); } };
+  const redo = () => { endStep(); const st = h.redo.pop(); if (st) { restore(st.after); h.undo.push(st); } };
+
+  // --- RANDOM and RESET (SiltProcessor::randomisePage, resetPage) -------------------------
+  const randomisable = (p) => data.layout.instrument.filter((e) => e.page === p && ['knob', 'menu', 'button'].includes(e.kind)
+    && !e.id.startsWith('!') && e.id !== 'inputGain' && e.id !== 'mix' && !e.alwaysShown && isShown(e, context) && byId[e.id]);
+  const steps01 = (p) => (p.kind === 'choice' ? p.choices.length : p.kind === 'switch' ? 2 : p.kind === 'integer' ? p.high - p.low + 1 : 2);
+  const randomise = () => {
+    let changed = 0;
+    step(`RANDOM ${PAGE_NAMES[page]}`, () => {
+      for (const e of randomisable(page)) {
+        if (randomExcluded.has(e.id)) continue;
+        const p = byId[e.id];
+        const before = silt.to01(p.index, value(e.id));
+        let after = before;
+        if (e.kind === 'knob') after = before + (Math.random() - before) * randomAmount;
+        else if (Math.random() < randomAmount) { const n = Math.max(2, steps01(p)); after = Math.floor(Math.random() * n) / (n - 1); }
+        if (randomCharacter > 0 && SETS_TUNING.has(e.id)) continue;   // a CHARACTER never touches tuning
+        const limit = CHARACTER_LIMITS[randomCharacter]?.[e.id];
+        if (limit) after = Math.max(silt.to01(p.index, limit[0]), Math.min(silt.to01(p.index, limit[1]), after));
+        const target = silt.from01(p.index, after);
+        if (silt.to01(p.index, target) === before) continue;
+        setParam(e.id, target);
+        ++changed;
+      }
+    });
+    showFlash(changed > 0 ? `RANDOM ${PAGE_NAMES[page]}: ${changed} ${changed === 1 ? 'CHANGE' : 'CHANGES'}` : `RANDOM ${PAGE_NAMES[page]}: NOTHING TO CHANGE`);
+  };
+  const pageParameters = (p, everyModulator = false) => (p === 8
+    ? data.params.filter((x) => [0, 1, 2, 3].some((m) => (everyModulator || m === modShown) && x.id.startsWith(`m${m + 1}`))).map((x) => x.id)
+    : [...new Set(data.layout.instrument.filter((e) => e.page === p && !e.id.startsWith('!') && e.id !== 'root' && byId[e.id]).map((e) => e.id))]);
+  const resetPages = (which) => {
+    const ids = which < 0 ? [...new Set(PAGE_NAMES.flatMap((_, p) => pageParameters(p, true)))] : pageParameters(which);
+    let changed = 0;
+    step(`RESET ${which < 0 ? 'ALL' : PAGE_NAMES[which]}`, () => {
+      for (const id of ids) {
+        const p = byId[id];
+        if (silt.to01(p.index, value(id)) === silt.to01(p.index, p.default)) continue;
+        setParam(id, p.default);
+        ++changed;
+      }
+    });
+    const name = which < 0 ? 'ALL PAGES' : PAGE_NAMES[which];
+    showFlash(changed > 0 ? `RESET ${name}: ${changed} ${changed === 1 ? 'CHANGE' : 'CHANGES'}` : `RESET ${name}: ALREADY AT DEFAULTS`);
+  };
+  const resetMenu = (p, r) => setMenu({ r, items: [
+    { text: `Reset ${PAGE_NAMES[p]}${p === 8 ? ` ${modShown + 1}` : ''}`, pick: () => resetPages(p) },
+    { text: 'Reset all pages', pick: () => resetPages(-1) },
+  ] });
+  const randomMenu = () => {
+    const entries = randomisable(page), now = Math.round(randomAmount * 100);
+    setMenu({ r: g.random, items: [
+      { header: true, text: 'AMOUNT' },
+      ...[10, 25, 50, 75, 100].map((a) => ({ text: `${a}%${a <= 10 ? '  nudge' : a === 100 ? '  anything goes' : ''}`, ticked: now === a, pick: () => setRandomAmount(a / 100) })),
+      { header: true, text: 'CHARACTER' },
+      ...['Anything', 'Tonal: stays in tune', 'Rhythmic: short, regular', 'Texture: dense, scattered'].map((t, i) => ({ text: t, ticked: randomCharacter === i, pick: () => setRandomCharacter(i) })),
+      { separator: true },
+      { text: `Leave out on ${PAGE_NAMES[page]}`, disabled: entries.length === 0, items: [
+        ...entries.map((e) => ({ text: e.label, ticked: randomExcluded.has(e.id), pick: () => setRandomExcluded((x) => { const n = new Set(x); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; }) })),
+        { separator: true },
+        { text: 'Leave all out', pick: () => setRandomExcluded((x) => new Set([...x, ...entries.map((e) => e.id)])) },
+        { text: 'Include all', pick: () => setRandomExcluded((x) => new Set([...x].filter((id) => !entries.some((e) => e.id === id)))) },
+      ] },
+      { separator: true },
+      { text: `Reset ${PAGE_NAMES[page]}${page === 8 ? ` ${modShown + 1}` : ''}`, pick: () => resetPages(page) },
+      { text: 'Reset all pages', pick: () => resetPages(-1) },
+    ] });
+  };
+
+  // --- presets (Presets.cpp, kit::PresetLibrary): a sound without the sample ------------
+  const capturePreset = (name, category) => ({
+    name, category,
+    values: Object.fromEntries(data.params.filter((p) => p.inPresets && p.builds !== 'fx').map((p) => [p.id, silt.getParam(p.index)])),
+    routes: routesNow().map((rt) => [rt.m, rt.id, rt.amount, silt.routePolarity(rt.m, byId[rt.id].index)]),
+    modShown,
+  });
+  const routesNow = () => targets.flatMap((t) => [0, 1, 2, 3].map((m) => ({ m, id: data.params[t].id, amount: silt.routeAmount(m, t) }))).filter((rt) => rt.amount !== 0);
+  const applyPresetValues = (preset) => {
+    for (const p of data.params)
+      if (p.inPresets && p.builds !== 'fx') setParam(p.id, preset.values[p.id] ?? p.default);
+    for (const t of targets) for (let m = 0; m < 4; m++) if (silt.routeAmount(m, t) !== 0 || silt.routePolarity(m, t) !== 0) setRoute(m, data.params[t].id, 0, 0);
+    for (const [m, id, amount, polarity = 0] of preset.routes) if (byId[id]) setRoute(m, id, amount, polarity);
+    setModShown(Math.max(0, Math.min(3, preset.modShown ?? 0)));
+    setPresetName(preset.name);
+    presetAsLoaded.current = snapshot();
+  };
+  const applyPreset = (preset) => step('PRESET', () => applyPresetValues(preset));
+  const presetList = () => [
+    ...data.presets.factory.map((f) => ({ ...f, factory: true })),
+    ...[...userPresets].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })).map((u) => ({ ...u, factory: false })),
+  ];
+  const stepPreset = (direction) => {
+    const list = presetList(), n = list.length;
+    const at = list.findIndex((p) => p.name === presetName);
+    applyPreset(list[((at < 0 ? (direction > 0 ? -1 : 0) : at) + direction + n) % n]);
+  };
+  const presetEdited = presetAsLoaded.current != null && !sameSound(presetAsLoaded.current, snapshot());
+  const savePreset = (name, category) => {
+    const preset = capturePreset(name, category);
+    const next = [...userPresets.filter((u) => u.name !== name), preset];
+    setUserPresets(next);
+    writeStored('silt-presets-v1', next);
+    setPresetName(name);
+    presetAsLoaded.current = snapshot();
+  };
+  const setFavourite = (name, on) => {
+    const next = new Set(favourites);
+    on ? next.add(name) : next.delete(name);
+    setFavourites(next);
+    writeStored('silt-favourites-v1', [...next]);
+  };
+
   const showFlash = (message) => {
     setFlash(message);
     clearTimeout(showFlash.timer);
@@ -970,8 +1317,8 @@ function App() {
     stageTop: () => stage.current.getBoundingClientRect().top,
     to01: (id) => silt.to01(byId[id].index, value(id)),
     setFrom01: (id, p) => setParam(id, silt.from01(byId[id].index, p)),
-    setParam,
-    resetToDefault: (id) => setParam(id, byId[id].default),
+    setParam: (id, v) => step(byId[id]?.name ?? id, () => setParam(id, v)),
+    resetToDefault: (id) => step(byId[id].name, () => setParam(id, byId[id].default)),
     // As the plug-in reads typing: the parameter's own text to value (JUCE's getFloatValue,
     // getIntValue, a choice by name, on/off).
     typeValue: (id, typed) => {
@@ -982,13 +1329,15 @@ function App() {
       else if (p.kind === 'switch') v = /^(on|yes|true)$/i.test(t) ? 1 : 0;
       else if (p.kind === 'integer') v = parseInt(t, 10) || 0;
       else v = parseFloat(t) || 0;
-      setParam(id, v);
+      step(p.name, () => setParam(id, v));
     },
-    setEditing, beginGesture: () => {}, endGesture: () => {},
+    setEditing, beginGesture: (id) => beginStep(byId[id].name), endGesture: () => endStep(),
+    beginStep, endStep, step,
     openMenu: setMenu,
     armed, dropHover,
     depthSpan, paramName: (id) => byId[id].name,
-    undo: () => {}, redo: () => {}, canUndo: false, canRedo: false,   // slice 3
+    undo, redo, canUndo: h.undo.length > 0, canRedo: h.redo.length > 0,
+    resetMenu,
     isTarget: (id) => !!byId[id] && silt.isTarget(byId[id].index),
     isStepped: (id) => byId[id]?.kind === 'integer' || byId[id]?.kind === 'choice',
     to01Of: (id, v) => silt.to01(byId[id].index, v),
@@ -1002,10 +1351,10 @@ function App() {
     setAmount: (m, id, amount) => {
       if (amount !== 0 && !silt.routeCanWork(m, byId[id].index)) { showFlash('PER GRAIN ONLY REACHES GRAIN SETTINGS'); return; }
       lastUsedMod.current = m;
-      setRoute(m, id, amount);
+      step('MODULATION', () => setRoute(m, id, amount));
     },
-    togglePolarity: (m, id) => { silt.naturalWhereUnrouted(); setRoute(m, id, routeAmount(m, id), silt.routeBipolar(m, byId[id].index) ? 1 : 2); },
-    clearTarget: (id) => { silt.naturalWhereUnrouted(); for (let m = 0; m < 4; m++) setRoute(m, id, 0); },
+    togglePolarity: (m, id) => { silt.naturalWhereUnrouted(); step('MODULATION', () => setRoute(m, id, routeAmount(m, id), silt.routeBipolar(m, byId[id].index) ? 1 : 2)); },
+    clearTarget: (id) => { silt.naturalWhereUnrouted(); step('MODULATION', () => { for (let m = 0; m < 4; m++) setRoute(m, id, 0); }); },
     // Which modulator an Alt-drag sets (SiltEditor::depthModulatorFor): the armed one; else the
     // only one routed here; else the one last used.
     depthModulator: (id) => {
@@ -1071,7 +1420,9 @@ function App() {
           <At r={[g.header[0] + wordWidth + 14, g.header[1] + 14, 400, 34]} style={{ ...font.name(15.5, 0.06), color: css(S.soft), lineHeight: '17px' }}>
             GLYPH AUDIO<br />GRANULAR SAMPLER
           </At>
-          <div data-help="!preset"><PresetBar r={g.presets} name="INIT" /></div>
+          <div data-help="!preset">
+            <PresetBar r={g.presets} name={`${presetName.toUpperCase()}${presetEdited ? ' *' : ''}`} onStep={stepPreset} onBrowse={() => setBrowserOpen(true)} onSave={() => setSaving(true)} />
+          </div>
           <Key r={g.tour} text="?" help="!tour" />
 
           {/* Strip */}
@@ -1096,7 +1447,7 @@ function App() {
           {[0, 1, 2, 3, 8].map((p) => (
             <React.Fragment key={p}>
               <Key r={g.pageKeys[p]} text={PAGE_NAMES[p]} on={p === page && !routesOpen} tint={p === page ? mix(pageColour(p), S.panel, 0.25) : pageColour(p)} flat
-                   onClick={() => { setPage(p); setRoutesOpen(false); }} help="!tab" />
+                   onClick={() => { setPage(p); setRoutesOpen(false); }} onMenu={() => resetMenu(p, g.pageKeys[p])} help="!tab" />
               {p === page && !routesOpen && (
                 <At r={[g.pageKeys[p][0] + 1, g.pageKeys[p][1] + g.pageKeys[p][3] - 4, g.pageKeys[p][2] - 2, g.well[1] - (g.pageKeys[p][1] + g.pageKeys[p][3]) + 5]}
                     style={{ background: css(pageColour(p)) }} />
@@ -1104,11 +1455,11 @@ function App() {
             </React.Fragment>
           ))}
           <Key r={g.learn} text="LEARN" led={false} help="!learn" />
-          <Key r={g.random} text="RANDOM" help="!random" />
-          <At r={g.amount} data-help="!randomAmount" style={{ background: css(C.lcdGreen), borderRadius: 3, color: css(C.lcdText), ...font.value(11.5), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>50%</At>
+          <Key r={g.random} text="RANDOM" help="!random" onClick={randomise} onMenu={randomMenu} />
+          <AmountBox r={g.amount} amount={randomAmount} set={setRandomAmount} />
           <Key r={g.routes} text="MOD ROUTES" help="!routes" on={routesOpen} onClick={() => setRoutesOpen(!routesOpen)} />
-          <Key r={g.undo} text="UNDO" help="!undo" />
-          <Key r={g.redo} text="REDO" disabled help="!redo" />
+          <Key r={g.undo} text="UNDO" help="!undo" onClick={undo} disabled={h.undo.length === 0 && !h.pending} />
+          <Key r={g.redo} text="REDO" help="!redo" onClick={redo} disabled={h.redo.length === 0} />
 
           {/* Well */}
           <Well g={g} page={page} entries={data.layout.instrument} context={context} value={value} text={text} params={byId}
@@ -1119,6 +1470,17 @@ function App() {
           {/* The browser's row, where the plug-in has the Bench */}
           <Surface r={g.bench} colour={S.panel} />
 
+          {browserOpen && (
+            <PresetBrowser r={[g.screen[0], g.screen[1], g.screen[2] + 3, g.well[1] + g.well[3] - g.screen[1] + 3]} list={presetList()} current={presetName}
+                           categories={data.presets.categories} favourites={favourites} setFavourite={setFavourite}
+                           begin={() => ({ sound: snapshot(), name: presetName, loaded: presetAsLoaded.current })}
+                           audition={(preset) => applyPresetValues(preset)}
+                           keep={(before) => { if (!sameSound(before.sound, snapshot())) { h.undo.push({ name: 'PRESET', before: before.sound, after: snapshot() }); h.redo = []; } setBrowserOpen(false); }}
+                           cancel={(before) => { restore(before.sound); setPresetName(before.name); presetAsLoaded.current = before.loaded; setBrowserOpen(false); }}
+                           saveAs={() => setSaving(true)} />
+          )}
+          {saving && <SaveDialog categories={data.presets.categories} start={presetName === 'Init' ? '' : presetName}
+                                 save={(name, category) => { savePreset(name, category); setSaving(false); }} cancel={() => setSaving(false)} />}
           {menu && <Popup menu={menu} close={() => setMenu(null)} />}
         </div>
       </div>

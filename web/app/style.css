@@ -29,3 +29,18 @@ html, body { margin: 0; background: var(--page); overflow: hidden; }
 /* Drawn shapes never take the mouse; the parts underneath do. */
 svg.at { pointer-events: none; }
 .chip-ghost { pointer-events: none; z-index: 20; box-shadow: 0 3px 10px rgba(0,0,0,0.4); }
+.popup-header { display: flex; align-items: center; padding: 0 12px 0 24px; font-size: 0.85em; letter-spacing: 0.08em; }
+.popup-sep { height: 1px; margin: 4px 8px; background: rgba(233, 226, 208, 0.2); }
+.popup-item.disabled { opacity: 0.4; cursor: default; }
+.popup-item.disabled:hover { background: transparent; color: inherit; }
+.popup-item .arrow { margin-left: auto; padding-left: 12px; }
+.popup-shield .popup-shield { background: transparent; }
+.browser { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+.browser > * { pointer-events: auto; }
+.search { position: absolute; outline: none; padding: 3px 6px; }
+.search::placeholder { color: rgba(233, 226, 208, 0.6); }
+.preset-row { display: flex; align-items: center; cursor: pointer; }
+.preset-list { scrollbar-gutter: stable; }
+.preset-list::-webkit-scrollbar { width: 12px; }
+.preset-list::-webkit-scrollbar-thumb { background: #4c8ec2; border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+.dialog-shield { position: absolute; inset: 0; z-index: 8; background: rgba(0, 0, 0, 0.35); }

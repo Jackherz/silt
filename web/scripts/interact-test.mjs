@@ -96,6 +96,47 @@ await page.getByText('CLEAR ALL').click();
 await page.getByText('CLICK AGAIN').click();
 check('CLEAR ALL, twice, clears them', (await routeCount()) === 0);
 
+// RANDOM, UNDO and REDO.
+await page.goto(url);
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8);
+const allValues = () => page.evaluate(() => [...document.querySelectorAll('.knob-hit')].map((k) => k.parentElement.innerText.trim()).join('|'));
+const start = await allValues();
+await page.getByText('RANDOM', { exact: true }).click();
+const randomised = await allValues();
+check('RANDOM moves GRAIN\'s knobs', randomised !== start);
+check('RANDOM says what it did', /RANDOM GRAIN: \d+ CHANGES?/.test(await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '))));
+await page.getByText('UNDO', { exact: true }).click();
+check('UNDO puts them back', (await allValues()) === start);
+await page.getByText('REDO', { exact: true }).click();
+check('REDO brings RANDOM back', (await allValues()) === randomised);
+
+// Presets: the arrows, the edited mark, the browser and SAVE.
+await page.goto(url);
+await page.waitForFunction(() => document.querySelectorAll('.knob-hit').length >= 8);
+const arrows = page.locator('[data-help="!preset"] .key .plate');
+await arrows.nth(2).click({ force: true });   // next
+check('the next arrow loads GLASS CLOUD', (await page.getByText('GLASS CLOUD', { exact: true }).count()) === 1);
+check('its SIZE is 180 ms', (await valueText(1)) === '180 ms', await valueText(1));
+b = await knob(0);
+await page.mouse.dblclick(b.x + b.width / 2, b.y + b.height / 2);   // PITCH to default: no change, so not edited
+await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await page.mouse.down();
+await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2 - 20, { steps: 3 }); await page.mouse.up();
+check('a change marks it edited', (await page.getByText('GLASS CLOUD *', { exact: true }).count()) === 1);
+await page.getByText('GLASS CLOUD *', { exact: true }).click();
+check('the name opens the browser', (await page.locator('.preset-row').count()) === 42, String(await page.locator('.preset-row').count()));
+await page.locator('.preset-row', { hasText: 'TAPE CHOIR' }).click();
+check('a click plays a preset at once', (await valueText(1)) === '120 ms', await valueText(1));
+await page.keyboard.press('Escape');
+check('CANCEL puts the sound back', (await page.getByText('GLASS CLOUD *', { exact: true }).count()) === 1);
+await page.getByText('SAVE', { exact: true }).click();
+await page.keyboard.press('Meta+a');
+await page.keyboard.type('My Sound');
+await page.keyboard.press('Enter');
+check('SAVE keeps it under its name', (await page.getByText('MY SOUND', { exact: true }).count()) === 1);
+await page.getByText('MY SOUND', { exact: true }).click();
+check('it lists as USER', (await page.locator('.preset-row', { hasText: 'MY SOUND' }).innerText()).includes('USER'));
+await page.keyboard.press('Escape');
+
 check('no page errors', errors.length === 0, errors.join('; '));
 await browser.close();
 process.exitCode = failed ? 1 : 0;
