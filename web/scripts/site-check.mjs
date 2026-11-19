@@ -23,17 +23,20 @@ for (const [label, viewport, mobile] of [['desktop', { width: 1440, height: 900 
   check(`${label}: the tour opens on a first visit`, (await frame.locator('.tour').count()) === 1);
   // The header's player steps aside on a phone (as on Brood's page) and stays on a desktop.
   await page.waitForTimeout(400);
-  const dock = await page.evaluate(() => getComputedStyle(document.querySelector('.audio-dock')).visibility);
+  const dock = await page.evaluate(() => getComputedStyle(document.getElementById('audio-dock')).visibility);
   check(`${label}: the header's player ${mobile ? 'is hidden' : 'stays'}`, mobile ? dock === 'hidden' : dock === 'visible', dock);
   await page.screenshot({ path: `../build-web/site-${label}.png`, fullPage: label === 'phone' });
   await frame.getByText('SKIP TOUR', { exact: true }).click();
   // A song in the header, then START AUDIO in Silt: the song pauses.
-  await page.evaluate(() => { const a = document.getElementById('site-audio'); a.muted = true; return a.play?.().catch(() => {}); });
-  await page.waitForTimeout(300);
-  const before = await page.evaluate(() => !document.getElementById('site-audio').paused);
+  // The site keeps its <audio> out of the page (Brave's playlist popup), so the strip's
+  // own is-playing class is what says a song is playing.
+  const playing = () => page.evaluate(() => document.getElementById('audio-dock').classList.contains('is-playing'));
+  await page.click('#audio-play');
+  await page.waitForTimeout(1500);
+  const before = await playing();
   await frame.getByText('START AUDIO', { exact: true }).click();
   await page.waitForTimeout(800);
-  const after = await page.evaluate(() => document.getElementById('site-audio').paused);
+  const after = ! await playing();
   check(`${label}: START AUDIO pauses the site's player`, after, `was playing: ${before}`);
   await page.keyboard.down('a');
   await page.waitForTimeout(600);
