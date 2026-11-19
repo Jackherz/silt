@@ -31,7 +31,8 @@ targets=()
 for plugin in Silt SiltFX; do
   for format in VST3 AU CLAP Standalone; do targets+=("${plugin}_${format}"); done
 done
-cmake --build "$BUILD" --config Release --parallel --target "${targets[@]}"
+# A job count, always: without Ninja a bare --parallel is make -j with no limit.
+cmake --build "$BUILD" --config Release --parallel "$(sysctl -n hw.ncpu)" --target "${targets[@]}"
 
 rm -rf "$WORK"
 P="$WORK/root/Library/Audio/Plug-Ins"

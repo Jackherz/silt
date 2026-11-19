@@ -48,7 +48,7 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSILT_CORE_ONLY=ON
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel "$(nproc)"
       - name: Unit tests
         run: ctest --test-dir build --output-on-failure
 
@@ -90,9 +90,12 @@ jobs:
             -DFETCHCONTENT_BASE_DIR="$GITHUB_WORKSPACE/.deps" \
             ${{ runner.os == 'macOS' && '-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OBJC_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache' || '' }}
 
+      # A job count, always: with the Makefile generator a bare --parallel is make -j with
+      # no limit: up to ~180 JUCE compiles at once, the likely cause of the hangs since 2026-11-06.
       - name: Build
         timeout-minutes: 60
-        run: cmake --build build --config Release --parallel
+        shell: bash
+        run: cmake --build build --config Release --parallel "$(getconf _NPROCESSORS_ONLN)"
 
       - name: Unit tests
         run: ctest --test-dir build -C Release --output-on-failure
