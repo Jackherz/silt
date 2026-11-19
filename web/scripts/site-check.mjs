@@ -21,10 +21,10 @@ for (const [label, viewport, mobile] of [['desktop', { width: 1440, height: 900 
   const stage = await frame.locator('.stage').evaluate((e) => [parseFloat(e.style.width), parseFloat(e.style.height)]);
   check(`${label}: the frame is as tall as the panel`, Math.abs(fit.h - fit.w * stage[1] / stage[0]) < 2 && Math.abs(fit.h - fit.body) < 2, `${fit.w.toFixed(0)} x ${fit.h.toFixed(0)}, panel ${stage.join(' x ')}`);
   check(`${label}: the tour opens on a first visit`, (await frame.locator('.tour').count()) === 1);
-  // The header's player steps aside on a phone (as on Brood's page) and stays on a desktop.
+  // The header's player stays, on a phone too (it scrolls away with the header there).
   await page.waitForTimeout(400);
   const dock = await page.evaluate(() => getComputedStyle(document.getElementById('audio-dock')).visibility);
-  check(`${label}: the header's player ${mobile ? 'is hidden' : 'stays'}`, mobile ? dock === 'hidden' : dock === 'visible', dock);
+  check(`${label}: the header's player stays`, dock === 'visible', dock);
   await page.screenshot({ path: `../build-web/site-${label}.png`, fullPage: label === 'phone' });
   await frame.getByText('SKIP TOUR', { exact: true }).click();
   // A song in the header, then START AUDIO in Silt: the song pauses.
