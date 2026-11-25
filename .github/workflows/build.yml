@@ -78,7 +78,7 @@ jobs:
       # Compiler cache on macOS, where runner minutes cost the most.
       - name: ccache (macOS)
         if: runner.os == 'macOS'
-        uses: hendrikmuhs/ccache-action@dbeefd73e8e2ffc1bbc412570072735eb4db3607   # v1.2.25
+        uses: hendrikmuhs/ccache-action@e91f31892a1d1b8c44424b1a94c0b7f52d337168   # v1.2.26
         with:
           key: ccache-${{ runner.os }}
           max-size: 500M
